@@ -1,0 +1,2947 @@
+# Generated root ignore rules for the Vector workspace.
+# Each section is translated from an existing nested .gitignore file.
+
+# Workspace-local artifacts
+/.DS_Store
+/.vscode/
+/_build/
+/ssh_root_key
+
+# From vector-infra/.gitignore
+/vector-infra/**/bin
+/vector-infra/**/obj
+/vector-infra/**/csx
+/vector-infra/**/.vs
+/vector-infra/**/edge
+/vector-infra/**/Publish
+
+/vector-infra/**/*.user
+/vector-infra/**/*.suo
+/vector-infra/**/*.cscfg
+/vector-infra/**/*.Cache
+/vector-infra/**/project.lock.json
+
+/vector-infra/packages
+/vector-infra/TestResults
+
+/vector-infra/tools/NuGet.exe
+/vector-infra/App_Data
+/vector-infra/secrets
+/vector-infra/data
+/vector-infra/**/.secrets
+/vector-infra/**/appsettings.json
+/vector-infra/**/local.settings.json
+
+/vector-infra/**/node_modules
+/vector-infra/**/dist
+
+# Local python packages
+/vector-infra/.python_packages/
+
+# Python Environments
+/vector-infra/**/.env
+/vector-infra/**/.venv
+/vector-infra/env/
+/vector-infra/venv/
+/vector-infra/ENV/
+/vector-infra/env.bak/
+/vector-infra/venv.bak/
+
+# Byte-compiled / optimized / DLL files
+/vector-infra/__pycache__/
+/vector-infra/**/*.py[cod]
+/vector-infra/**/*$py.class
+
+# Azurite artifacts
+/vector-infra/**/__blobstorage__
+/vector-infra/**/__queuestorage__
+/vector-infra/**/__azurite_db*__.json
+/vector-infra/**/*.zip
+/vector-infra/.terraform/*
+/vector-infra/**/.terraform.lock.hcl
+#tf state files
+/vector-infra/**/*.tfstate
+/vector-infra/**/*.tfstate.*
+/vector-infra/infra/.terraform/*
+/vector-infra/charts/
+
+# From vector-web-setup/.gitignore
+/vector-web-setup/**/.DS_Store
+/vector-web-setup/site/js/rts.js
+/vector-web-setup/site/data/*
+/vector-web-setup/site/firmware/*
+/vector-web-setup/site/js/bundle-data.js
+/vector-web-setup/site/css/pterm.css
+/vector-web-setup/**/.vscode
+/vector-web-setup/**/node_modules
+/vector-web-setup/**/package-lock.json
+
+#  Local .terraform directories
+/vector-web-setup/**/.terraform/*
+
+# .tfstate files
+/vector-web-setup/**/*.tfstate
+/vector-web-setup/**/*.tfstate.*
+
+/vector-web-setup/**/.prettierignore
+
+# From vector-web-setup/node-client/.gitignore
+/vector-web-setup/node-client/**/vec-cli
+/vector-web-setup/node-client/**/settings.json
+/vector-web-setup/node-client/**/generated
+
+# From victor/.gitignore
+/victor/**/.DS_Store
+
+# From wire-os/.gitignore
+/wire-os/**/*~
+
+/wire-os/_build/
+/wire-os/**/bb-files.txt
+/wire-os/**.DS_Store
+/wire-os/build/cache
+/wire-os/build/gocache
+/wire-os/build/usercache
+/wire-os/anki/vector-cloud
+/wire-os/vm-deps-installed
+/wire-os/anki-deps
+/wire-os/old-toolchain
+
+# From wire-os/anki/anki-ble/.gitignore
+/wire-os/anki/anki-ble/**/*~
+/wire-os/anki/anki-ble/**/connmanbus.c
+/wire-os/anki/anki-ble/**/connmanbus.h
+
+# From wire-os/kernel/msm-3.18/.gitignore
+#
+# NOTE! Don't add files that are generated in specific
+# subdirectories here. Add them in the ".gitignore" file
+# in that subdirectory instead.
+#
+# NOTE! Please use 'git ls-files -i --exclude-standard'
+# command after changing this file, to see if there are
+# any tracked files which get ignored after the change.
+#
+# Normal rules
+#
+/wire-os/kernel/msm-3.18/**/.*
+/wire-os/kernel/msm-3.18/**/*.o
+/wire-os/kernel/msm-3.18/**/*.o.*
+/wire-os/kernel/msm-3.18/**/*.a
+/wire-os/kernel/msm-3.18/**/*.s
+/wire-os/kernel/msm-3.18/**/*.ko
+/wire-os/kernel/msm-3.18/**/*.so
+/wire-os/kernel/msm-3.18/**/*.so.dbg
+/wire-os/kernel/msm-3.18/**/*.mod.c
+/wire-os/kernel/msm-3.18/**/*.i
+/wire-os/kernel/msm-3.18/**/*.lst
+/wire-os/kernel/msm-3.18/**/*.symtypes
+/wire-os/kernel/msm-3.18/**/*.order
+/wire-os/kernel/msm-3.18/**/*.elf
+/wire-os/kernel/msm-3.18/**/*.bin
+/wire-os/kernel/msm-3.18/**/*.gz
+/wire-os/kernel/msm-3.18/**/*.bz2
+/wire-os/kernel/msm-3.18/**/*.lzma
+/wire-os/kernel/msm-3.18/**/*.xz
+/wire-os/kernel/msm-3.18/**/*.lz4
+/wire-os/kernel/msm-3.18/**/*.lzo
+/wire-os/kernel/msm-3.18/**/*.patch
+/wire-os/kernel/msm-3.18/**/*.gcno
+/wire-os/kernel/msm-3.18/**/modules.builtin
+/wire-os/kernel/msm-3.18/**/Module.symvers
+/wire-os/kernel/msm-3.18/**/*.dwo
+
+#
+# Top-level generic files
+#
+/wire-os/kernel/msm-3.18/tags
+/wire-os/kernel/msm-3.18/TAGS
+/wire-os/kernel/msm-3.18/linux
+/wire-os/kernel/msm-3.18/vmlinux
+/wire-os/kernel/msm-3.18/vmlinuz
+/wire-os/kernel/msm-3.18/System.map
+/wire-os/kernel/msm-3.18/Module.markers
+
+#
+# Debian directory (make deb-pkg)
+#
+/wire-os/kernel/msm-3.18/debian/
+
+#
+# git files that we don't want to ignore even it they are dot-files
+#
+!/wire-os/kernel/msm-3.18/**/.gitignore
+!/wire-os/kernel/msm-3.18/**/.mailmap
+
+#
+# Generated include files
+#
+/wire-os/kernel/msm-3.18/include/config
+/wire-os/kernel/msm-3.18/include/generated
+/wire-os/kernel/msm-3.18/arch/*/include/generated
+
+# stgit generated dirs
+/wire-os/kernel/msm-3.18/**/patches-*
+
+# quilt's files
+/wire-os/kernel/msm-3.18/**/patches
+/wire-os/kernel/msm-3.18/**/series
+
+# cscope files
+/wire-os/kernel/msm-3.18/**/cscope.*
+/wire-os/kernel/msm-3.18/**/ncscope.*
+
+# gnu global files
+/wire-os/kernel/msm-3.18/**/GPATH
+/wire-os/kernel/msm-3.18/**/GRTAGS
+/wire-os/kernel/msm-3.18/**/GSYMS
+/wire-os/kernel/msm-3.18/**/GTAGS
+
+/wire-os/kernel/msm-3.18/**/*.orig
+/wire-os/kernel/msm-3.18/**/*~
+/wire-os/kernel/msm-3.18/**/\#*#
+
+#
+# Leavings from module signing
+#
+/wire-os/kernel/msm-3.18/**/extra_certificates
+/wire-os/kernel/msm-3.18/**/signing_key.priv
+/wire-os/kernel/msm-3.18/**/signing_key.x509
+/wire-os/kernel/msm-3.18/**/x509.genkey
+
+# Kconfig presets
+/wire-os/kernel/msm-3.18/**/all.config
+
+# fetched Android config fragments
+/wire-os/kernel/msm-3.18/android/configs/android-*.cfg
+
+# From wire-os/kernel/msm-3.18/Documentation/DocBook/.gitignore
+/wire-os/kernel/msm-3.18/Documentation/DocBook/**/*.xml
+/wire-os/kernel/msm-3.18/Documentation/DocBook/**/*.ps
+/wire-os/kernel/msm-3.18/Documentation/DocBook/**/*.pdf
+/wire-os/kernel/msm-3.18/Documentation/DocBook/**/*.html
+/wire-os/kernel/msm-3.18/Documentation/DocBook/**/*.9.gz
+/wire-os/kernel/msm-3.18/Documentation/DocBook/**/*.9
+/wire-os/kernel/msm-3.18/Documentation/DocBook/**/*.aux
+/wire-os/kernel/msm-3.18/Documentation/DocBook/**/*.dvi
+/wire-os/kernel/msm-3.18/Documentation/DocBook/**/*.log
+/wire-os/kernel/msm-3.18/Documentation/DocBook/**/*.out
+/wire-os/kernel/msm-3.18/Documentation/DocBook/**/*.png
+/wire-os/kernel/msm-3.18/Documentation/DocBook/**/*.gif
+/wire-os/kernel/msm-3.18/Documentation/DocBook/**/*.svg
+/wire-os/kernel/msm-3.18/Documentation/DocBook/**/media-indices.tmpl
+/wire-os/kernel/msm-3.18/Documentation/DocBook/**/media-entities.tmpl
+
+# From wire-os/kernel/msm-3.18/Documentation/DocBook/media/dvb/.gitignore
+!/wire-os/kernel/msm-3.18/Documentation/DocBook/media/dvb/**/*.xml
+
+# From wire-os/kernel/msm-3.18/Documentation/DocBook/media/v4l/.gitignore
+!/wire-os/kernel/msm-3.18/Documentation/DocBook/media/v4l/**/*.xml
+
+# From wire-os/kernel/msm-3.18/Documentation/accounting/.gitignore
+/wire-os/kernel/msm-3.18/Documentation/accounting/**/getdelays
+
+# From wire-os/kernel/msm-3.18/Documentation/arm/SH-Mobile/.gitignore
+/wire-os/kernel/msm-3.18/Documentation/arm/SH-Mobile/**/vrl4
+
+# From wire-os/kernel/msm-3.18/Documentation/auxdisplay/.gitignore
+/wire-os/kernel/msm-3.18/Documentation/auxdisplay/**/cfag12864b-example
+
+# From wire-os/kernel/msm-3.18/Documentation/connector/.gitignore
+/wire-os/kernel/msm-3.18/Documentation/connector/**/ucon
+
+# From wire-os/kernel/msm-3.18/Documentation/filesystems/.gitignore
+/wire-os/kernel/msm-3.18/Documentation/filesystems/**/dnotify_test
+
+# From wire-os/kernel/msm-3.18/Documentation/ia64/.gitignore
+/wire-os/kernel/msm-3.18/Documentation/ia64/**/aliasing-test
+
+# From wire-os/kernel/msm-3.18/Documentation/laptops/.gitignore
+/wire-os/kernel/msm-3.18/Documentation/laptops/**/dslm
+/wire-os/kernel/msm-3.18/Documentation/laptops/**/freefall
+
+# From wire-os/kernel/msm-3.18/Documentation/misc-devices/mei/.gitignore
+/wire-os/kernel/msm-3.18/Documentation/misc-devices/mei/**/mei-amt-version
+
+# From wire-os/kernel/msm-3.18/Documentation/networking/timestamping/.gitignore
+/wire-os/kernel/msm-3.18/Documentation/networking/timestamping/**/timestamping
+/wire-os/kernel/msm-3.18/Documentation/networking/timestamping/**/txtimestamp
+/wire-os/kernel/msm-3.18/Documentation/networking/timestamping/**/hwtstamp_config
+
+# From wire-os/kernel/msm-3.18/Documentation/pcmcia/.gitignore
+/wire-os/kernel/msm-3.18/Documentation/pcmcia/**/crc32hash
+
+# From wire-os/kernel/msm-3.18/Documentation/prctl/.gitignore
+/wire-os/kernel/msm-3.18/Documentation/prctl/**/disable-tsc-ctxt-sw-stress-test
+/wire-os/kernel/msm-3.18/Documentation/prctl/**/disable-tsc-on-off-stress-test
+/wire-os/kernel/msm-3.18/Documentation/prctl/**/disable-tsc-test
+
+# From wire-os/kernel/msm-3.18/Documentation/ptp/.gitignore
+/wire-os/kernel/msm-3.18/Documentation/ptp/**/testptp
+
+# From wire-os/kernel/msm-3.18/Documentation/spi/.gitignore
+/wire-os/kernel/msm-3.18/Documentation/spi/**/spidev_fdx
+/wire-os/kernel/msm-3.18/Documentation/spi/**/spidev_test
+
+# From wire-os/kernel/msm-3.18/Documentation/timers/.gitignore
+/wire-os/kernel/msm-3.18/Documentation/timers/**/hpet_example
+
+# From wire-os/kernel/msm-3.18/Documentation/vDSO/.gitignore
+/wire-os/kernel/msm-3.18/Documentation/vDSO/**/vdso_test
+/wire-os/kernel/msm-3.18/Documentation/vDSO/**/vdso_standalone_test_x86
+
+# From wire-os/kernel/msm-3.18/Documentation/vm/.gitignore
+/wire-os/kernel/msm-3.18/Documentation/vm/**/page-types
+/wire-os/kernel/msm-3.18/Documentation/vm/**/slabinfo
+
+# From wire-os/kernel/msm-3.18/Documentation/watchdog/src/.gitignore
+/wire-os/kernel/msm-3.18/Documentation/watchdog/src/**/watchdog-simple
+/wire-os/kernel/msm-3.18/Documentation/watchdog/src/**/watchdog-test
+
+# From wire-os/kernel/msm-3.18/arch/.gitignore
+/wire-os/kernel/msm-3.18/arch/**/i386
+/wire-os/kernel/msm-3.18/arch/**/x86_64
+
+# From wire-os/kernel/msm-3.18/arch/alpha/kernel/.gitignore
+/wire-os/kernel/msm-3.18/arch/alpha/kernel/**/vmlinux.lds
+
+# From wire-os/kernel/msm-3.18/arch/arc/boot/.gitignore
+/wire-os/kernel/msm-3.18/arch/arc/boot/**/*.dtb*
+/wire-os/kernel/msm-3.18/arch/arc/boot/**/uImage
+
+# From wire-os/kernel/msm-3.18/arch/arc/kernel/.gitignore
+/wire-os/kernel/msm-3.18/arch/arc/kernel/**/vmlinux.lds
+
+# From wire-os/kernel/msm-3.18/arch/arm/boot/.gitignore
+/wire-os/kernel/msm-3.18/arch/arm/boot/**/Image
+/wire-os/kernel/msm-3.18/arch/arm/boot/**/zImage
+/wire-os/kernel/msm-3.18/arch/arm/boot/**/xipImage
+/wire-os/kernel/msm-3.18/arch/arm/boot/**/bootpImage
+/wire-os/kernel/msm-3.18/arch/arm/boot/**/uImage
+/wire-os/kernel/msm-3.18/arch/arm/boot/**/*.dtb
+/wire-os/kernel/msm-3.18/arch/arm/boot/**/zImage-dtb
+
+# From wire-os/kernel/msm-3.18/arch/arm/boot/compressed/.gitignore
+/wire-os/kernel/msm-3.18/arch/arm/boot/compressed/**/ashldi3.S
+/wire-os/kernel/msm-3.18/arch/arm/boot/compressed/**/bswapsdi2.S
+/wire-os/kernel/msm-3.18/arch/arm/boot/compressed/**/font.c
+/wire-os/kernel/msm-3.18/arch/arm/boot/compressed/**/lib1funcs.S
+/wire-os/kernel/msm-3.18/arch/arm/boot/compressed/**/hyp-stub.S
+/wire-os/kernel/msm-3.18/arch/arm/boot/compressed/**/piggy.gzip
+/wire-os/kernel/msm-3.18/arch/arm/boot/compressed/**/piggy.lzo
+/wire-os/kernel/msm-3.18/arch/arm/boot/compressed/**/piggy.lzma
+/wire-os/kernel/msm-3.18/arch/arm/boot/compressed/**/piggy.xzkern
+/wire-os/kernel/msm-3.18/arch/arm/boot/compressed/**/piggy.lz4
+/wire-os/kernel/msm-3.18/arch/arm/boot/compressed/**/vmlinux
+/wire-os/kernel/msm-3.18/arch/arm/boot/compressed/**/vmlinux.lds
+
+# borrowed libfdt files
+/wire-os/kernel/msm-3.18/arch/arm/boot/compressed/**/fdt.c
+/wire-os/kernel/msm-3.18/arch/arm/boot/compressed/**/fdt.h
+/wire-os/kernel/msm-3.18/arch/arm/boot/compressed/**/fdt_ro.c
+/wire-os/kernel/msm-3.18/arch/arm/boot/compressed/**/fdt_rw.c
+/wire-os/kernel/msm-3.18/arch/arm/boot/compressed/**/fdt_wip.c
+/wire-os/kernel/msm-3.18/arch/arm/boot/compressed/**/libfdt.h
+/wire-os/kernel/msm-3.18/arch/arm/boot/compressed/**/libfdt_internal.h
+
+# From wire-os/kernel/msm-3.18/arch/arm/crypto/.gitignore
+/wire-os/kernel/msm-3.18/arch/arm/crypto/**/aesbs-core.S
+/wire-os/kernel/msm-3.18/arch/arm/crypto/**/sha256-core.S
+/wire-os/kernel/msm-3.18/arch/arm/crypto/**/sha512-core.S
+
+# From wire-os/kernel/msm-3.18/arch/arm/kernel/.gitignore
+/wire-os/kernel/msm-3.18/arch/arm/kernel/**/vmlinux.lds
+
+# From wire-os/kernel/msm-3.18/arch/arm/vdso/.gitignore
+/wire-os/kernel/msm-3.18/arch/arm/vdso/**/vdso.lds
+/wire-os/kernel/msm-3.18/arch/arm/vdso/**/vdso.so.raw
+/wire-os/kernel/msm-3.18/arch/arm/vdso/**/vdsomunge
+
+# From wire-os/kernel/msm-3.18/arch/arm64/boot/.gitignore
+/wire-os/kernel/msm-3.18/arch/arm64/boot/**/Image
+/wire-os/kernel/msm-3.18/arch/arm64/boot/**/Image-dtb
+/wire-os/kernel/msm-3.18/arch/arm64/boot/**/Image.gz
+/wire-os/kernel/msm-3.18/arch/arm64/boot/**/Image.gz-dtb
+
+# From wire-os/kernel/msm-3.18/arch/arm64/boot/dts/.gitignore
+/wire-os/kernel/msm-3.18/arch/arm64/boot/dts/**/*.dtb
+
+# From wire-os/kernel/msm-3.18/arch/arm64/kernel/.gitignore
+/wire-os/kernel/msm-3.18/arch/arm64/kernel/**/vmlinux.lds
+
+# From wire-os/kernel/msm-3.18/arch/arm64/kernel/vdso/.gitignore
+/wire-os/kernel/msm-3.18/arch/arm64/kernel/vdso/**/vdso.lds
+/wire-os/kernel/msm-3.18/arch/arm64/kernel/vdso/**/vdso-offsets.h
+
+# From wire-os/kernel/msm-3.18/arch/avr32/boot/images/.gitignore
+/wire-os/kernel/msm-3.18/arch/avr32/boot/images/**/uImage
+/wire-os/kernel/msm-3.18/arch/avr32/boot/images/**/uImage.srec
+/wire-os/kernel/msm-3.18/arch/avr32/boot/images/**/vmlinux.cso
+/wire-os/kernel/msm-3.18/arch/avr32/boot/images/**/sfdwarf.log
+
+# From wire-os/kernel/msm-3.18/arch/avr32/kernel/.gitignore
+/wire-os/kernel/msm-3.18/arch/avr32/kernel/**/vmlinux.lds
+
+# From wire-os/kernel/msm-3.18/arch/blackfin/boot/.gitignore
+/wire-os/kernel/msm-3.18/arch/blackfin/boot/**/vmImage*
+/wire-os/kernel/msm-3.18/arch/blackfin/boot/**/vmlinux*
+/wire-os/kernel/msm-3.18/arch/blackfin/boot/**/uImage*
+
+# From wire-os/kernel/msm-3.18/arch/blackfin/kernel/.gitignore
+/wire-os/kernel/msm-3.18/arch/blackfin/kernel/**/vmlinux.lds
+
+# From wire-os/kernel/msm-3.18/arch/cris/boot/.gitignore
+/wire-os/kernel/msm-3.18/arch/cris/boot/**/Image
+/wire-os/kernel/msm-3.18/arch/cris/boot/**/zImage
+
+# From wire-os/kernel/msm-3.18/arch/ia64/kernel/.gitignore
+/wire-os/kernel/msm-3.18/arch/ia64/kernel/**/gate.lds
+/wire-os/kernel/msm-3.18/arch/ia64/kernel/**/vmlinux.lds
+
+# From wire-os/kernel/msm-3.18/arch/m32r/kernel/.gitignore
+/wire-os/kernel/msm-3.18/arch/m32r/kernel/**/vmlinux.lds
+
+# From wire-os/kernel/msm-3.18/arch/m68k/kernel/.gitignore
+/wire-os/kernel/msm-3.18/arch/m68k/kernel/**/vmlinux.lds
+
+# From wire-os/kernel/msm-3.18/arch/metag/boot/.gitignore
+/wire-os/kernel/msm-3.18/arch/metag/boot/**/vmlinux*
+/wire-os/kernel/msm-3.18/arch/metag/boot/**/uImage*
+/wire-os/kernel/msm-3.18/arch/metag/boot/**/ramdisk.*
+/wire-os/kernel/msm-3.18/arch/metag/boot/**/*.dtb*
+
+# From wire-os/kernel/msm-3.18/arch/metag/kernel/.gitignore
+/wire-os/kernel/msm-3.18/arch/metag/kernel/**/vmlinux.lds
+
+# From wire-os/kernel/msm-3.18/arch/microblaze/boot/.gitignore
+/wire-os/kernel/msm-3.18/arch/microblaze/boot/**/*.dtb
+/wire-os/kernel/msm-3.18/arch/microblaze/boot/**/linux.bin*
+/wire-os/kernel/msm-3.18/arch/microblaze/boot/**/simpleImage.*
+
+# From wire-os/kernel/msm-3.18/arch/microblaze/kernel/.gitignore
+/wire-os/kernel/msm-3.18/arch/microblaze/kernel/**/vmlinux.lds
+
+# From wire-os/kernel/msm-3.18/arch/mips/boot/.gitignore
+/wire-os/kernel/msm-3.18/arch/mips/boot/**/mkboot
+/wire-os/kernel/msm-3.18/arch/mips/boot/**/elf2ecoff
+/wire-os/kernel/msm-3.18/arch/mips/boot/**/vmlinux.*
+/wire-os/kernel/msm-3.18/arch/mips/boot/**/zImage
+/wire-os/kernel/msm-3.18/arch/mips/boot/**/zImage.tmp
+/wire-os/kernel/msm-3.18/arch/mips/boot/**/calc_vmlinuz_load_addr
+/wire-os/kernel/msm-3.18/arch/mips/boot/**/uImage
+/wire-os/kernel/msm-3.18/arch/mips/boot/**/*.dtb
+
+# From wire-os/kernel/msm-3.18/arch/mips/kernel/.gitignore
+/wire-os/kernel/msm-3.18/arch/mips/kernel/**/vmlinux.lds
+
+# From wire-os/kernel/msm-3.18/arch/mn10300/boot/.gitignore
+/wire-os/kernel/msm-3.18/arch/mn10300/boot/**/zImage
+
+# From wire-os/kernel/msm-3.18/arch/parisc/kernel/.gitignore
+/wire-os/kernel/msm-3.18/arch/parisc/kernel/**/vmlinux.lds
+
+# From wire-os/kernel/msm-3.18/arch/powerpc/boot/.gitignore
+/wire-os/kernel/msm-3.18/arch/powerpc/boot/**/addnote
+/wire-os/kernel/msm-3.18/arch/powerpc/boot/**/empty.c
+/wire-os/kernel/msm-3.18/arch/powerpc/boot/**/hack-coff
+/wire-os/kernel/msm-3.18/arch/powerpc/boot/**/inffast.c
+/wire-os/kernel/msm-3.18/arch/powerpc/boot/**/inffast.h
+/wire-os/kernel/msm-3.18/arch/powerpc/boot/**/inffixed.h
+/wire-os/kernel/msm-3.18/arch/powerpc/boot/**/inflate.c
+/wire-os/kernel/msm-3.18/arch/powerpc/boot/**/inflate.h
+/wire-os/kernel/msm-3.18/arch/powerpc/boot/**/inftrees.c
+/wire-os/kernel/msm-3.18/arch/powerpc/boot/**/inftrees.h
+/wire-os/kernel/msm-3.18/arch/powerpc/boot/**/infutil.c
+/wire-os/kernel/msm-3.18/arch/powerpc/boot/**/infutil.h
+/wire-os/kernel/msm-3.18/arch/powerpc/boot/**/kernel-vmlinux.strip.c
+/wire-os/kernel/msm-3.18/arch/powerpc/boot/**/kernel-vmlinux.strip.gz
+/wire-os/kernel/msm-3.18/arch/powerpc/boot/**/mktree
+/wire-os/kernel/msm-3.18/arch/powerpc/boot/**/uImage
+/wire-os/kernel/msm-3.18/arch/powerpc/boot/**/cuImage.*
+/wire-os/kernel/msm-3.18/arch/powerpc/boot/**/dtbImage.*
+/wire-os/kernel/msm-3.18/arch/powerpc/boot/**/*.dtb
+/wire-os/kernel/msm-3.18/arch/powerpc/boot/**/treeImage.*
+/wire-os/kernel/msm-3.18/arch/powerpc/boot/**/zImage
+/wire-os/kernel/msm-3.18/arch/powerpc/boot/**/zImage.initrd
+/wire-os/kernel/msm-3.18/arch/powerpc/boot/**/zImage.bin.*
+/wire-os/kernel/msm-3.18/arch/powerpc/boot/**/zImage.chrp
+/wire-os/kernel/msm-3.18/arch/powerpc/boot/**/zImage.coff
+/wire-os/kernel/msm-3.18/arch/powerpc/boot/**/zImage.epapr
+/wire-os/kernel/msm-3.18/arch/powerpc/boot/**/zImage.holly
+/wire-os/kernel/msm-3.18/arch/powerpc/boot/**/zImage.*lds
+/wire-os/kernel/msm-3.18/arch/powerpc/boot/**/zImage.miboot
+/wire-os/kernel/msm-3.18/arch/powerpc/boot/**/zImage.pmac
+/wire-os/kernel/msm-3.18/arch/powerpc/boot/**/zImage.pseries
+/wire-os/kernel/msm-3.18/arch/powerpc/boot/**/zconf.h
+/wire-os/kernel/msm-3.18/arch/powerpc/boot/**/zlib.h
+/wire-os/kernel/msm-3.18/arch/powerpc/boot/**/zutil.h
+/wire-os/kernel/msm-3.18/arch/powerpc/boot/**/fdt.c
+/wire-os/kernel/msm-3.18/arch/powerpc/boot/**/fdt.h
+/wire-os/kernel/msm-3.18/arch/powerpc/boot/**/fdt_ro.c
+/wire-os/kernel/msm-3.18/arch/powerpc/boot/**/fdt_rw.c
+/wire-os/kernel/msm-3.18/arch/powerpc/boot/**/fdt_strerror.c
+/wire-os/kernel/msm-3.18/arch/powerpc/boot/**/fdt_sw.c
+/wire-os/kernel/msm-3.18/arch/powerpc/boot/**/fdt_wip.c
+/wire-os/kernel/msm-3.18/arch/powerpc/boot/**/libfdt.h
+/wire-os/kernel/msm-3.18/arch/powerpc/boot/**/libfdt_internal.h
+
+
+# From wire-os/kernel/msm-3.18/arch/powerpc/kernel/.gitignore
+/wire-os/kernel/msm-3.18/arch/powerpc/kernel/**/vmlinux.lds
+
+# From wire-os/kernel/msm-3.18/arch/powerpc/kernel/vdso32/.gitignore
+/wire-os/kernel/msm-3.18/arch/powerpc/kernel/vdso32/**/vdso32.lds
+/wire-os/kernel/msm-3.18/arch/powerpc/kernel/vdso32/**/vdso32.so.dbg
+
+# From wire-os/kernel/msm-3.18/arch/powerpc/kernel/vdso64/.gitignore
+/wire-os/kernel/msm-3.18/arch/powerpc/kernel/vdso64/**/vdso64.lds
+/wire-os/kernel/msm-3.18/arch/powerpc/kernel/vdso64/**/vdso64.so.dbg
+
+# From wire-os/kernel/msm-3.18/arch/powerpc/platforms/cell/spufs/.gitignore
+/wire-os/kernel/msm-3.18/arch/powerpc/platforms/cell/spufs/**/spu_save_dump.h
+/wire-os/kernel/msm-3.18/arch/powerpc/platforms/cell/spufs/**/spu_restore_dump.h
+
+# From wire-os/kernel/msm-3.18/arch/s390/boot/.gitignore
+/wire-os/kernel/msm-3.18/arch/s390/boot/**/image
+/wire-os/kernel/msm-3.18/arch/s390/boot/**/bzImage
+
+# From wire-os/kernel/msm-3.18/arch/s390/boot/compressed/.gitignore
+/wire-os/kernel/msm-3.18/arch/s390/boot/compressed/**/sizes.h
+/wire-os/kernel/msm-3.18/arch/s390/boot/compressed/**/vmlinux
+/wire-os/kernel/msm-3.18/arch/s390/boot/compressed/**/vmlinux.lds
+
+# From wire-os/kernel/msm-3.18/arch/s390/kernel/.gitignore
+/wire-os/kernel/msm-3.18/arch/s390/kernel/**/vmlinux.lds
+
+# From wire-os/kernel/msm-3.18/arch/s390/kernel/vdso32/.gitignore
+/wire-os/kernel/msm-3.18/arch/s390/kernel/vdso32/**/vdso32.lds
+
+# From wire-os/kernel/msm-3.18/arch/s390/kernel/vdso64/.gitignore
+/wire-os/kernel/msm-3.18/arch/s390/kernel/vdso64/**/vdso64.lds
+
+# From wire-os/kernel/msm-3.18/arch/sh/boot/.gitignore
+/wire-os/kernel/msm-3.18/arch/sh/boot/**/zImage
+/wire-os/kernel/msm-3.18/arch/sh/boot/**/vmlinux*
+/wire-os/kernel/msm-3.18/arch/sh/boot/**/uImage*
+
+# From wire-os/kernel/msm-3.18/arch/sh/boot/compressed/.gitignore
+/wire-os/kernel/msm-3.18/arch/sh/boot/compressed/**/vmlinux.bin.*
+
+# From wire-os/kernel/msm-3.18/arch/sh/kernel/.gitignore
+/wire-os/kernel/msm-3.18/arch/sh/kernel/**/vmlinux.lds
+
+# From wire-os/kernel/msm-3.18/arch/sh/kernel/vsyscall/.gitignore
+/wire-os/kernel/msm-3.18/arch/sh/kernel/vsyscall/**/vsyscall.lds
+
+# From wire-os/kernel/msm-3.18/arch/sparc/boot/.gitignore
+/wire-os/kernel/msm-3.18/arch/sparc/boot/**/btfix.S
+/wire-os/kernel/msm-3.18/arch/sparc/boot/**/btfixupprep
+/wire-os/kernel/msm-3.18/arch/sparc/boot/**/image
+/wire-os/kernel/msm-3.18/arch/sparc/boot/**/zImage
+/wire-os/kernel/msm-3.18/arch/sparc/boot/**/tftpboot.img
+/wire-os/kernel/msm-3.18/arch/sparc/boot/**/vmlinux.aout
+/wire-os/kernel/msm-3.18/arch/sparc/boot/**/piggyback
+
+
+# From wire-os/kernel/msm-3.18/arch/sparc/kernel/.gitignore
+/wire-os/kernel/msm-3.18/arch/sparc/kernel/**/vmlinux.lds
+
+# From wire-os/kernel/msm-3.18/arch/um/.gitignore
+/wire-os/kernel/msm-3.18/arch/um/kernel/config.c
+/wire-os/kernel/msm-3.18/arch/um/kernel/config.tmp
+/wire-os/kernel/msm-3.18/arch/um/kernel/vmlinux.lds
+
+# From wire-os/kernel/msm-3.18/arch/unicore32/.gitignore
+#
+# Generated include files
+#
+/wire-os/kernel/msm-3.18/arch/unicore32/include/generated
+#
+# Generated ld script file
+#
+/wire-os/kernel/msm-3.18/arch/unicore32/kernel/vmlinux.lds
+#
+# Generated images in boot
+#
+/wire-os/kernel/msm-3.18/arch/unicore32/boot/Image
+/wire-os/kernel/msm-3.18/arch/unicore32/boot/zImage
+/wire-os/kernel/msm-3.18/arch/unicore32/boot/uImage
+#
+# Generated files in boot/compressed
+#
+/wire-os/kernel/msm-3.18/arch/unicore32/boot/compressed/piggy.S
+/wire-os/kernel/msm-3.18/arch/unicore32/boot/compressed/piggy.gzip
+/wire-os/kernel/msm-3.18/arch/unicore32/boot/compressed/vmlinux
+/wire-os/kernel/msm-3.18/arch/unicore32/boot/compressed/vmlinux.lds
+
+# From wire-os/kernel/msm-3.18/arch/x86/.gitignore
+/wire-os/kernel/msm-3.18/arch/x86/boot/compressed/vmlinux
+/wire-os/kernel/msm-3.18/arch/x86/tools/test_get_len
+/wire-os/kernel/msm-3.18/arch/x86/tools/insn_sanity
+/wire-os/kernel/msm-3.18/arch/x86/purgatory/kexec-purgatory.c
+/wire-os/kernel/msm-3.18/arch/x86/purgatory/purgatory.ro
+
+
+# From wire-os/kernel/msm-3.18/arch/x86/boot/.gitignore
+/wire-os/kernel/msm-3.18/arch/x86/boot/**/bootsect
+/wire-os/kernel/msm-3.18/arch/x86/boot/**/bzImage
+/wire-os/kernel/msm-3.18/arch/x86/boot/**/cpustr.h
+/wire-os/kernel/msm-3.18/arch/x86/boot/**/mkcpustr
+/wire-os/kernel/msm-3.18/arch/x86/boot/**/voffset.h
+/wire-os/kernel/msm-3.18/arch/x86/boot/**/zoffset.h
+/wire-os/kernel/msm-3.18/arch/x86/boot/**/setup
+/wire-os/kernel/msm-3.18/arch/x86/boot/**/setup.bin
+/wire-os/kernel/msm-3.18/arch/x86/boot/**/setup.elf
+
+# From wire-os/kernel/msm-3.18/arch/x86/boot/compressed/.gitignore
+/wire-os/kernel/msm-3.18/arch/x86/boot/compressed/**/relocs
+/wire-os/kernel/msm-3.18/arch/x86/boot/compressed/**/vmlinux.bin.all
+/wire-os/kernel/msm-3.18/arch/x86/boot/compressed/**/vmlinux.relocs
+/wire-os/kernel/msm-3.18/arch/x86/boot/compressed/**/vmlinux.lds
+/wire-os/kernel/msm-3.18/arch/x86/boot/compressed/**/mkpiggy
+/wire-os/kernel/msm-3.18/arch/x86/boot/compressed/**/piggy.S
+
+# From wire-os/kernel/msm-3.18/arch/x86/boot/tools/.gitignore
+/wire-os/kernel/msm-3.18/arch/x86/boot/tools/**/build
+
+# From wire-os/kernel/msm-3.18/arch/x86/kernel/.gitignore
+/wire-os/kernel/msm-3.18/arch/x86/kernel/**/vsyscall.lds
+/wire-os/kernel/msm-3.18/arch/x86/kernel/**/vsyscall_32.lds
+/wire-os/kernel/msm-3.18/arch/x86/kernel/**/vmlinux.lds
+
+# From wire-os/kernel/msm-3.18/arch/x86/kernel/cpu/.gitignore
+/wire-os/kernel/msm-3.18/arch/x86/kernel/cpu/**/capflags.c
+
+# From wire-os/kernel/msm-3.18/arch/x86/lib/.gitignore
+/wire-os/kernel/msm-3.18/arch/x86/lib/**/inat-tables.c
+
+# From wire-os/kernel/msm-3.18/arch/x86/realmode/rm/.gitignore
+/wire-os/kernel/msm-3.18/arch/x86/realmode/rm/**/pasyms.h
+/wire-os/kernel/msm-3.18/arch/x86/realmode/rm/**/realmode.lds
+/wire-os/kernel/msm-3.18/arch/x86/realmode/rm/**/realmode.relocs
+
+# From wire-os/kernel/msm-3.18/arch/x86/tools/.gitignore
+/wire-os/kernel/msm-3.18/arch/x86/tools/**/relocs
+
+# From wire-os/kernel/msm-3.18/arch/x86/um/vdso/.gitignore
+/wire-os/kernel/msm-3.18/arch/x86/um/vdso/**/vdso-syms.lds
+/wire-os/kernel/msm-3.18/arch/x86/um/vdso/**/vdso.lds
+
+# From wire-os/kernel/msm-3.18/arch/x86/vdso/.gitignore
+/wire-os/kernel/msm-3.18/arch/x86/vdso/**/vdso.lds
+/wire-os/kernel/msm-3.18/arch/x86/vdso/**/vdsox32.lds
+/wire-os/kernel/msm-3.18/arch/x86/vdso/**/vdso32-syscall-syms.lds
+/wire-os/kernel/msm-3.18/arch/x86/vdso/**/vdso32-sysenter-syms.lds
+/wire-os/kernel/msm-3.18/arch/x86/vdso/**/vdso32-int80-syms.lds
+/wire-os/kernel/msm-3.18/arch/x86/vdso/**/vdso-image-*.c
+/wire-os/kernel/msm-3.18/arch/x86/vdso/**/vdso2c
+
+# From wire-os/kernel/msm-3.18/arch/x86/vdso/vdso32/.gitignore
+/wire-os/kernel/msm-3.18/arch/x86/vdso/vdso32/**/vdso32.lds
+
+# From wire-os/kernel/msm-3.18/arch/xtensa/boot/.gitignore
+/wire-os/kernel/msm-3.18/arch/xtensa/boot/**/uImage
+/wire-os/kernel/msm-3.18/arch/xtensa/boot/**/zImage.redboot
+/wire-os/kernel/msm-3.18/arch/xtensa/boot/**/*.dtb
+
+# From wire-os/kernel/msm-3.18/arch/xtensa/boot/boot-elf/.gitignore
+/wire-os/kernel/msm-3.18/arch/xtensa/boot/boot-elf/**/boot.lds
+
+# From wire-os/kernel/msm-3.18/arch/xtensa/boot/lib/.gitignore
+/wire-os/kernel/msm-3.18/arch/xtensa/boot/lib/**/inffast.c
+/wire-os/kernel/msm-3.18/arch/xtensa/boot/lib/**/inflate.c
+/wire-os/kernel/msm-3.18/arch/xtensa/boot/lib/**/inftrees.c
+
+# From wire-os/kernel/msm-3.18/arch/xtensa/kernel/.gitignore
+/wire-os/kernel/msm-3.18/arch/xtensa/kernel/**/vmlinux.lds
+
+# From wire-os/kernel/msm-3.18/crypto/asymmetric_keys/.gitignore
+/wire-os/kernel/msm-3.18/crypto/asymmetric_keys/**/*-asn1.[ch]
+
+# From wire-os/kernel/msm-3.18/drivers/atm/.gitignore
+# Ignore generated files
+/wire-os/kernel/msm-3.18/drivers/atm/**/fore200e_mkfirm
+/wire-os/kernel/msm-3.18/drivers/atm/**/fore200e_pca_fw.c
+/wire-os/kernel/msm-3.18/drivers/atm/**/pca200e.bin
+/wire-os/kernel/msm-3.18/drivers/atm/**/pca200e_ecd.bin2
+
+# From wire-os/kernel/msm-3.18/drivers/eisa/.gitignore
+/wire-os/kernel/msm-3.18/drivers/eisa/**/devlist.h
+
+# From wire-os/kernel/msm-3.18/drivers/gpu/drm/radeon/.gitignore
+/wire-os/kernel/msm-3.18/drivers/gpu/drm/radeon/**/mkregtable
+/wire-os/kernel/msm-3.18/drivers/gpu/drm/radeon/**/*_reg_safe.h
+
+
+# From wire-os/kernel/msm-3.18/drivers/net/wan/.gitignore
+/wire-os/kernel/msm-3.18/drivers/net/wan/**/wanxlfw.inc
+
+# From wire-os/kernel/msm-3.18/drivers/scsi/.gitignore
+/wire-os/kernel/msm-3.18/drivers/scsi/**/53c700_d.h
+
+# From wire-os/kernel/msm-3.18/drivers/scsi/aic7xxx/.gitignore
+/wire-os/kernel/msm-3.18/drivers/scsi/aic7xxx/**/aic79xx_reg.h
+/wire-os/kernel/msm-3.18/drivers/scsi/aic7xxx/**/aic79xx_reg_print.c
+/wire-os/kernel/msm-3.18/drivers/scsi/aic7xxx/**/aic79xx_seq.h
+/wire-os/kernel/msm-3.18/drivers/scsi/aic7xxx/**/aic7xxx_reg.h
+/wire-os/kernel/msm-3.18/drivers/scsi/aic7xxx/**/aic7xxx_reg_print.c
+/wire-os/kernel/msm-3.18/drivers/scsi/aic7xxx/**/aic7xxx_seq.h
+
+# From wire-os/kernel/msm-3.18/drivers/tty/vt/.gitignore
+/wire-os/kernel/msm-3.18/drivers/tty/vt/**/consolemap_deftbl.c
+/wire-os/kernel/msm-3.18/drivers/tty/vt/**/defkeymap.c
+
+# From wire-os/kernel/msm-3.18/drivers/video/logo/.gitignore
+#
+# Generated files
+#
+/wire-os/kernel/msm-3.18/drivers/video/logo/**/*_mono.c
+/wire-os/kernel/msm-3.18/drivers/video/logo/**/*_vga16.c
+/wire-os/kernel/msm-3.18/drivers/video/logo/**/*_clut224.c
+/wire-os/kernel/msm-3.18/drivers/video/logo/**/*_gray256.c
+
+# From wire-os/kernel/msm-3.18/drivers/zorro/.gitignore
+/wire-os/kernel/msm-3.18/drivers/zorro/**/devlist.h
+/wire-os/kernel/msm-3.18/drivers/zorro/**/gen-devlist
+
+# From wire-os/kernel/msm-3.18/firmware/.gitignore
+/wire-os/kernel/msm-3.18/firmware/**/*.gen.S
+/wire-os/kernel/msm-3.18/firmware/**/*.fw
+/wire-os/kernel/msm-3.18/firmware/**/*.bin
+/wire-os/kernel/msm-3.18/firmware/**/*.csp
+/wire-os/kernel/msm-3.18/firmware/**/*.dsp
+/wire-os/kernel/msm-3.18/firmware/**/ihex2fw
+
+# From wire-os/kernel/msm-3.18/firmware/cis/.gitignore
+/wire-os/kernel/msm-3.18/firmware/cis/**/*.cis
+
+# From wire-os/kernel/msm-3.18/kernel/.gitignore
+#
+# Generated files
+#
+/wire-os/kernel/msm-3.18/kernel/**/config_data.h
+/wire-os/kernel/msm-3.18/kernel/**/config_data.gz
+/wire-os/kernel/msm-3.18/kernel/**/timeconst.h
+/wire-os/kernel/msm-3.18/kernel/**/hz.bc
+/wire-os/kernel/msm-3.18/kernel/**/x509_certificate_list
+
+# From wire-os/kernel/msm-3.18/kernel/debug/kdb/.gitignore
+/wire-os/kernel/msm-3.18/kernel/debug/kdb/**/gen-kdb_cmds.c
+
+# From wire-os/kernel/msm-3.18/lib/.gitignore
+#
+# Generated files
+#
+/wire-os/kernel/msm-3.18/lib/**/gen_crc32table
+/wire-os/kernel/msm-3.18/lib/**/crc32table.h
+/wire-os/kernel/msm-3.18/lib/**/oid_registry_data.c
+
+# From wire-os/kernel/msm-3.18/lib/raid6/.gitignore
+/wire-os/kernel/msm-3.18/lib/raid6/**/mktables
+/wire-os/kernel/msm-3.18/lib/raid6/**/altivec*.c
+/wire-os/kernel/msm-3.18/lib/raid6/**/int*.c
+/wire-os/kernel/msm-3.18/lib/raid6/**/tables.c
+/wire-os/kernel/msm-3.18/lib/raid6/**/neon?.c
+
+# From wire-os/kernel/msm-3.18/net/wireless/.gitignore
+/wire-os/kernel/msm-3.18/net/wireless/**/regdb.c
+
+# From wire-os/kernel/msm-3.18/samples/hidraw/.gitignore
+/wire-os/kernel/msm-3.18/samples/hidraw/**/hid-example
+
+# From wire-os/kernel/msm-3.18/samples/mic/mpssd/.gitignore
+/wire-os/kernel/msm-3.18/samples/mic/mpssd/**/mpssd
+
+# From wire-os/kernel/msm-3.18/samples/seccomp/.gitignore
+/wire-os/kernel/msm-3.18/samples/seccomp/**/bpf-direct
+/wire-os/kernel/msm-3.18/samples/seccomp/**/bpf-fancy
+/wire-os/kernel/msm-3.18/samples/seccomp/**/dropper
+
+# From wire-os/kernel/msm-3.18/scripts/.gitignore
+#
+# Generated files
+#
+/wire-os/kernel/msm-3.18/scripts/**/conmakehash
+/wire-os/kernel/msm-3.18/scripts/**/kallsyms
+/wire-os/kernel/msm-3.18/scripts/**/pnmtologo
+/wire-os/kernel/msm-3.18/scripts/**/unifdef
+/wire-os/kernel/msm-3.18/scripts/**/ihex2fw
+/wire-os/kernel/msm-3.18/scripts/**/recordmcount
+/wire-os/kernel/msm-3.18/scripts/**/docproc
+/wire-os/kernel/msm-3.18/scripts/**/sortextable
+/wire-os/kernel/msm-3.18/scripts/**/asn1_compiler
+
+# From wire-os/kernel/msm-3.18/scripts/basic/.gitignore
+/wire-os/kernel/msm-3.18/scripts/basic/**/fixdep
+/wire-os/kernel/msm-3.18/scripts/basic/**/bin2c
+
+# From wire-os/kernel/msm-3.18/scripts/dtc/.gitignore
+/wire-os/kernel/msm-3.18/scripts/dtc/**/dtc
+/wire-os/kernel/msm-3.18/scripts/dtc/**/dtc-lexer.lex.c
+/wire-os/kernel/msm-3.18/scripts/dtc/**/dtc-parser.tab.c
+/wire-os/kernel/msm-3.18/scripts/dtc/**/dtc-parser.tab.h
+
+# From wire-os/kernel/msm-3.18/scripts/genksyms/.gitignore
+/wire-os/kernel/msm-3.18/scripts/genksyms/**/*.hash.c
+/wire-os/kernel/msm-3.18/scripts/genksyms/**/*.lex.c
+/wire-os/kernel/msm-3.18/scripts/genksyms/**/*.tab.c
+/wire-os/kernel/msm-3.18/scripts/genksyms/**/*.tab.h
+/wire-os/kernel/msm-3.18/scripts/genksyms/**/genksyms
+
+# From wire-os/kernel/msm-3.18/scripts/kconfig/.gitignore
+#
+# Generated files
+#
+/wire-os/kernel/msm-3.18/scripts/kconfig/**/config*
+/wire-os/kernel/msm-3.18/scripts/kconfig/**/*.lex.c
+/wire-os/kernel/msm-3.18/scripts/kconfig/**/*.tab.c
+/wire-os/kernel/msm-3.18/scripts/kconfig/**/*.tab.h
+/wire-os/kernel/msm-3.18/scripts/kconfig/**/zconf.hash.c
+/wire-os/kernel/msm-3.18/scripts/kconfig/**/*.moc
+/wire-os/kernel/msm-3.18/scripts/kconfig/**/gconf.glade.h
+/wire-os/kernel/msm-3.18/scripts/kconfig/**/*.pot
+/wire-os/kernel/msm-3.18/scripts/kconfig/**/*.mo
+
+#
+# configuration programs
+#
+/wire-os/kernel/msm-3.18/scripts/kconfig/**/conf
+/wire-os/kernel/msm-3.18/scripts/kconfig/**/mconf
+/wire-os/kernel/msm-3.18/scripts/kconfig/**/nconf
+/wire-os/kernel/msm-3.18/scripts/kconfig/**/qconf
+/wire-os/kernel/msm-3.18/scripts/kconfig/**/gconf
+/wire-os/kernel/msm-3.18/scripts/kconfig/**/kxgettext
+
+# From wire-os/kernel/msm-3.18/scripts/kconfig/lxdialog/.gitignore
+#
+# Generated files
+#
+/wire-os/kernel/msm-3.18/scripts/kconfig/lxdialog/**/lxdialog
+
+# From wire-os/kernel/msm-3.18/scripts/mod/.gitignore
+/wire-os/kernel/msm-3.18/scripts/mod/**/elfconfig.h
+/wire-os/kernel/msm-3.18/scripts/mod/**/mk_elfconfig
+/wire-os/kernel/msm-3.18/scripts/mod/**/modpost
+/wire-os/kernel/msm-3.18/scripts/mod/**/devicetable-offsets.h
+
+# From wire-os/kernel/msm-3.18/scripts/selinux/genheaders/.gitignore
+/wire-os/kernel/msm-3.18/scripts/selinux/genheaders/**/genheaders
+
+# From wire-os/kernel/msm-3.18/scripts/selinux/mdp/.gitignore
+# Generated file
+/wire-os/kernel/msm-3.18/scripts/selinux/mdp/**/mdp
+
+# From wire-os/kernel/msm-3.18/security/apparmor/.gitignore
+#
+# Generated include files
+#
+/wire-os/kernel/msm-3.18/security/apparmor/**/capability_names.h
+/wire-os/kernel/msm-3.18/security/apparmor/**/rlim_names.h
+
+# From wire-os/kernel/msm-3.18/security/selinux/.gitignore
+/wire-os/kernel/msm-3.18/security/selinux/**/av_permissions.h
+/wire-os/kernel/msm-3.18/security/selinux/**/flask.h
+
+# From wire-os/kernel/msm-3.18/security/tomoyo/.gitignore
+/wire-os/kernel/msm-3.18/security/tomoyo/**/builtin-policy.h
+/wire-os/kernel/msm-3.18/security/tomoyo/policy/
+
+# From wire-os/kernel/msm-3.18/sound/oss/.gitignore
+#Ignore generated files
+/wire-os/kernel/msm-3.18/sound/oss/**/pss_boot.h
+/wire-os/kernel/msm-3.18/sound/oss/**/trix_boot.h
+
+# From wire-os/kernel/msm-3.18/tools/cgroup/.gitignore
+/wire-os/kernel/msm-3.18/tools/cgroup/**/cgroup_event_listener
+
+# From wire-os/kernel/msm-3.18/tools/lguest/.gitignore
+/wire-os/kernel/msm-3.18/tools/lguest/**/lguest
+
+# From wire-os/kernel/msm-3.18/tools/lib/traceevent/.gitignore
+/wire-os/kernel/msm-3.18/tools/lib/traceevent/**/TRACEEVENT-CFLAGS
+
+# From wire-os/kernel/msm-3.18/tools/perf/.gitignore
+/wire-os/kernel/msm-3.18/tools/perf/**/PERF-CFLAGS
+/wire-os/kernel/msm-3.18/tools/perf/**/PERF-GUI-VARS
+/wire-os/kernel/msm-3.18/tools/perf/**/PERF-VERSION-FILE
+/wire-os/kernel/msm-3.18/tools/perf/**/perf
+/wire-os/kernel/msm-3.18/tools/perf/**/perf-help
+/wire-os/kernel/msm-3.18/tools/perf/**/perf-record
+/wire-os/kernel/msm-3.18/tools/perf/**/perf-report
+/wire-os/kernel/msm-3.18/tools/perf/**/perf-stat
+/wire-os/kernel/msm-3.18/tools/perf/**/perf-top
+/wire-os/kernel/msm-3.18/tools/perf/**/perf*.1
+/wire-os/kernel/msm-3.18/tools/perf/**/perf*.xml
+/wire-os/kernel/msm-3.18/tools/perf/**/perf*.html
+/wire-os/kernel/msm-3.18/tools/perf/**/common-cmds.h
+/wire-os/kernel/msm-3.18/tools/perf/**/perf.data
+/wire-os/kernel/msm-3.18/tools/perf/**/perf.data.old
+/wire-os/kernel/msm-3.18/tools/perf/**/output.svg
+/wire-os/kernel/msm-3.18/tools/perf/**/perf-archive
+/wire-os/kernel/msm-3.18/tools/perf/**/perf-with-kcore
+/wire-os/kernel/msm-3.18/tools/perf/**/tags
+/wire-os/kernel/msm-3.18/tools/perf/**/TAGS
+/wire-os/kernel/msm-3.18/tools/perf/**/cscope*
+/wire-os/kernel/msm-3.18/tools/perf/**/config.mak
+/wire-os/kernel/msm-3.18/tools/perf/**/config.mak.autogen
+/wire-os/kernel/msm-3.18/tools/perf/**/*-bison.*
+/wire-os/kernel/msm-3.18/tools/perf/**/*-flex.*
+/wire-os/kernel/msm-3.18/tools/perf/**/*.pyc
+/wire-os/kernel/msm-3.18/tools/perf/**/*.pyo
+
+# From wire-os/kernel/msm-3.18/tools/perf/config/feature-checks/.gitignore
+/wire-os/kernel/msm-3.18/tools/perf/config/feature-checks/**/*.d
+/wire-os/kernel/msm-3.18/tools/perf/config/feature-checks/**/*.bin
+
+# From wire-os/kernel/msm-3.18/tools/power/cpupower/.gitignore
+/wire-os/kernel/msm-3.18/tools/power/cpupower/**/.libs
+/wire-os/kernel/msm-3.18/tools/power/cpupower/**/libcpupower.so
+/wire-os/kernel/msm-3.18/tools/power/cpupower/**/libcpupower.so.0
+/wire-os/kernel/msm-3.18/tools/power/cpupower/**/libcpupower.so.0.0.0
+/wire-os/kernel/msm-3.18/tools/power/cpupower/build/ccdv
+/wire-os/kernel/msm-3.18/tools/power/cpupower/**/cpufreq-info
+/wire-os/kernel/msm-3.18/tools/power/cpupower/**/cpufreq-set
+/wire-os/kernel/msm-3.18/tools/power/cpupower/**/cpufreq-aperf
+/wire-os/kernel/msm-3.18/tools/power/cpupower/lib/.libs
+/wire-os/kernel/msm-3.18/tools/power/cpupower/lib/cpufreq.lo
+/wire-os/kernel/msm-3.18/tools/power/cpupower/lib/cpufreq.o
+/wire-os/kernel/msm-3.18/tools/power/cpupower/lib/proc.lo
+/wire-os/kernel/msm-3.18/tools/power/cpupower/lib/proc.o
+/wire-os/kernel/msm-3.18/tools/power/cpupower/lib/sysfs.lo
+/wire-os/kernel/msm-3.18/tools/power/cpupower/lib/sysfs.o
+/wire-os/kernel/msm-3.18/tools/power/cpupower/po/cpupowerutils.pot
+/wire-os/kernel/msm-3.18/tools/power/cpupower/po/*.gmo
+/wire-os/kernel/msm-3.18/tools/power/cpupower/utils/cpufreq-info.o
+/wire-os/kernel/msm-3.18/tools/power/cpupower/utils/cpufreq-set.o
+/wire-os/kernel/msm-3.18/tools/power/cpupower/utils/cpufreq-aperf.o
+/wire-os/kernel/msm-3.18/tools/power/cpupower/**/cpupower
+/wire-os/kernel/msm-3.18/tools/power/cpupower/bench/cpufreq-bench
+/wire-os/kernel/msm-3.18/tools/power/cpupower/debug/kernel/Module.symvers
+/wire-os/kernel/msm-3.18/tools/power/cpupower/debug/i386/centrino-decode
+/wire-os/kernel/msm-3.18/tools/power/cpupower/debug/i386/dump_psb
+/wire-os/kernel/msm-3.18/tools/power/cpupower/debug/i386/intel_gsic
+/wire-os/kernel/msm-3.18/tools/power/cpupower/debug/i386/powernow-k8-decode
+/wire-os/kernel/msm-3.18/tools/power/cpupower/debug/x86_64/centrino-decode
+/wire-os/kernel/msm-3.18/tools/power/cpupower/debug/x86_64/powernow-k8-decode
+
+# From wire-os/kernel/msm-3.18/tools/power/x86/turbostat/.gitignore
+/wire-os/kernel/msm-3.18/tools/power/x86/turbostat/**/turbostat
+
+# From wire-os/kernel/msm-3.18/tools/testing/selftests/kcmp/.gitignore
+/wire-os/kernel/msm-3.18/tools/testing/selftests/kcmp/**/kcmp_test
+/wire-os/kernel/msm-3.18/tools/testing/selftests/kcmp/**/kcmp-test-file
+
+# From wire-os/kernel/msm-3.18/tools/testing/selftests/memfd/.gitignore
+/wire-os/kernel/msm-3.18/tools/testing/selftests/memfd/**/fuse_mnt
+/wire-os/kernel/msm-3.18/tools/testing/selftests/memfd/**/fuse_test
+/wire-os/kernel/msm-3.18/tools/testing/selftests/memfd/**/memfd_test
+/wire-os/kernel/msm-3.18/tools/testing/selftests/memfd/**/memfd-test-file
+
+# From wire-os/kernel/msm-3.18/tools/testing/selftests/mqueue/.gitignore
+/wire-os/kernel/msm-3.18/tools/testing/selftests/mqueue/**/mq_open_tests
+/wire-os/kernel/msm-3.18/tools/testing/selftests/mqueue/**/mq_perf_tests
+
+# From wire-os/kernel/msm-3.18/tools/testing/selftests/net/.gitignore
+/wire-os/kernel/msm-3.18/tools/testing/selftests/net/**/socket
+/wire-os/kernel/msm-3.18/tools/testing/selftests/net/**/psock_fanout
+/wire-os/kernel/msm-3.18/tools/testing/selftests/net/**/psock_tpacket
+
+# From wire-os/kernel/msm-3.18/tools/testing/selftests/rcutorture/.gitignore
+/wire-os/kernel/msm-3.18/tools/testing/selftests/rcutorture/**/initrd
+/wire-os/kernel/msm-3.18/tools/testing/selftests/rcutorture/**/linux-2.6
+/wire-os/kernel/msm-3.18/tools/testing/selftests/rcutorture/**/b[0-9]*
+/wire-os/kernel/msm-3.18/tools/testing/selftests/rcutorture/**/rcu-test-image
+/wire-os/kernel/msm-3.18/tools/testing/selftests/rcutorture/**/res
+/wire-os/kernel/msm-3.18/tools/testing/selftests/rcutorture/**/*.swp
+
+# From wire-os/kernel/msm-3.18/tools/testing/selftests/vm/.gitignore
+/wire-os/kernel/msm-3.18/tools/testing/selftests/vm/**/hugepage-mmap
+/wire-os/kernel/msm-3.18/tools/testing/selftests/vm/**/hugepage-shm
+/wire-os/kernel/msm-3.18/tools/testing/selftests/vm/**/map_hugetlb
+/wire-os/kernel/msm-3.18/tools/testing/selftests/vm/**/thuge-gen
+
+# From wire-os/kernel/msm-3.18/tools/usb/usbip/.gitignore
+/wire-os/kernel/msm-3.18/tools/usb/usbip/**/Makefile
+/wire-os/kernel/msm-3.18/tools/usb/usbip/**/Makefile.in
+/wire-os/kernel/msm-3.18/tools/usb/usbip/**/aclocal.m4
+/wire-os/kernel/msm-3.18/tools/usb/usbip/autom4te.cache/
+/wire-os/kernel/msm-3.18/tools/usb/usbip/**/config.guess
+/wire-os/kernel/msm-3.18/tools/usb/usbip/**/config.h
+/wire-os/kernel/msm-3.18/tools/usb/usbip/**/config.h.in
+/wire-os/kernel/msm-3.18/tools/usb/usbip/**/config.log
+/wire-os/kernel/msm-3.18/tools/usb/usbip/**/config.status
+/wire-os/kernel/msm-3.18/tools/usb/usbip/**/config.sub
+/wire-os/kernel/msm-3.18/tools/usb/usbip/**/configure
+/wire-os/kernel/msm-3.18/tools/usb/usbip/**/depcomp
+/wire-os/kernel/msm-3.18/tools/usb/usbip/**/install-sh
+/wire-os/kernel/msm-3.18/tools/usb/usbip/libsrc/Makefile
+/wire-os/kernel/msm-3.18/tools/usb/usbip/libsrc/Makefile.in
+/wire-os/kernel/msm-3.18/tools/usb/usbip/**/libtool
+/wire-os/kernel/msm-3.18/tools/usb/usbip/**/ltmain.sh
+/wire-os/kernel/msm-3.18/tools/usb/usbip/**/missing
+/wire-os/kernel/msm-3.18/tools/usb/usbip/src/Makefile
+/wire-os/kernel/msm-3.18/tools/usb/usbip/src/Makefile.in
+/wire-os/kernel/msm-3.18/tools/usb/usbip/**/stamp-h1
+/wire-os/kernel/msm-3.18/tools/usb/usbip/libsrc/libusbip.la
+/wire-os/kernel/msm-3.18/tools/usb/usbip/libsrc/libusbip_la-names.lo
+/wire-os/kernel/msm-3.18/tools/usb/usbip/libsrc/libusbip_la-usbip_common.lo
+/wire-os/kernel/msm-3.18/tools/usb/usbip/libsrc/libusbip_la-usbip_host_driver.lo
+/wire-os/kernel/msm-3.18/tools/usb/usbip/libsrc/libusbip_la-vhci_driver.lo
+/wire-os/kernel/msm-3.18/tools/usb/usbip/src/usbip
+/wire-os/kernel/msm-3.18/tools/usb/usbip/src/usbipd
+
+# From wire-os/kernel/msm-3.18/tools/virtio/.gitignore
+/wire-os/kernel/msm-3.18/tools/virtio/**/*.d
+/wire-os/kernel/msm-3.18/tools/virtio/**/virtio_test
+/wire-os/kernel/msm-3.18/tools/virtio/**/vringh_test
+
+# From wire-os/kernel/msm-3.18/tools/vm/.gitignore
+/wire-os/kernel/msm-3.18/tools/vm/**/slabinfo
+/wire-os/kernel/msm-3.18/tools/vm/**/page-types
+
+# From wire-os/kernel/msm-3.18/usr/.gitignore
+#
+# Generated files
+#
+/wire-os/kernel/msm-3.18/usr/**/gen_init_cpio
+/wire-os/kernel/msm-3.18/usr/**/initramfs_data.cpio
+/wire-os/kernel/msm-3.18/usr/**/initramfs_data.cpio.gz
+/wire-os/kernel/msm-3.18/usr/**/initramfs_data.cpio.bz2
+/wire-os/kernel/msm-3.18/usr/**/initramfs_data.cpio.lzma
+/wire-os/kernel/msm-3.18/usr/**/initramfs_list
+/wire-os/kernel/msm-3.18/usr/**/include
+
+# From wire-os/poky/.gitignore
+/wire-os/poky/**/*.pyc
+/wire-os/poky/**/*.pyo
+/wire-os/poky/*.patch
+/wire-os/poky/**/pyshtables.py
+/wire-os/poky/pstage/
+/wire-os/poky/scripts/oe-git-proxy-socks
+/wire-os/poky/sources/
+!/wire-os/poky/**/meta-skeleton
+!/wire-os/poky/**/meta-selftest
+/wire-os/poky/**/hob-image-*.bb
+/wire-os/poky/**/*.swp
+/wire-os/poky/**/*.orig
+/wire-os/poky/**/*.rej
+/wire-os/poky/**/*~
+!/wire-os/poky/**/meta-yocto
+!/wire-os/poky/**/meta-yocto-bsp
+!/wire-os/poky/**/meta-yocto-imported
+/wire-os/poky/documentation/user-manual/user-manual.html
+/wire-os/poky/documentation/user-manual/user-manual.pdf
+/wire-os/poky/documentation/user-manual/user-manual.tgz
+/wire-os/poky/pull-*/
+/wire-os/poky/bitbake/lib/toaster/contrib/tts/backlog.txt
+/wire-os/poky/bitbake/lib/toaster/contrib/tts/log/*
+/wire-os/poky/bitbake/lib/toaster/contrib/tts/.cache/*
+/wire-os/poky/**/build-victor-robot-image-incremental
+
+# From wire-os/poky/build/.gitignore
+/wire-os/poky/build/**/bitbake.lock
+/wire-os/poky/build/cache/
+/wire-os/poky/build/downloads/
+/wire-os/poky/build/sstate-cache/
+/wire-os/poky/build/tmp-glibc/
+/wire-os/poky/build/**/os-version-rev
+/wire-os/poky/build/**/bitbake-cookerdaemon.log
+/wire-os/poky/build/workspace/
+
+# From wire-os/poky/build/conf/.gitignore
+/wire-os/poky/build/conf/**/sanity_info
+/wire-os/poky/build/conf/**/templateconf.cfg
+/wire-os/poky/build/conf/**/bblayers.conf
+/wire-os/poky/build/conf/**/fetcherr.patch
+/wire-os/poky/build/conf/**/siggen.patch
+/wire-os/poky/build/conf/**/tarch.patch
+
+# From wire-os/poky/victor/meta-qcom-prop/recipes-hal-ble/ankibluetoothd/.gitignore
+/wire-os/poky/victor/meta-qcom-prop/recipes-hal-ble/ankibluetoothd/**/*~
+
+# From wire-os/vendor/qcom/opensource/bluetooth/.gitignore
+/wire-os/vendor/qcom/opensource/bluetooth/**/*.lo
+/wire-os/vendor/qcom/opensource/bluetooth/**/*.o
+/wire-os/vendor/qcom/opensource/bluetooth/**/*.dirstamp
+/wire-os/vendor/qcom/opensource/bluetooth/.deps/
+/wire-os/vendor/qcom/opensource/bluetooth/**/.libs
+
+# From wire-os/vendor/qcom/opensource/bluetooth/pxp-monitor/.gitignore
+/wire-os/vendor/qcom/opensource/bluetooth/pxp-monitor/**/lt application files
+/wire-os/vendor/qcom/opensource/bluetooth/pxp-monitor/**/*.apk
+/wire-os/vendor/qcom/opensource/bluetooth/pxp-monitor/**/*.ap_
+
+# files for the dex VM
+/wire-os/vendor/qcom/opensource/bluetooth/pxp-monitor/**/*.dex
+
+# Java class files
+/wire-os/vendor/qcom/opensource/bluetooth/pxp-monitor/**/*.class
+
+# generated files
+/wire-os/vendor/qcom/opensource/bluetooth/pxp-monitor/bin/
+/wire-os/vendor/qcom/opensource/bluetooth/pxp-monitor/gen/
+
+# Local configuration file (sdk path, etc)
+/wire-os/vendor/qcom/opensource/bluetooth/pxp-monitor/**/local.properties
+
+# Eclipse project files
+/wire-os/vendor/qcom/opensource/bluetooth/pxp-monitor/**/.classpath
+/wire-os/vendor/qcom/opensource/bluetooth/pxp-monitor/**/.project
+
+# Proguard folder generated by Eclipse
+/wire-os/vendor/qcom/opensource/bluetooth/pxp-monitor/proguard/
+
+# Intellij project files
+/wire-os/vendor/qcom/opensource/bluetooth/pxp-monitor/**/*.iml
+/wire-os/vendor/qcom/opensource/bluetooth/pxp-monitor/**/*.ipr
+/wire-os/vendor/qcom/opensource/bluetooth/pxp-monitor/**/*.iws
+/wire-os/vendor/qcom/opensource/bluetooth/pxp-monitor/.idea/
+
+
+# From wire-os/vendor/qcom/opensource/qmmf-webserver/webui/src/.gitignore
+# Logs
+/wire-os/vendor/qcom/opensource/qmmf-webserver/webui/src/**/logs
+/wire-os/vendor/qcom/opensource/qmmf-webserver/webui/src/**/*.log
+/wire-os/vendor/qcom/opensource/qmmf-webserver/webui/src/**/npm-debug.log*
+/wire-os/vendor/qcom/opensource/qmmf-webserver/webui/src/**/node_modules
+
+# Optional npm cache 
+
+/wire-os/vendor/qcom/opensource/qmmf-webserver/webui/src/**/.npm
+
+# Optional REPL history
+/wire-os/vendor/qcom/opensource/qmmf-webserver/webui/src/**/.node_repl_history
+
+# idea
+/wire-os/vendor/qcom/opensource/qmmf-webserver/webui/src/.idea/
+/wire-os/vendor/qcom/opensource/qmmf-webserver/webui/src/dist/
+
+# From wire-os-victor/.gitignore
+# Misc
+/wire-os-victor/**/*~
+/wire-os-victor/**/*.d
+/wire-os-victor/**/*.cache
+/wire-os-victor/build/cache
+/wire-os-victor/build/gocache
+/wire-os-victor/build/usercache
+/wire-os-victor/**/anki-deps
+/wire-os-victor/**/compile_commands.json
+/wire-os-victor/**/.clangd
+/wire-os-victor/**/*.swp
+/wire-os-victor/**/matlab.mat
+
+/wire-os-victor/_build*/
+
+# - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+# build folders
+# - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+/wire-os-victor/_build/
+/wire-os-victor/buck-out/
+
+# - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+# Visual Studio Code
+# - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+/wire-os-victor/.vscode/
+
+# - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+# Sublime Project Files
+# - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+/wire-os-victor/**/*.sublime-*
+
+# - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+# Webots
+# - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+/wire-os-victor/**/*.wbproj
+#
+/wire-os-victor/simulator/controllers/webotsCtrlViz/webotsCtrlViz
+/wire-os-victor/simulator/controllers/webotsCtrlViz/resources
+/wire-os-victor/simulator/controllers/webotsCtrlViz/saved_images
+/wire-os-victor/simulator/controllers/webotsCtrlViz/saved_state
+#
+/wire-os-victor/simulator/controllers/webotsCtrlRobot2/webotsCtrlRobot2
+/wire-os-victor/simulator/controllers/webotsCtrlRobot2/resources
+/wire-os-victor/simulator/controllers/webotsCtrlRobot2/nvStorage
+#
+/wire-os-victor/simulator/controllers/webotsCtrlAnim/webotsCtrlAnim
+/wire-os-victor/simulator/controllers/webotsCtrlAnim/resources
+/wire-os-victor/simulator/controllers/webotsCtrlAnim/persistent
+#
+/wire-os-victor/simulator/controllers/webotsCtrlWebServer/webotsCtrlWebServer
+/wire-os-victor/simulator/controllers/webotsCtrlWebServer/resources
+#
+/wire-os-victor/simulator/controllers/webotsCtrlLightCube/webotsCtrlLightCube
+/wire-os-victor/simulator/controllers/webotsCtrlLightCube/resources
+#
+/wire-os-victor/simulator/controllers/webotsCtrlBuildServerTest/webotsCtrlBuildServerTest
+#
+/wire-os-victor/simulator/controllers/webotsCtrlGameEngine2/webotsCtrlGameEngine2
+/wire-os-victor/simulator/controllers/webotsCtrlGameEngine2/resources
+/wire-os-victor/simulator/controllers/webotsCtrlGameEngine2/temp
+/wire-os-victor/simulator/controllers/webotsCtrlGameEngine2/persistent
+#
+/wire-os-victor/simulator/controllers/webotsCtrlKeyboard/webotsCtrlKeyboard
+/wire-os-victor/simulator/controllers/webotsCtrlKeyboard/factory_test_logs
+/wire-os-victor/simulator/controllers/webotsCtrlKeyboard/resources
+#
+/wire-os-victor/simulator/controllers/webotsCtrlDevLog/webotsCtrlDevLog
+#
+/wire-os-victor/simulator/controllers/webotsCtrlNeuralNets/webotsCtrlNeuralNets
+/wire-os-victor/simulator/controllers/webotsCtrlNeuralNets/resources
+#
+/wire-os-victor/simulator/controllers/webotsCtrlGateway/webotsCtrlGateway
+/wire-os-victor/simulator/controllers/webotsCtrlGateway/vic-gateway
+#
+/wire-os-victor/simulator/plugins/physics/cozmo_physics/libcozmo_physics.dylib
+/wire-os-victor/simulator/worlds/__generated__.wbt
+/wire-os-victor/simulator/worlds/__GENERATED_FOR_*__.wbt
+/wire-os-victor/project/build-scripts/webots/__GENERATED_ANIMATIONS_TEST__.cfg
+
+
+# Mac OS
+/wire-os-victor/**/*.DS_Store
+# Xcode
+/wire-os-victor/**/*.mexmaci64
+/wire-os-victor/**/*.o
+/wire-os-victor/**/*.obj
+#*.so
+/wire-os-victor/**/*.la
+/wire-os-victor/**/*.a
+/wire-os-victor/**/*.ko
+/wire-os-victor/**/*.pbxuser
+/wire-os-victor/**/*.mode1v3
+/wire-os-victor/**/*.mode2v3
+/wire-os-victor/**/*.perspectivev3
+/wire-os-victor/**/*.moved-aside
+
+# gradle
+/wire-os-victor/**/.gradle
+
+# Android Studio
+/wire-os-victor/**/*.iml
+
+# Xcode ignores
+/wire-os-victor/**/*.pbxuser
+!/wire-os-victor/**/default.pbxuser
+/wire-os-victor/**/*.mode1v3
+!/wire-os-victor/**/default.mode1v3
+/wire-os-victor/**/*.mode2v3
+!/wire-os-victor/**/default.mode2v3
+/wire-os-victor/**/*.perspectivev3
+!/wire-os-victor/**/default.perspectivev3
+/wire-os-victor/**/*.xcuserstate
+/wire-os-victor/**/*.xccheckout
+/wire-os-victor/**/xcuserdata
+/wire-os-victor/**/*.moved-aside
+/wire-os-victor/**/DerivedData
+
+# MSVC
+/wire-os-victor/**/*.res
+/wire-os-victor/**/*.user
+/wire-os-victor/**/*.suo
+/wire-os-victor/**/*.sdf
+/wire-os-victor/**/*.opensdf
+/wire-os-victor/**/*.ncb
+/wire-os-victor/**/*.exe
+/wire-os-victor/**/*.dll
+/wire-os-victor/**/*.lib
+/wire-os-victor/**/*.aps
+/wire-os-victor/**/*.layout
+/wire-os-victor/**/*.log
+/wire-os-victor/**/*.tlog
+/wire-os-victor/**/*.pdb
+/wire-os-victor/**/*.lastbuildstate
+/wire-os-victor/**/*.idb
+/wire-os-victor/**/*.ilk
+/wire-os-victor/**/*.pyc
+/wire-os-victor/**/*.mexw32
+/wire-os-victor/**/*.mexw64
+/wire-os-victor/**/*.mexmac
+/wire-os-victor/**/*.mexmaci64
+/wire-os-victor/**/*.ipch
+/wire-os-victor/**/*.asv
+/wire-os-victor/matlab/profiling/*
+/wire-os-victor/build/msvc*
+/wire-os-victor/build/xcode*
+/wire-os-victor/project/xcode4/Cozmo/Cozmo.xcodeproj/xcuserdata
+/wire-os-victor/project/xcode4/Cozmo/Cozmo.xcodeproj/project.xcworkspace/xcuserdata
+/wire-os-victor/build/*
+/wire-os-victor/**/screenshot.png
+/wire-os-victor/**/*.mvlib
+/wire-os-victor/**/*.shv*lib
+/wire-os-victor/movidiusTests/shaveTests2/output
+/wire-os-victor/**/*.asmgen
+/wire-os-victor/robot/evmMake/output
+/wire-os-victor/movidiusTests/dmaTests/output
+/wire-os-victor/**/ims.mat
+/wire-os-victor/robot/ld/objects.ldscript
+/wire-os-victor/movidiusTests/shaveTests3/output
+/wire-os-victor/**/interp2InnerLoop.asmgen-1155e305
+/wire-os-victor/robot/.settings
+/wire-os-victor/**/.com.apple.timemachine.supported
+/wire-os-victor/movidiusTests/shaveTests4/output/
+/wire-os-victor/**/CMakeFiles
+/wire-os-victor/**/visionUnitTestController
+/wire-os-victor/robot/robot.uvgui.anki
+/wire-os-victor/robot/robot_robot.dep
+/wire-os-victor/robot/robot_vision-tests.dep
+/wire-os-victor/robot/startup_stm32f429_439xx.lst
+/wire-os-victor/coretech/vision/robot/test/embeddedVisionTests - Copy.cpp
+/wire-os-victor/robot/robot_embedded-tests.dep
+/wire-os-victor/**/*.MikeAnderson
+/wire-os-victor/**/*.dep
+/wire-os-victor/**/*.map
+/wire-os-victor/**/*.lst
+/wire-os-victor/**/*.ini
+/wire-os-victor/robot/syscon/JLinkLog.txt
+/wire-os-victor/robot/chipSimulator/robot_chipSimulator.uvguix.anki
+/wire-os-victor/matlab/basicsResults.mat
+/wire-os-victor/matlab/basicsResults_input.mat
+/wire-os-victor/matlab/perTestStatsResults.mat
+/wire-os-victor/systemTests/tests/intermediate/
+/wire-os-victor/matlab/basicsResults_input*.mat
+/wire-os-victor/systemTests/tests/*.mat
+/wire-os-victor/matlab/recompileBasicsAllInput.mat
+/wire-os-victor/matlab/runParallelProcesses_input*.mat
+/wire-os-victor/matlab/nohup.out
+/wire-os-victor/systemTests/nohup.out
+/wire-os-victor/systemTests/recompileBasicsAllInput.mat
+/wire-os-victor/systemTests/runParallelProcesses_input*.mat
+/wire-os-victor/matlab/runParallelProcesses_mutex*.mat
+/wire-os-victor/matlab/perPoseAllInput.mat
+/wire-os-victor/**/out.txt
+/wire-os-victor/**/trainingState.mat
+/wire-os-victor/**/tmp.mat
+/wire-os-victor/**/tmp_allImages.mat
+/wire-os-victor/**/training.mat
+/wire-os-victor/**/._*
+/wire-os-victor/**/build_makefile
+/wire-os-victor/**/anki.cpp
+/wire-os-victor/**/anki.c
+/wire-os-victor/basestation/cozmo_sounds
+/wire-os-victor/**/a7_out.txt
+/wire-os-victor/a7_out.txt.old
+/wire-os-victor/**/probeTree_*.mat
+/wire-os-victor/**/build_ios
+/wire-os-victor/ios/CozmoVision/build
+/wire-os-victor/ios/CozmoVision/CozmoVision.xcodeproj/xcuserdata
+/wire-os-victor/coretech/vision/matlab/@VisionMarkerTrained/trainingState_*.*
+/wire-os-victor/tools/modulate_led/Project/LCD/MDK-ARM/Demo/
+/wire-os-victor/**/*.uvgui.*
+
+# Unity
+/wire-os-victor/**/build_unity
+/wire-os-victor/unity/Cozmo/Builds
+/wire-os-victor/unity/Cozmo/Library
+/wire-os-victor/unity/Cozmo/Temp
+/wire-os-victor/unity/Cozmo/*.sln
+/wire-os-victor/unity/Cozmo/*.proj
+/wire-os-victor/unity/Cozmo/*.csproj
+/wire-os-victor/unity/Cozmo/*.userprefs
+/wire-os-victor/unity/Cozmo/*.obj
+/wire-os-victor/unity/Cozmo/obj/*
+/wire-os-victor/unity/Cozmo/AssetBundles/*
+/wire-os-victor/unity/Cozmo/Assets/Resources/ThemeSystem/ThemesScriptableObj.asset
+/wire-os-victor/unity/Cozmo/Assets/Resources/ThemeSystem/ThemesScriptableObj.asset.meta
+
+# Visual studio
+/wire-os-victor/**/*.userprefs
+/wire-os-victor/**/.vs
+
+/wire-os-victor/build_xcode/*.xcworkspace
+/wire-os-victor/build_xcode/game_osx
+/wire-os-victor/build_xcode/game_ios
+/wire-os-victor/build_xcode/game_sim
+/wire-os-victor/**/generated
+/wire-os-victor/unity/ios/UnityBuild
+/wire-os-victor/unity/ios/build
+/wire-os-victor/unity/ios/opencv
+/wire-os-victor/unity/ios/sphinx
+/wire-os-victor/unity/ios/HockeyApp
+/wire-os-victor/**/animationTool.zip
+/wire-os-victor/UnityDASDll/UnityDASDll/obj/*
+/wire-os-victor/UnityDASDll/UnityDASDll/bin/*
+
+# pycharm
+/wire-os-victor/**/.idea
+
+# Anki specific
+# kercre123 - turn this into a submodule
+#EXTERNALS
+/wire-os-victor/**/TAGS
+/wire-os-victor/**/.subtreeconfig
+
+#symlinks
+/wire-os-victor/resources/config/engine/firmware
+/wire-os-victor/resources/config/engine/old_firmware
+/wire-os-victor/resources/config/engine/firmware_*
+
+# Misc
+/wire-os-victor/**/*.bak
+# *.orig ## Going to try NOT ignoring these for awhile: if you don't need them, just delete them instead of hiding them
+/wire-os-victor/**/*~
+/wire-os-victor/**/*.d
+/wire-os-victor/**/*.cache
+/wire-os-victor/**/*.swp
+/wire-os-victor/**/*.TMP
+/wire-os-victor/**/.vagrant
+/wire-os-victor/**/.idea
+/wire-os-victor/**/*.swo
+/wire-os-victor/**/binary_cache
+/wire-os-victor/**/perf.data
+/wire-os-victor/**/symbol_cache
+/wire-os-victor/**/.projectile
+
+# victor envsetup.sh
+/wire-os-victor/**/filelist
+
+
+# MSVC
+/wire-os-victor/tools/**/bin
+/wire-os-victor/tools/**/obj
+
+# Keil
+/wire-os-victor/**/*.saved_uv4
+/wire-os-victor/**/*.uvgui.*
+/wire-os-victor/**.uvguix.*
+/wire-os-victor/**/*.uvoptx.*
+/wire-os-victor/**/*.uvprojx.*
+/wire-os-victor/**/*.uvproj
+/wire-os-victor/robot/VERSION
+/wire-os-victor/**/uImage
+
+# Ban .safe files, unless they're in the proper place (releases)
+/wire-os-victor/**/*.safe
+!/wire-os-victor/robot/**/releases/*.safe
+!/wire-os-victor/**/makesafe*.exe
+!/wire-os-victor/**/hex2bin.exe
+/wire-os-victor/**.bin
+!/wire-os-victor/robot/**/binaries/*.bin
+!/wire-os-victor/robot/**/releases/*.bin
+/wire-os-victor/**/fixture.build
+
+/wire-os-victor/robot/include/anki/cozmo/robot/version.h
+/wire-os-victor/robot/fixture/ankilog/Release
+/wire-os-victor/robot/fixture/ankilog/Debug
+/wire-os-victor/robot/fixture/ankilog/obj
+
+/wire-os-victor/robot/hal/dfu/dfu
+
+/wire-os-victor/**/buildMakefile
+
+/wire-os-victor/**/build_xcode_osx
+/wire-os-victor/**/build_xcode_ios
+/wire-os-victor/**/build_xcode_sim
+/wire-os-victor/**/c-source.txt
+/wire-os-victor/robot/build
+/wire-os-victor/robot/syscon/build
+/wire-os-victor/**/ankic.cpp
+/wire-os-victor/**/enjpeg-test
+/wire-os-victor/**/build.old
+/wire-os-victor/**/buildMakefile.old
+/wire-os-victor/include/anki/cozmo/shared/msgIDs.txt
+
+
+/wire-os-victor/**.output
+# **.S - Find a better way to keep your build artifacts out of the tree - .S is used by embedded team for ASM
+/wire-os-victor/**.dump
+/wire-os-victor/**/*.htm
+/wire-os-victor/block/build/
+/wire-os-victor/block/lst/
+/wire-os-victor/robot/**/build/
+/wire-os-victor/**/rx-packet-log.txt
+/wire-os-victor/coretech/project/gyp/common-robot.lst
+/wire-os-victor/coretech/project/gyp/common-shared-test.lst
+/wire-os-victor/coretech/project/gyp/common-test.lst
+/wire-os-victor/coretech/project/gyp/common.lst
+/wire-os-victor/coretech/project/gyp/messaging-robot.lst
+/wire-os-victor/coretech/project/gyp/messaging.lst
+/wire-os-victor/coretech/project/gyp/planning-robot.lst
+/wire-os-victor/coretech/project/gyp/planning-standalone.lst
+/wire-os-victor/coretech/project/gyp/planning-test.lst
+/wire-os-victor/coretech/project/gyp/planning.lst
+/wire-os-victor/coretech/project/gyp/vision-robot.lst
+/wire-os-victor/coretech/project/gyp/vision-test.lst
+/wire-os-victor/coretech/project/gyp/vision.lst
+/wire-os-victor/project/gyp/pluginPhysics.lst
+/wire-os-victor/project/gyp/cozmoEngine-test.lst
+/wire-os-victor/project/gyp/cozmoEngine.lst
+/wire-os-victor/project/gyp/ctrlRobot.lst
+/wire-os-victor/project/gyp/ctrlViz.lst
+/wire-os-victor/project/gyp/clad.lst
+/wire-os-victor/project/gyp/robotGeneratedClad.lst
+/wire-os-victor/coretech/generated/ios
+/wire-os-victor/coretech/generated/mac
+/wire-os-victor/coretech/generated/android
+/wire-os-victor/generated/ios
+/wire-os-victor/generated/mac
+/wire-os-victor/generated/android
+/wire-os-victor/coretech/project/gyp/build
+/wire-os-victor/project/gyp/build
+/wire-os-victor/generated/clad
+/wire-os-victor/generated/cladPython
+/wire-os-victor/generated/webots/src/plugins/physics/physics.c
+/wire-os-victor/robot/generated/clad*
+/wire-os-victor/resources/config/faciometric
+/wire-os-victor/resources/config/basestation/vision/faciometric
+/wire-os-victor/generated/cladCsharp/clad
+/wire-os-victor/**/JLinkLog.txt
+/wire-os-victor/**/*.lst
+/wire-os-victor/robot/cube/lst/block.m51
+/wire-os-victor/resources/config/engine/AnkiLogStringTables.json
+/wire-os-victor/coretech/generated
+/wire-os-victor/unity/Cozmo/Assets/Resources/ThemeSystem/ThemesScriptableObj.asset
+/wire-os-victor/unity/metaReport*.txt
+
+# Buck
+/wire-os-victor/**.buckd
+/wire-os-victor/**/buck-out
+/wire-os-victor/**/local.properties
+
+# DAS
+/wire-os-victor/unity/Cozmo/Assets/StreamingAssets/DASConfig.json
+/wire-os-victor/unity/Cozmo/Assets/StreamingAssets/DASConfig.json.meta
+
+#Copied LocalizedStrings For Boot Before Asset Bundles Load
+/wire-os-victor/unity/Cozmo/Assets/Resources/bootstrap/LocalizedStrings/
+/wire-os-victor/unity/Cozmo/Assets/Resources/bootstrap/LocalizedStrings.meta
+
+# Code Lab
+/wire-os-victor/unity/Cozmo/Assets/StreamingAssets/Scratch/LocalizedStrings
+/wire-os-victor/unity/Cozmo/Assets/StreamingAssets/Scratch/LocalizedStrings.meta
+/wire-os-victor/unity/Cozmo/Assets/StreamingAssets/Scratch/fonts
+/wire-os-victor/unity/Cozmo/Assets/StreamingAssets/Scratch/fonts.meta
+/wire-os-victor/unity/Cozmo/Assets/StreamingAssets/Scratch/lib/closure-library
+/wire-os-victor/unity/Cozmo/Assets/StreamingAssets/Scratch/lib/closure-library.meta
+/wire-os-victor/unity/Cozmo/Assets/StreamingAssets/Scratch/lib/vm/dist/web/scratch-vm.js.map
+/wire-os-victor/unity/Cozmo/Assets/StreamingAssets/Scratch/lib/vm/dist/web/scratch-vm.js.map.meta
+/wire-os-victor/**/.vscode
+
+# Xamarin
+/wire-os-victor/apps/xamarin/chewie/Droid/bin
+/wire-os-victor/apps/xamarin/chewie/Droid/obj
+/wire-os-victor/apps/xamarin/chewie/iOS/bin
+/wire-os-victor/apps/xamarin/chewie/iOS/obj
+/wire-os-victor/apps/xamarin/chewie/codelab.Droid/bin
+/wire-os-victor/apps/xamarin/chewie/codelab.Droid/obj
+/wire-os-victor/apps/xamarin/chewie/codelab.iOS/bin
+/wire-os-victor/apps/xamarin/chewie/codelab.iOS/obj
+/wire-os-victor/**/robot_ip.txt
+
+# Allow us to include okaoVision libs
+!/wire-os-victor/okaoVision/lib/Android/armeabi-v7a/*.a
+!/wire-os-victor/okaoVision/lib/MacOSX/*.a
+
+# The 3rd directory contains drops from 3rd party vendors and all files should be allowed
+!/wire-os-victor/3rd/**
+
+/wire-os-victor/**/victor-packages
+/wire-os-victor/**/log.txt
+
+/wire-os-victor/**/robot_sshkey
+/wire-os-victor/ota/out
+/wire-os-victor/ota/ota-server/*.ota
+/wire-os-victor/snowboy/server/main
+
+/wire-os-victor/**/oe-logs
+/wire-os-victor/**/oe-workdir
+
+# From wire-os-victor/3rd/acapela/.gitignore
+!/wire-os-victor/3rd/acapela/**/*.a
+!/wire-os-victor/3rd/acapela/**/*.alf
+!/wire-os-victor/3rd/acapela/**/*.bin
+!/wire-os-victor/3rd/acapela/**/*.dca
+!/wire-os-victor/3rd/acapela/**/*.dylib
+!/wire-os-victor/3rd/acapela/**/*.f0s
+!/wire-os-victor/3rd/acapela/**/*.gro
+!/wire-os-victor/3rd/acapela/**/*.icns
+!/wire-os-victor/3rd/acapela/**/*.ldi
+!/wire-os-victor/3rd/acapela/**/*.ini
+!/wire-os-victor/3rd/acapela/**/*.oso
+!/wire-os-victor/3rd/acapela/**/*.pdf
+!/wire-os-victor/3rd/acapela/**/*.so
+!/wire-os-victor/3rd/acapela/**/*.trz
+
+# From wire-os-victor/3rd/aubio/.gitignore
+!/wire-os-victor/3rd/aubio/**/*.a
+!/wire-os-victor/3rd/aubio/**/*.dylib
+!/wire-os-victor/3rd/aubio/**/*.so
+
+# From wire-os-victor/3rd/avs-device-sdk/.gitignore
+!/wire-os-victor/3rd/avs-device-sdk/**/*.a
+!/wire-os-victor/3rd/avs-device-sdk/**/*.dylib
+!/wire-os-victor/3rd/avs-device-sdk/**/*.so
+
+# From wire-os-victor/3rd/flatbuffers/.gitignore
+!/wire-os-victor/3rd/flatbuffers/**/*.a
+!/wire-os-victor/3rd/flatbuffers/**/*.dylib
+!/wire-os-victor/3rd/flatbuffers/**/*.so
+
+# From wire-os-victor/3rd/libsodium/.gitignore
+!/wire-os-victor/3rd/libsodium/**/*.a
+!/wire-os-victor/3rd/libsodium/**/*.dylib
+!/wire-os-victor/3rd/libsodium/**/*.so
+!/wire-os-victor/3rd/libsodium/**/*.la
+
+# From wire-os-victor/3rd/opencv/.gitignore
+!/wire-os-victor/3rd/opencv/**/*.a
+!/wire-os-victor/3rd/opencv/**/*.dylib
+!/wire-os-victor/3rd/opencv/**/*.so
+!/wire-os-victor/3rd/opencv/**/*.jar
+!/wire-os-victor/3rd/opencv/**/filelist
+
+# From wire-os-victor/3rd/opencv/modules/gapi/doc/slides/.gitignore
+/wire-os-victor/3rd/opencv/modules/gapi/doc/slides/**/*.bbl
+/wire-os-victor/3rd/opencv/modules/gapi/doc/slides/**/*.blg
+/wire-os-victor/3rd/opencv/modules/gapi/doc/slides/**/*.sty
+/wire-os-victor/3rd/opencv/modules/gapi/doc/slides/**/*.tex
+/wire-os-victor/3rd/opencv/modules/gapi/doc/slides/**/*-converted-to.pdf
+/wire-os-victor/3rd/opencv/modules/gapi/doc/slides/mtheme.sty/
+
+# From wire-os-victor/3rd/opencv/modules/java/test/android_test/.gitignore
+/wire-os-victor/3rd/opencv/modules/java/test/android_test/bin/
+/wire-os-victor/3rd/opencv/modules/java/test/android_test/gen/
+/wire-os-victor/3rd/opencv/modules/java/test/android_test/**/build.xml
+/wire-os-victor/3rd/opencv/modules/java/test/android_test/**/local.properties
+/wire-os-victor/3rd/opencv/modules/java/test/android_test/**/proguard-project.txt
+/wire-os-victor/3rd/opencv/modules/java/test/android_test/**/project.properties
+/wire-os-victor/3rd/opencv/modules/java/test/android_test/**/default.properties
+
+# From wire-os-victor/3rd/opencv/modules/python/package/.gitignore
+/wire-os-victor/3rd/opencv/modules/python/package/**/__pycache__
+/wire-os-victor/3rd/opencv/modules/python/package/**/*.pyc
+/wire-os-victor/3rd/opencv/modules/python/package/**/*.egg-info
+/wire-os-victor/3rd/opencv/modules/python/package/**/*dist
+
+# From wire-os-victor/3rd/opencv/modules/videoio/misc/plugin_ffmpeg/.gitignore
+/wire-os-victor/3rd/opencv/modules/videoio/misc/plugin_ffmpeg/**/*.tar.xz
+
+# From wire-os-victor/3rd/opus/.gitignore
+!/wire-os-victor/3rd/opus/**/*.a
+!/wire-os-victor/3rd/opus/**/*.dylib
+!/wire-os-victor/3rd/opus/**/*.so
+!/wire-os-victor/3rd/opus/**/*.la
+
+# From wire-os-victor/3rd/pffft/.gitignore
+!/wire-os-victor/3rd/pffft/**/*.a
+
+# From wire-os-victor/3rd/protobuf/.gitignore
+!/wire-os-victor/3rd/protobuf/**/*.a
+!/wire-os-victor/3rd/protobuf/**/*.dylib
+!/wire-os-victor/3rd/protobuf/**/*.so
+!/wire-os-victor/3rd/protobuf/**/*.la
+
+# From wire-os-victor/3rd/pryon_lite/.gitignore
+!/wire-os-victor/3rd/pryon_lite/**/*.a
+!/wire-os-victor/3rd/pryon_lite/**/*.bin
+!/wire-os-victor/3rd/pryon_lite/**/*.so
+
+# From wire-os-victor/3rd/speexdsp/.gitignore
+!/wire-os-victor/3rd/speexdsp/**/*.a
+!/wire-os-victor/3rd/speexdsp/**/*.dylib
+!/wire-os-victor/3rd/speexdsp/**/*.so
+!/wire-os-victor/3rd/speexdsp/**/*.la
+
+# From wire-os-victor/3rd/tensorflow2/tensorflow/lite/experimental/examples/unity/TensorFlowLitePlugin/.gitignore
+# Unity generated
+/wire-os-victor/3rd/tensorflow2/tensorflow/lite/experimental/examples/unity/TensorFlowLitePlugin/Builds/
+/wire-os-victor/3rd/tensorflow2/tensorflow/lite/experimental/examples/unity/TensorFlowLitePlugin/Temp/
+/wire-os-victor/3rd/tensorflow2/tensorflow/lite/experimental/examples/unity/TensorFlowLitePlugin/Library/
+/wire-os-victor/3rd/tensorflow2/tensorflow/lite/experimental/examples/unity/TensorFlowLitePlugin/obj/
+# Visual Studio / MonoDevelop generated
+/wire-os-victor/3rd/tensorflow2/tensorflow/lite/experimental/examples/unity/TensorFlowLitePlugin/**/*.csproj
+/wire-os-victor/3rd/tensorflow2/tensorflow/lite/experimental/examples/unity/TensorFlowLitePlugin/**/*.unityproj
+/wire-os-victor/3rd/tensorflow2/tensorflow/lite/experimental/examples/unity/TensorFlowLitePlugin/**/*.sln
+/wire-os-victor/3rd/tensorflow2/tensorflow/lite/experimental/examples/unity/TensorFlowLitePlugin/**/*.suo
+/wire-os-victor/3rd/tensorflow2/tensorflow/lite/experimental/examples/unity/TensorFlowLitePlugin/**/*.userprefs
+# OS generated
+/wire-os-victor/3rd/tensorflow2/tensorflow/lite/experimental/examples/unity/TensorFlowLitePlugin/**/.DS_Store
+
+# From wire-os-victor/3rd/tensorflow2/tensorflow/lite/java/demo/.gitignore
+# This file is based on https://github.com/github/gitignore/blob/master/Android.gitignore
+/wire-os-victor/3rd/tensorflow2/tensorflow/lite/java/demo/**/*.iml
+/wire-os-victor/3rd/tensorflow2/tensorflow/lite/java/demo/.idea/compiler.xml
+/wire-os-victor/3rd/tensorflow2/tensorflow/lite/java/demo/.idea/copyright
+/wire-os-victor/3rd/tensorflow2/tensorflow/lite/java/demo/.idea/dictionaries
+/wire-os-victor/3rd/tensorflow2/tensorflow/lite/java/demo/.idea/gradle.xml
+/wire-os-victor/3rd/tensorflow2/tensorflow/lite/java/demo/.idea/libraries
+/wire-os-victor/3rd/tensorflow2/tensorflow/lite/java/demo/.idea/inspectionProfiles
+/wire-os-victor/3rd/tensorflow2/tensorflow/lite/java/demo/.idea/misc.xml
+/wire-os-victor/3rd/tensorflow2/tensorflow/lite/java/demo/.idea/modules.xml
+/wire-os-victor/3rd/tensorflow2/tensorflow/lite/java/demo/.idea/runConfigurations.xml
+/wire-os-victor/3rd/tensorflow2/tensorflow/lite/java/demo/.idea/tasks.xml
+/wire-os-victor/3rd/tensorflow2/tensorflow/lite/java/demo/.idea/workspace.xml
+/wire-os-victor/3rd/tensorflow2/tensorflow/lite/java/demo/**/.gradle
+/wire-os-victor/3rd/tensorflow2/tensorflow/lite/java/demo/**/local.properties
+/wire-os-victor/3rd/tensorflow2/tensorflow/lite/java/demo/**/.DS_Store
+/wire-os-victor/3rd/tensorflow2/tensorflow/lite/java/demo/build/
+/wire-os-victor/3rd/tensorflow2/tensorflow/lite/java/demo/gradleBuild/
+/wire-os-victor/3rd/tensorflow2/tensorflow/lite/java/demo/**/*.apk
+/wire-os-victor/3rd/tensorflow2/tensorflow/lite/java/demo/**/*.ap_
+/wire-os-victor/3rd/tensorflow2/tensorflow/lite/java/demo/**/*.dex
+/wire-os-victor/3rd/tensorflow2/tensorflow/lite/java/demo/**/*.class
+/wire-os-victor/3rd/tensorflow2/tensorflow/lite/java/demo/bin/
+/wire-os-victor/3rd/tensorflow2/tensorflow/lite/java/demo/gen/
+/wire-os-victor/3rd/tensorflow2/tensorflow/lite/java/demo/out/
+/wire-os-victor/3rd/tensorflow2/tensorflow/lite/java/demo/**/*.log
+/wire-os-victor/3rd/tensorflow2/tensorflow/lite/java/demo/.navigation/
+/wire-os-victor/3rd/tensorflow2/tensorflow/lite/java/demo/captures
+/wire-os-victor/3rd/tensorflow2/tensorflow/lite/java/demo/**/.externalNativeBuild
+
+# From wire-os-victor/3rd/tensorflow2/tensorflow/lite/tools/benchmark/ios/TFLiteBenchmark/TFLiteBenchmark/Frameworks/.gitignore
+/wire-os-victor/3rd/tensorflow2/tensorflow/lite/tools/benchmark/ios/TFLiteBenchmark/TFLiteBenchmark/Frameworks/*.framework/
+
+# From wire-os-victor/apps/demos/ble-pairing/web-client/.gitignore
+/wire-os-victor/apps/demos/ble-pairing/web-client/**/node_modules
+
+# From wire-os-victor/cloud/.gitignore
+/wire-os-victor/cloud/build/
+/wire-os-victor/cloud/go/
+/wire-os-victor/cloud/**/*.pb.go
+/wire-os-victor/cloud/**/*.pb.gw.go
+
+# From wire-os-victor/coretech/common/.gitignore
+# Misc
+/wire-os-victor/coretech/common/**/*.bak
+/wire-os-victor/coretech/common/**/*~
+/wire-os-victor/coretech/common/**/matlab.mat
+# Mac OS
+/wire-os-victor/coretech/common/**/*.DS_Store
+# Xcode
+/wire-os-victor/coretech/common/**/*.mexmaci64
+/wire-os-victor/coretech/common/**/*.o
+/wire-os-victor/coretech/common/**/*.obj
+/wire-os-victor/coretech/common/**/*.so
+/wire-os-victor/coretech/common/**/*.la
+/wire-os-victor/coretech/common/**/*.a
+/wire-os-victor/coretech/common/**/*.pbxuser
+/wire-os-victor/coretech/common/**/*.mode1v3
+/wire-os-victor/coretech/common/**/*.mode2v3
+/wire-os-victor/coretech/common/**/*.perspectivev3
+/wire-os-victor/coretech/common/**/*.moved-aside
+# MSVC
+/wire-os-victor/coretech/common/**/*.res
+/wire-os-victor/coretech/common/**/*.user
+/wire-os-victor/coretech/common/**/*.suo
+/wire-os-victor/coretech/common/**/*.sdf
+/wire-os-victor/coretech/common/**/*.opensdf
+/wire-os-victor/coretech/common/**/*.ncb
+/wire-os-victor/coretech/common/**/*.exe
+/wire-os-victor/coretech/common/**/*.dll
+/wire-os-victor/coretech/common/**/*.lib
+/wire-os-victor/coretech/common/**/*.aps
+/wire-os-victor/coretech/common/**/*.layout
+/wire-os-victor/coretech/common/**/*.log
+/wire-os-victor/coretech/common/**/*.tlog
+/wire-os-victor/coretech/common/**/*.pdb
+/wire-os-victor/coretech/common/**/*.lastbuildstate
+/wire-os-victor/coretech/common/**/*.idb
+/wire-os-victor/coretech/common/**/*.ilk
+/wire-os-victor/coretech/common/**/*.pyc
+/wire-os-victor/coretech/common/**/*.mexw32
+/wire-os-victor/coretech/common/**/*.mexw64
+/wire-os-victor/coretech/common/**/*.mexmac
+/wire-os-victor/coretech/common/**/*.mexmaci64
+/wire-os-victor/coretech/common/**/*.ipch
+/wire-os-victor/coretech/common/**/*.asv
+/wire-os-victor/coretech/common/build/msvc*
+/wire-os-victor/coretech/common/build/xcode*
+/wire-os-victor/coretech/common/project/xcode4/CoreTech_Common/CoreTech_Common.xcodeproj/xcuserdata
+/wire-os-victor/coretech/common/project/xcode4/CoreTech_Common_Test/CoreTech_Common_Test.xcodeproj/xcuserdata
+/wire-os-victor/coretech/common/project/xcode4/CoreTech_Common.xcworkspace/xcuserdata
+/wire-os-victor/coretech/common/project/xcode4/CoreTech_Common/CoreTech_Common.xcodeproj/project.xcworkspace/xcuserdata
+/wire-os-victor/coretech/common/project/xcode4/CoreTech_Math/CoreTech_Math.xcodeproj/xcuserdata
+/wire-os-victor/coretech/common/project/xcode4/CoreTech_Math/CoreTech_Math.xcodeproj/project.xcworkspace/xcuserdata
+/wire-os-victor/coretech/common/project/xcode4/CoreTech_Common_Embedded/CoreTech_Common_Embedded.xcodeproj/xcuserdata
+/wire-os-victor/coretech/common/project/xcode4/CoreTech_Common_Embedded_Test/CoreTech_Common_Embedded_Test.xcodeproj/xcuserdata
+/wire-os-victor/coretech/common/project/myriad1/unitTests/output
+/wire-os-victor/coretech/common/**/build
+
+# From wire-os-victor/coretech/vision/.gitignore
+# Misc
+/wire-os-victor/coretech/vision/**/*.bak
+/wire-os-victor/coretech/vision/**/*~
+/wire-os-victor/coretech/vision/**/matlab.mat
+# Mac OS
+/wire-os-victor/coretech/vision/**/*.DS_Store
+# Xcode
+/wire-os-victor/coretech/vision/**/*.mexmaci64
+/wire-os-victor/coretech/vision/**/*.o
+/wire-os-victor/coretech/vision/**/*.obj
+/wire-os-victor/coretech/vision/**/*.so
+/wire-os-victor/coretech/vision/**/*.la
+/wire-os-victor/coretech/vision/**/*.a
+/wire-os-victor/coretech/vision/**/*.pbxuser
+/wire-os-victor/coretech/vision/**/*.mode1v3
+/wire-os-victor/coretech/vision/**/*.mode2v3
+/wire-os-victor/coretech/vision/**/*.perspectivev3
+/wire-os-victor/coretech/vision/**/*.moved-aside
+# MSVC
+/wire-os-victor/coretech/vision/**/*.res
+/wire-os-victor/coretech/vision/**/*.user
+/wire-os-victor/coretech/vision/**/*.suo
+/wire-os-victor/coretech/vision/**/*.sdf
+/wire-os-victor/coretech/vision/**/*.opensdf
+/wire-os-victor/coretech/vision/**/*.ncb
+/wire-os-victor/coretech/vision/**/*.exe
+/wire-os-victor/coretech/vision/**/*.dll
+/wire-os-victor/coretech/vision/**/*.lib
+/wire-os-victor/coretech/vision/**/*.aps
+/wire-os-victor/coretech/vision/**/*.layout
+/wire-os-victor/coretech/vision/**/*.log
+/wire-os-victor/coretech/vision/**/*.tlog
+/wire-os-victor/coretech/vision/**/*.pdb
+/wire-os-victor/coretech/vision/**/*.lastbuildstate
+/wire-os-victor/coretech/vision/**/*.idb
+/wire-os-victor/coretech/vision/**/*.ilk
+/wire-os-victor/coretech/vision/**/*.pyc
+/wire-os-victor/coretech/vision/**/*.mexw32
+/wire-os-victor/coretech/vision/**/*.mexw64
+/wire-os-victor/coretech/vision/**/*.mexmac
+/wire-os-victor/coretech/vision/**/*.mexmaci64
+/wire-os-victor/coretech/vision/**/*.ipch
+/wire-os-victor/coretech/vision/**/*.asv
+/wire-os-victor/coretech/vision/**/build
+/wire-os-victor/coretech/vision/**/*.psess
+/wire-os-victor/coretech/vision/project/myriad1/unitTests/output
+
+# From wire-os-victor/lib/audio/.gitignore
+#OS junk files
+/wire-os-victor/lib/audio/**/[Tt]humbs.db
+/wire-os-victor/lib/audio/**/*.DS_Store
+
+#Version control files
+/wire-os-victor/lib/audio/**/.svn
+
+/wire-os-victor/lib/audio/**/*~
+/wire-os-victor/lib/audio/**/*.swp
+/wire-os-victor/lib/audio/**/*.sdf
+/wire-os-victor/lib/audio/**/*.opensdf
+/wire-os-victor/lib/audio/**/*.aps
+/wire-os-victor/lib/audio/**/*.vcxproj.user
+/wire-os-victor/lib/audio/**/*.v12.suo
+/wire-os-victor/lib/audio/**/.\#*
+/wire-os-victor/lib/audio/**/\#*\#
+/wire-os-victor/lib/audio/**/TAGS
+
+/wire-os-victor/lib/audio/gunzip --keep ../wwise/libs/mac/debug/libAkSoundEngine.a.gz
+
+#wwise sdks files
+/wire-os-victor/lib/audio/wwise/versions/*
+
+#generated gyp files
+/wire-os-victor/lib/audio/**/generated
+/wire-os-victor/lib/audio/**/build
+/wire-os-victor/lib/audio/_build/
+/wire-os-victor/lib/audio/plugins/cozmo/gyp/build
+/wire-os-victor/lib/audio/plugins/hijackAudio/build
+/wire-os-victor/lib/audio/plugins/hijackAudio/project/.vs
+/wire-os-victor/lib/audio/plugins/wavePortal/build
+/wire-os-victor/lib/audio/plugins/wavePortal/project/.vs
+/wire-os-victor/lib/audio/gyp/build
+
+#python generated files
+/wire-os-victor/lib/audio/**/*.pyc
+/wire-os-victor/lib/audio/tools/WWiseToAppMetadata/.idea
+
+#Xcode
+/wire-os-victor/lib/audio/gyp/audioengine.xcodeproj
+
+# From wire-os-victor/lib/audio/wwise/versions/.gitignore
+# Ignore everything in this directory                                                               
+/wire-os-victor/lib/audio/wwise/versions/**/*                                                                                                   
+# Except this file                                                                                  
+!/wire-os-victor/lib/audio/wwise/versions/**/.gitignore
+
+
+# From wire-os-victor/lib/audio/zipreader/.gitignore
+/wire-os-victor/lib/audio/zipreader/**/zipReaderTest
+/wire-os-victor/lib/audio/zipreader/**/zipReaderTest.dSYM
+
+# From wire-os-victor/lib/crash-reporting-vicos/.gitignore
+/wire-os-victor/lib/crash-reporting-vicos/**/*.DS_Store
+
+# From wire-os-victor/lib/das-client/.gitignore
+#OS junk files
+/wire-os-victor/lib/das-client/**/[Tt]humbs.db
+/wire-os-victor/lib/das-client/**/*.DS_Store
+/wire-os-victor/lib/das-client/**/*.bak*
+/wire-os-victor/lib/das-client/**/*.swp
+/wire-os-victor/lib/das-client/**/*.orig
+
+#emacs turds
+/wire-os-victor/lib/das-client/**/*~
+/wire-os-victor/lib/das-client/**/TAGS
+
+# Xcode ignores
+/wire-os-victor/lib/das-client/build/*
+/wire-os-victor/lib/das-client/**/*.pbxuser
+!/wire-os-victor/lib/das-client/**/default.pbxuser
+/wire-os-victor/lib/das-client/**/*.mode1v3
+!/wire-os-victor/lib/das-client/**/default.mode1v3
+/wire-os-victor/lib/das-client/**/*.mode2v3
+!/wire-os-victor/lib/das-client/**/default.mode2v3
+/wire-os-victor/lib/das-client/**/*.perspectivev3
+!/wire-os-victor/lib/das-client/**/default.perspectivev3
+/wire-os-victor/lib/das-client/**/*.xcuserstate
+/wire-os-victor/lib/das-client/**/*.xccheckout
+/wire-os-victor/lib/das-client/**/xcuserdata
+/wire-os-victor/lib/das-client/**/profile
+/wire-os-victor/lib/das-client/**/*.moved-aside
+/wire-os-victor/lib/das-client/**/DerivedData
+
+#Project files
+/wire-os-victor/lib/das-client/[Bb]uild/
+
+#twine/localization
+/wire-os-victor/lib/das-client/**/*.strings
+
+#Version control files
+/wire-os-victor/lib/das-client/**/.svn
+
+#gyp output directories
+/wire-os-victor/lib/das-client/**/gyp-*
+/wire-os-victor/lib/das-client/gyp/das-client.xcodeproj
+#Anki specific ignores
+
+# From wire-os-victor/lib/das-client/android/.gitignore
+# Built application files
+/wire-os-victor/lib/das-client/android/**/*.apk
+/wire-os-victor/lib/das-client/android/**/*.ap_
+
+# Files for the Dalvik VM
+/wire-os-victor/lib/das-client/android/**/*.dex
+
+# Java class files
+/wire-os-victor/lib/das-client/android/**/*.class
+
+# Generated files
+/wire-os-victor/lib/das-client/android/bin/
+/wire-os-victor/lib/das-client/android/gen/
+
+# Gradle files
+/wire-os-victor/lib/das-client/android/.gradle/
+/wire-os-victor/lib/das-client/android/build/
+
+# Local configuration file (sdk path, etc)
+/wire-os-victor/lib/das-client/android/**/local.properties
+
+# Proguard folder generated by Eclipse
+/wire-os-victor/lib/das-client/android/proguard/
+
+# Android Studio
+/wire-os-victor/lib/das-client/android/**/*.iml
+/wire-os-victor/lib/das-client/android/.idea/
+
+/wire-os-victor/lib/das-client/android/**/*.DS_Store
+
+/wire-os-victor/lib/das-client/android/DASNativeLib/obj
+/wire-os-victor/lib/das-client/android/DASNativeLib/libs
+/wire-os-victor/lib/das-client/android/DASLibDemo/libs
+/wire-os-victor/lib/das-client/android/DASLibDemo/obj
+
+/wire-os-victor/lib/das-client/android/**/nbproject
+/wire-os-victor/lib/das-client/android/**/*.DS_Store
+
+# emacs related files
+/wire-os-victor/lib/das-client/android/**/*~
+/wire-os-victor/lib/das-client/android/**/.dir-locals.el
+
+# From wire-os-victor/lib/das-client/ios/.gitignore
+/wire-os-victor/lib/das-client/ios/**/tmpbuild
+
+# From wire-os-victor/lib/das-client/unix/.gitignore
+/wire-os-victor/lib/das-client/unix/**/dasDemoApp.dSYM
+/wire-os-victor/lib/das-client/unix/**/dasDemoApp
+/wire-os-victor/lib/das-client/unix/**/*.o
+/wire-os-victor/lib/das-client/unix/**/*.a
+/wire-os-victor/lib/das-client/unix/dasLogs/*
+/wire-os-victor/lib/das-client/unix/**/das_unittest
+/wire-os-victor/lib/das-client/unix/gameLogs/*
+/wire-os-victor/lib/das-client/unix/**/*.d
+
+# From wire-os-victor/lib/util/.gitignore
+/wire-os-victor/lib/util/**/.DS_Store
+/wire-os-victor/lib/util/**/.idea
+
+# android studio
+/wire-os-victor/lib/util/**/*.iml
+
+# project folders
+/wire-os-victor/lib/util/project/gyp-android
+/wire-os-victor/lib/util/project/gyp-ios
+/wire-os-victor/lib/util/project/gyp-mac
+/wire-os-victor/lib/util/project/gyp-linux
+
+# configure artifacts
+/wire-os-victor/lib/util/project/gyp/utilUnitTest.lst
+/wire-os-victor/lib/util/project/gyp/util.lst
+/wire-os-victor/lib/util/project/gyp/networkApp.lst
+/wire-os-victor/lib/util/project/gyp/utilUnitTestExe.lst
+/wire-os-victor/lib/util/project/gyp/utilEmbedded.lst
+/wire-os-victor/lib/util/project/gyp/audioUtil.lst
+/wire-os-victor/lib/util/project/gyp/clad.lst
+/wire-os-victor/lib/util/project/gyp/messages.lst
+/wire-os-victor/lib/util/source/anki/messages
+
+#build artifacts
+/wire-os-victor/lib/util/**/*.pyc
+/wire-os-victor/lib/util/libs/packaged/include
+/wire-os-victor/lib/util/project/gyp/build
+/wire-os-victor/lib/util/_build/
+/wire-os-victor/lib/util/generated/
+
+#emacs turds
+/wire-os-victor/lib/util/**/*~
+
+# Vagrant
+/wire-os-victor/lib/util/**/.vagrant
+
+# Sonar
+/wire-os-victor/lib/util/**/.sonar*
+
+
+# From wire-os-victor/lib/util/android/.gitignore
+/wire-os-victor/lib/util/android/buck-out
+/wire-os-victor/lib/util/android/.buckd
+
+# From wire-os-victor/lib/util/project/buildServer/.gitignore
+/wire-os-victor/lib/util/project/buildServer/build/
+
+# From wire-os-victor/lib/util/source/3rd/civetweb/.gitignore
+
+/wire-os-victor/lib/util/source/3rd/civetweb/**/civetweb
+/wire-os-victor/lib/util/source/3rd/civetweb/**/civetweb_test
+/wire-os-victor/lib/util/source/3rd/civetweb/**/libcivetweb.a
+/wire-os-victor/lib/util/source/3rd/civetweb/**/libcivetweb.so
+/wire-os-victor/lib/util/source/3rd/civetweb/**/*-cache
+/wire-os-victor/lib/util/source/3rd/civetweb/**/out
+/wire-os-victor/lib/util/source/3rd/civetweb/**/*.dmg
+/wire-os-victor/lib/util/source/3rd/civetweb/**/*.msi
+/wire-os-victor/lib/util/source/3rd/civetweb/**/*.exe
+/wire-os-victor/lib/util/source/3rd/civetweb/**/*.zip
+/wire-os-victor/lib/util/source/3rd/civetweb/**/[oO]utput
+/wire-os-victor/lib/util/source/3rd/civetweb/**/[tT]esting
+
+/wire-os-victor/lib/util/source/3rd/civetweb/**/*.o
+
+#################
+## CMake
+#################
+/wire-os-victor/lib/util/source/3rd/civetweb/CMakeCache.txt
+/wire-os-victor/lib/util/source/3rd/civetweb/CMakeFiles
+/wire-os-victor/lib/util/source/3rd/civetweb/mingw-builds
+
+#################
+## Eclipse
+#################
+
+/wire-os-victor/lib/util/source/3rd/civetweb/**/*.pydevproject
+/wire-os-victor/lib/util/source/3rd/civetweb/**/.project
+/wire-os-victor/lib/util/source/3rd/civetweb/**/.metadata
+/wire-os-victor/lib/util/source/3rd/civetweb/bin/
+/wire-os-victor/lib/util/source/3rd/civetweb/tmp/
+/wire-os-victor/lib/util/source/3rd/civetweb/**/*.tmp
+/wire-os-victor/lib/util/source/3rd/civetweb/**/*.bak
+/wire-os-victor/lib/util/source/3rd/civetweb/**/*.swp
+/wire-os-victor/lib/util/source/3rd/civetweb/**/*~.nib
+/wire-os-victor/lib/util/source/3rd/civetweb/**/local.properties
+/wire-os-victor/lib/util/source/3rd/civetweb/**/.classpath
+/wire-os-victor/lib/util/source/3rd/civetweb/.settings/
+/wire-os-victor/lib/util/source/3rd/civetweb/**/.loadpath
+
+# External tool builders
+/wire-os-victor/lib/util/source/3rd/civetweb/.externalToolBuilders/
+
+# Locally stored "Eclipse launch configurations"
+/wire-os-victor/lib/util/source/3rd/civetweb/**/*.launch
+
+# CDT-specific
+/wire-os-victor/lib/util/source/3rd/civetweb/**/.cproject
+
+# PDT-specific
+/wire-os-victor/lib/util/source/3rd/civetweb/**/.buildpath
+
+
+#################
+## Visual Studio
+#################
+
+## Ignore Visual Studio temporary files, build results, and
+## files generated by popular Visual Studio add-ons.
+
+# User-specific files
+/wire-os-victor/lib/util/source/3rd/civetweb/**/*.suo
+/wire-os-victor/lib/util/source/3rd/civetweb/**/*.user
+/wire-os-victor/lib/util/source/3rd/civetweb/**/*.sln.docstates
+
+# Text-mode IDE tools
+/wire-os-victor/lib/util/source/3rd/civetweb/**/cscope.out
+/wire-os-victor/lib/util/source/3rd/civetweb/**/tags
+
+# Build results
+
+/wire-os-victor/lib/util/source/3rd/civetweb/[Dd]ebug/
+/wire-os-victor/lib/util/source/3rd/civetweb/[Dd]ebug CONSOLE/
+/wire-os-victor/lib/util/source/3rd/civetweb/[Rr]elease/
+/wire-os-victor/lib/util/source/3rd/civetweb/x64/
+/wire-os-victor/lib/util/source/3rd/civetweb/[Bb]in/
+/wire-os-victor/lib/util/source/3rd/civetweb/[Oo]bj/
+
+# MSTest test Results
+/wire-os-victor/lib/util/source/3rd/civetweb/[Tt]est[Rr]esult*/
+/wire-os-victor/lib/util/source/3rd/civetweb/**/[Bb]uild[Ll]og.*
+
+/wire-os-victor/lib/util/source/3rd/civetweb/**/*_i.c
+/wire-os-victor/lib/util/source/3rd/civetweb/**/*_p.c
+/wire-os-victor/lib/util/source/3rd/civetweb/**/*.ilk
+/wire-os-victor/lib/util/source/3rd/civetweb/**/*.meta
+/wire-os-victor/lib/util/source/3rd/civetweb/**/*.obj
+/wire-os-victor/lib/util/source/3rd/civetweb/**/*.pch
+/wire-os-victor/lib/util/source/3rd/civetweb/**/*.pdb
+/wire-os-victor/lib/util/source/3rd/civetweb/**/*.pgc
+/wire-os-victor/lib/util/source/3rd/civetweb/**/*.pgd
+/wire-os-victor/lib/util/source/3rd/civetweb/**/*.rsp
+/wire-os-victor/lib/util/source/3rd/civetweb/**/*.sbr
+/wire-os-victor/lib/util/source/3rd/civetweb/**/*.tlb
+/wire-os-victor/lib/util/source/3rd/civetweb/**/*.tli
+/wire-os-victor/lib/util/source/3rd/civetweb/**/*.tlh
+/wire-os-victor/lib/util/source/3rd/civetweb/**/*.tmp
+/wire-os-victor/lib/util/source/3rd/civetweb/**/*.tmp_proj
+/wire-os-victor/lib/util/source/3rd/civetweb/**/*.log
+/wire-os-victor/lib/util/source/3rd/civetweb/**/*.vspscc
+/wire-os-victor/lib/util/source/3rd/civetweb/**/*.vssscc
+/wire-os-victor/lib/util/source/3rd/civetweb/**/.builds
+/wire-os-victor/lib/util/source/3rd/civetweb/**/*.pidb
+/wire-os-victor/lib/util/source/3rd/civetweb/**/*.log
+/wire-os-victor/lib/util/source/3rd/civetweb/**/*.scc
+
+# Visual C++ cache files
+/wire-os-victor/lib/util/source/3rd/civetweb/ipch/
+/wire-os-victor/lib/util/source/3rd/civetweb/**/*.aps
+/wire-os-victor/lib/util/source/3rd/civetweb/**/*.ncb
+/wire-os-victor/lib/util/source/3rd/civetweb/**/*.opensdf
+/wire-os-victor/lib/util/source/3rd/civetweb/**/*.sdf
+/wire-os-victor/lib/util/source/3rd/civetweb/**/*.cachefile
+
+# Visual Studio profiler
+/wire-os-victor/lib/util/source/3rd/civetweb/**/*.psess
+/wire-os-victor/lib/util/source/3rd/civetweb/**/*.vsp
+/wire-os-victor/lib/util/source/3rd/civetweb/**/*.vspx
+
+# Guidance Automation Toolkit
+/wire-os-victor/lib/util/source/3rd/civetweb/**/*.gpState
+
+# ReSharper is a .NET coding add-in
+/wire-os-victor/lib/util/source/3rd/civetweb/_ReSharper*/
+/wire-os-victor/lib/util/source/3rd/civetweb/**/*.[Rr]e[Ss]harper
+
+# TeamCity is a build add-in
+/wire-os-victor/lib/util/source/3rd/civetweb/**/_TeamCity*
+
+# DotCover is a Code Coverage Tool
+/wire-os-victor/lib/util/source/3rd/civetweb/**/*.dotCover
+
+# NCrunch
+/wire-os-victor/lib/util/source/3rd/civetweb/**/*.ncrunch*
+/wire-os-victor/lib/util/source/3rd/civetweb/**/.*crunch*.local.xml
+
+# Installshield output folder
+/wire-os-victor/lib/util/source/3rd/civetweb/[Ee]xpress/
+
+# DocProject is a documentation generator add-in
+/wire-os-victor/lib/util/source/3rd/civetweb/DocProject/buildhelp/
+/wire-os-victor/lib/util/source/3rd/civetweb/DocProject/Help/*.HxT
+/wire-os-victor/lib/util/source/3rd/civetweb/DocProject/Help/*.HxC
+/wire-os-victor/lib/util/source/3rd/civetweb/DocProject/Help/*.hhc
+/wire-os-victor/lib/util/source/3rd/civetweb/DocProject/Help/*.hhk
+/wire-os-victor/lib/util/source/3rd/civetweb/DocProject/Help/*.hhp
+/wire-os-victor/lib/util/source/3rd/civetweb/DocProject/Help/Html2
+/wire-os-victor/lib/util/source/3rd/civetweb/DocProject/Help/html
+
+# Click-Once directory
+/wire-os-victor/lib/util/source/3rd/civetweb/publish/
+
+# Publish Web Output
+/wire-os-victor/lib/util/source/3rd/civetweb/**/*.Publish.xml
+/wire-os-victor/lib/util/source/3rd/civetweb/**/*.pubxml
+
+# NuGet Packages Directory
+## TODO: If you have NuGet Package Restore enabled, uncomment the next line
+#packages/
+
+# Windows Azure Build Output
+/wire-os-victor/lib/util/source/3rd/civetweb/**/csx
+/wire-os-victor/lib/util/source/3rd/civetweb/**/*.build.csdef
+
+# Windows Store app package directory
+/wire-os-victor/lib/util/source/3rd/civetweb/AppPackages/
+
+# Others
+/wire-os-victor/lib/util/source/3rd/civetweb/sql/
+/wire-os-victor/lib/util/source/3rd/civetweb/**/*.Cache
+/wire-os-victor/lib/util/source/3rd/civetweb/ClientBin/
+/wire-os-victor/lib/util/source/3rd/civetweb/**/[Ss]tyle[Cc]op.*
+/wire-os-victor/lib/util/source/3rd/civetweb/**/~$*
+/wire-os-victor/lib/util/source/3rd/civetweb/**/*~
+/wire-os-victor/lib/util/source/3rd/civetweb/**/*.dbmdl
+/wire-os-victor/lib/util/source/3rd/civetweb/**/*.[Pp]ublish.xml
+/wire-os-victor/lib/util/source/3rd/civetweb/**/*.pfx
+/wire-os-victor/lib/util/source/3rd/civetweb/**/*.publishsettings
+
+# RIA/Silverlight projects
+/wire-os-victor/lib/util/source/3rd/civetweb/Generated_Code/
+
+# Backup & report files from converting an old project file to a newer
+# Visual Studio version. Backup files are not needed, because we have git ;-)
+/wire-os-victor/lib/util/source/3rd/civetweb/_UpgradeReport_Files/
+/wire-os-victor/lib/util/source/3rd/civetweb/Backup*/
+/wire-os-victor/lib/util/source/3rd/civetweb/**/UpgradeLog*.XML
+/wire-os-victor/lib/util/source/3rd/civetweb/**/UpgradeLog*.htm
+
+# SQL Server files
+/wire-os-victor/lib/util/source/3rd/civetweb/App_Data/*.mdf
+/wire-os-victor/lib/util/source/3rd/civetweb/App_Data/*.ldf
+
+#############
+## Windows detritus
+#############
+
+# Windows image file caches
+/wire-os-victor/lib/util/source/3rd/civetweb/**/Thumbs.db
+/wire-os-victor/lib/util/source/3rd/civetweb/**/ehthumbs.db
+
+# Folder config file
+/wire-os-victor/lib/util/source/3rd/civetweb/**/Desktop.ini
+
+# Recycle Bin used on file shares
+/wire-os-victor/lib/util/source/3rd/civetweb/$RECYCLE.BIN/
+
+# Mac crap
+/wire-os-victor/lib/util/source/3rd/civetweb/**/.DS_Store
+
+
+#############
+## Python
+#############
+
+/wire-os-victor/lib/util/source/3rd/civetweb/**/*.py[co]
+
+# Packages
+/wire-os-victor/lib/util/source/3rd/civetweb/**/*.egg
+/wire-os-victor/lib/util/source/3rd/civetweb/**/*.egg-info
+/wire-os-victor/lib/util/source/3rd/civetweb/dist/
+/wire-os-victor/lib/util/source/3rd/civetweb/eggs/
+/wire-os-victor/lib/util/source/3rd/civetweb/parts/
+/wire-os-victor/lib/util/source/3rd/civetweb/var/
+/wire-os-victor/lib/util/source/3rd/civetweb/sdist/
+/wire-os-victor/lib/util/source/3rd/civetweb/develop-eggs/
+/wire-os-victor/lib/util/source/3rd/civetweb/**/.installed.cfg
+
+# Installer logs
+/wire-os-victor/lib/util/source/3rd/civetweb/**/pip-log.txt
+
+# Unit test / coverage reports
+/wire-os-victor/lib/util/source/3rd/civetweb/**/.coverage
+/wire-os-victor/lib/util/source/3rd/civetweb/**/.tox
+
+#Translations
+/wire-os-victor/lib/util/source/3rd/civetweb/**/*.mo
+
+#Mr Developer
+/wire-os-victor/lib/util/source/3rd/civetweb/**/.mr.developer.cfg
+
+
+##########################
+## Files created by tests
+##########################
+/wire-os-victor/lib/util/source/3rd/civetweb/**/requests.db
+
+##########################
+## Files created by ctags
+##########################
+/wire-os-victor/lib/util/source/3rd/civetweb/**/?tags
+/wire-os-victor/lib/util/source/3rd/civetweb/**/?tags?
+
+##########################
+## Files created by autotools
+##########################
+/wire-os-victor/lib/util/source/3rd/civetweb/**/*.lo
+/wire-os-victor/lib/util/source/3rd/civetweb/**/.libs
+
+##########################
+## Travis Build Dir
+##########################
+/wire-os-victor/lib/util/source/3rd/civetweb/ci/lua
+
+
+
+# From wire-os-victor/lib/util/source/3rd/hdrhistogram_c/.gitignore
+/wire-os-victor/lib/util/source/3rd/hdrhistogram_c/**/target
+/wire-os-victor/lib/util/source/3rd/hdrhistogram_c/**/.idea
+/wire-os-victor/lib/util/source/3rd/hdrhistogram_c/**/out
+/wire-os-victor/lib/util/source/3rd/hdrhistogram_c/**/gh-pages
+/wire-os-victor/lib/util/source/3rd/hdrhistogram_c/**/HdrHistogram.iml
+/wire-os-victor/lib/util/source/3rd/hdrhistogram_c/**/.classpath
+/wire-os-victor/lib/util/source/3rd/hdrhistogram_c/**/.project
+/wire-os-victor/lib/util/source/3rd/hdrhistogram_c/**/.settings
+/wire-os-victor/lib/util/source/3rd/hdrhistogram_c/**/release.properties
+/wire-os-victor/lib/util/source/3rd/hdrhistogram_c/bin
+/wire-os-victor/lib/util/source/3rd/hdrhistogram_c/**/alltests
+/wire-os-victor/lib/util/source/3rd/hdrhistogram_c/**/format_example
+/wire-os-victor/lib/util/source/3rd/hdrhistogram_c/**/*.a
+/wire-os-victor/lib/util/source/3rd/hdrhistogram_c/**/*.iml
+/wire-os-victor/lib/util/source/3rd/hdrhistogram_c/**/.sconsign.dblite
+/wire-os-victor/lib/util/source/3rd/hdrhistogram_c/**/*.o
+/wire-os-victor/lib/util/source/3rd/hdrhistogram_c/**/*.os
+/wire-os-victor/lib/util/source/3rd/hdrhistogram_c/**/.DS_Store
+/wire-os-victor/lib/util/source/3rd/hdrhistogram_c/**/build
+/wire-os-victor/lib/util/source/3rd/hdrhistogram_c/**/CMakeCache.txt
+/wire-os-victor/lib/util/source/3rd/hdrhistogram_c/CMakeFiles/
+/wire-os-victor/lib/util/source/3rd/hdrhistogram_c/**/CPackConfig.cmake
+/wire-os-victor/lib/util/source/3rd/hdrhistogram_c/**/CPackSourceConfig.cmake
+/wire-os-victor/lib/util/source/3rd/hdrhistogram_c/**/CTestTestfile.cmake
+/wire-os-victor/lib/util/source/3rd/hdrhistogram_c/**/Makefile
+/wire-os-victor/lib/util/source/3rd/hdrhistogram_c/Testing/
+/wire-os-victor/lib/util/source/3rd/hdrhistogram_c/**/cmake_install.cmake
+/wire-os-victor/lib/util/source/3rd/hdrhistogram_c/examples/CMakeFiles/
+/wire-os-victor/lib/util/source/3rd/hdrhistogram_c/examples/CTestTestfile.cmake
+/wire-os-victor/lib/util/source/3rd/hdrhistogram_c/examples/Makefile
+/wire-os-victor/lib/util/source/3rd/hdrhistogram_c/examples/cmake_install.cmake
+/wire-os-victor/lib/util/source/3rd/hdrhistogram_c/examples/hdr_decoder
+/wire-os-victor/lib/util/source/3rd/hdrhistogram_c/examples/hiccup
+/wire-os-victor/lib/util/source/3rd/hdrhistogram_c/src/CMakeFiles/
+/wire-os-victor/lib/util/source/3rd/hdrhistogram_c/src/CTestTestfile.cmake
+/wire-os-victor/lib/util/source/3rd/hdrhistogram_c/src/Makefile
+/wire-os-victor/lib/util/source/3rd/hdrhistogram_c/src/cmake_install.cmake
+/wire-os-victor/lib/util/source/3rd/hdrhistogram_c/src/libhdr_histogram.so
+/wire-os-victor/lib/util/source/3rd/hdrhistogram_c/test/CMakeFiles/
+/wire-os-victor/lib/util/source/3rd/hdrhistogram_c/test/CTestTestfile.cmake
+/wire-os-victor/lib/util/source/3rd/hdrhistogram_c/test/Makefile
+/wire-os-victor/lib/util/source/3rd/hdrhistogram_c/test/cmake_install.cmake
+/wire-os-victor/lib/util/source/3rd/hdrhistogram_c/test/hdr_dbl_histogram_test
+/wire-os-victor/lib/util/source/3rd/hdrhistogram_c/test/hdr_histogram_log_test
+/wire-os-victor/lib/util/source/3rd/hdrhistogram_c/test/hdr_histogram_test
+/wire-os-victor/lib/util/source/3rd/hdrhistogram_c/test/perftest
+/wire-os-victor/lib/util/source/3rd/hdrhistogram_c/**/.gdb_history
+/wire-os-victor/lib/util/source/3rd/hdrhistogram_c/**/debug
+/wire-os-victor/lib/util/source/3rd/hdrhistogram_c/**/cmake-build-debug
+
+
+# From wire-os-victor/lib/util/source/3rd/libwebp/.gitignore
+/wire-os-victor/lib/util/source/3rd/libwebp/**/*.l[ao]
+/wire-os-victor/lib/util/source/3rd/libwebp/**/*.[ao]
+/wire-os-victor/lib/util/source/3rd/libwebp/**/*.pc
+/wire-os-victor/lib/util/source/3rd/libwebp/**/.deps
+/wire-os-victor/lib/util/source/3rd/libwebp/**/.libs
+/wire-os-victor/lib/util/source/3rd/libwebp/aclocal.m4
+/wire-os-victor/lib/util/source/3rd/libwebp/ar-lib
+/wire-os-victor/lib/util/source/3rd/libwebp/autom4te.cache
+/wire-os-victor/lib/util/source/3rd/libwebp/compile
+/wire-os-victor/lib/util/source/3rd/libwebp/config.*
+/wire-os-victor/lib/util/source/3rd/libwebp/configure
+/wire-os-victor/lib/util/source/3rd/libwebp/depcomp
+/wire-os-victor/lib/util/source/3rd/libwebp/dist
+/wire-os-victor/lib/util/source/3rd/libwebp/install-sh
+/wire-os-victor/lib/util/source/3rd/libwebp/libtool
+/wire-os-victor/lib/util/source/3rd/libwebp/ltmain.sh
+/wire-os-victor/lib/util/source/3rd/libwebp/missing
+/wire-os-victor/lib/util/source/3rd/libwebp/mkinstalldirs
+/wire-os-victor/lib/util/source/3rd/libwebp/stamp-h1
+/wire-os-victor/lib/util/source/3rd/libwebp/**/Makefile
+/wire-os-victor/lib/util/source/3rd/libwebp/**/Makefile.in
+/wire-os-victor/lib/util/source/3rd/libwebp/examples/anim_diff
+/wire-os-victor/lib/util/source/3rd/libwebp/examples/[cdv]webp
+/wire-os-victor/lib/util/source/3rd/libwebp/examples/gif2webp
+/wire-os-victor/lib/util/source/3rd/libwebp/examples/img2webp
+/wire-os-victor/lib/util/source/3rd/libwebp/examples/webpmux
+/wire-os-victor/lib/util/source/3rd/libwebp/src/webp/config.h*
+/wire-os-victor/lib/util/source/3rd/libwebp/src/webp/stamp-h1
+/wire-os-victor/lib/util/source/3rd/libwebp/output
+/wire-os-victor/lib/util/source/3rd/libwebp/doc/output
+/wire-os-victor/lib/util/source/3rd/libwebp/**/*.idb
+/wire-os-victor/lib/util/source/3rd/libwebp/**/*.pdb
+/wire-os-victor/lib/util/source/3rd/libwebp/iosbuild
+/wire-os-victor/lib/util/source/3rd/libwebp/WebP.framework
+/wire-os-victor/lib/util/source/3rd/libwebp/**/CMakeCache.txt
+/wire-os-victor/lib/util/source/3rd/libwebp/CMakeFiles/
+/wire-os-victor/lib/util/source/3rd/libwebp/**/cmake_install.cmake
+/wire-os-victor/lib/util/source/3rd/libwebp/**/.gradle
+/wire-os-victor/lib/util/source/3rd/libwebp/build
+/wire-os-victor/lib/util/source/3rd/libwebp/extras/get_disto
+/wire-os-victor/lib/util/source/3rd/libwebp/extras/webp_quality
+
+# From wire-os-victor/lib/util/source/3rd/libwebp/m4/.gitignore
+/wire-os-victor/lib/util/source/3rd/libwebp/m4/libtool.m4
+/wire-os-victor/lib/util/source/3rd/libwebp/m4/lt*.m4
+
+# From wire-os-victor/lib/util/tools/branch-scripts/.gitignore
+/wire-os-victor/lib/util/tools/branch-scripts/**/client_secret.json
+/wire-os-victor/lib/util/tools/branch-scripts/**/excludes
+/wire-os-victor/lib/util/tools/branch-scripts/**/picklist
+
+# From wire-os-victor/lib/util/tools/build/rake/ruby/lib/plist/.gitignore
+/wire-os-victor/lib/util/tools/build/rake/ruby/lib/plist/**/rdoc
+/wire-os-victor/lib/util/tools/build/rake/ruby/lib/plist/**/coverage
+/wire-os-victor/lib/util/tools/build/rake/ruby/lib/plist/**/pkg
+
+# From wire-os-victor/platform/camera/vicos/camera_client/test/.gitignore
+/wire-os-victor/platform/camera/vicos/camera_client/test/**/camera_test
+/wire-os-victor/platform/camera/vicos/camera_client/test/**/camera_client
+/wire-os-victor/platform/camera/vicos/camera_client/test/**/bayer2rgb
+
+/wire-os-victor/platform/camera/vicos/camera_client/test/**/*.rgb
+
+# From wire-os-victor/project/doxygen/.gitignore
+# victor/project/doxygen/.gitignore
+# Ignore doxygen output
+/wire-os-victor/project/doxygen/**/html
+/wire-os-victor/project/doxygen/**/xml
+/wire-os-victor/project/doxygen/**/das_new.cpp
+/wire-os-victor/project/doxygen/**/das_remove.cpp
+/wire-os-victor/project/doxygen/**/all_das_msg.cpp
+
+# From wire-os-victor/project/victor/simpleperf/.gitignore
+/wire-os-victor/project/victor/simpleperf/**/perf.data
+/wire-os-victor/project/victor/simpleperf/**/binary_cache
+/wire-os-victor/project/victor/simpleperf/**/symbol_cache
+/wire-os-victor/project/victor/simpleperf/**/report.html
+/wire-os-victor/project/victor/simpleperf/**/cloud_process
+/wire-os-victor/project/victor/simpleperf/**/cozmoengined
+/wire-os-victor/project/victor/simpleperf/**/robot_supervisor
+/wire-os-victor/project/victor/simpleperf/**/victor_animator
+/wire-os-victor/project/victor/simpleperf/**/vic-anim
+/wire-os-victor/project/victor/simpleperf/**/vic-engine
+/wire-os-victor/project/victor/simpleperf/**/vic-cloud
+/wire-os-victor/project/victor/simpleperf/**/vic-robot
+
+
+# From wire-os-victor/project/victor/tools/axattr/.gitignore
+/wire-os-victor/project/victor/tools/axattr/**/*.o
+/wire-os-victor/project/victor/tools/axattr/toolchain/
+/wire-os-victor/project/victor/tools/axattr/**/axattr
+
+# From wire-os-victor/resources/webserver/.gitignore
+/wire-os-victor/resources/webserver/**/devData.json
+
+# From wire-os-victor/robot/.gitignore
+/wire-os-victor/robot/**/RTE
+/wire-os-victor/robot/**/binaries
+/wire-os-victor/robot/**/dist
+/wire-os-victor/robot/**/staging
+/wire-os-victor/robot/**/generated
+/wire-os-victor/robot/**/node_modules
+/wire-os-victor/robot/**/package-lock.json
+/wire-os-victor/robot/crypto/*/*manifest*
+
+# From wire-os-victor/robot/cube_firmware/.gitignore
+/wire-os-victor/robot/cube_firmware/**/.DS_Store
+/wire-os-victor/robot/cube_firmware/**/build
+/wire-os-victor/robot/cube_firmware/**/JLinkLog.txt
+/wire-os-victor/robot/cube_firmware/**/JLinkSettings.ini
+/wire-os-victor/robot/cube_firmware/**/*.uvguix.*
+/wire-os-victor/robot/cube_firmware/**/*.uvgui.*
+/wire-os-victor/robot/cube_firmware/**/cube_application.bin
+/wire-os-victor/robot/cube_firmware/**/RTE
+/wire-os-victor/robot/cube_firmware/**/EventRecorderStub.scvd
+!/wire-os-victor/robot/cube_firmware/**/*.obj
+!/wire-os-victor/robot/cube_firmware/**/*.ini
+/wire-os-victor/robot/cube_firmware/**/JLinkSettings.ini
+/wire-os-victor/robot/cube_firmware/**/*.o
+/wire-os-victor/robot/cube_firmware/**/*.elf
+
+# From wire-os-victor/robot/cube_firmware/bletool/.gitignore
+/wire-os-victor/robot/cube_firmware/bletool/**/node_modules
+
+# From wire-os-victor/robot/fixture/cube/sdk_da1458x/5.0.4/projects/target_apps/prod_test/prod_test_anki_cube/.gitignore
+/wire-os-victor/robot/fixture/cube/sdk_da1458x/5.0.4/projects/target_apps/prod_test/prod_test_anki_cube/Keil_5/out_580
+
+# From wire-os-victor/robot/fixture/helpware/.gitignore
+/wire-os-victor/robot/fixture/helpware/**/display
+/wire-os-victor/robot/fixture/helpware/**/display_blit
+
+# From wire-os-victor/robot/syscon/.gitignore
+/wire-os-victor/robot/syscon/**/__pycache__
+/wire-os-victor/robot/syscon/**/.DS_Store
+/wire-os-victor/robot/syscon/**/*.uvguix.*
+/wire-os-victor/robot/syscon/**/*.uvgui.*
+/wire-os-victor/robot/syscon/**/build
+/wire-os-victor/robot/syscon/**/RTE
+/wire-os-victor/robot/syscon/**/*.TMP
+/wire-os-victor/robot/syscon/**/*.pyc
+/wire-os-victor/robot/syscon/**/JLinkLog.txt
+/wire-os-victor/robot/syscon/**/JLinkSettings.ini
+/wire-os-victor/robot/syscon/**/node_modules
+
+# From wire-os-victor/robot/syscon/tools/.gitignore
+/wire-os-victor/robot/syscon/tools/**/production.pem
+
+# From wire-os-victor/robot/test/.gitignore
+/wire-os-victor/robot/test/**/imu_test
+/wire-os-victor/robot/test/**/lcd_test
+/wire-os-victor/robot/test/**/spine_loop
+/wire-os-victor/robot/test/**/a.out
+
+
+# From wire-os-victor/tools/automated-testing/.gitignore
+/wire-os-victor/tools/automated-testing/**/package-lock.json
+/wire-os-victor/tools/automated-testing/**/node_modules
+/wire-os-victor/tools/automated-testing/**/tap_output
+/wire-os-victor/tools/automated-testing/**/settings.json
+/wire-os-victor/tools/automated-testing/**/config.json
+
+# From wire-os-victor/tools/birther/.gitignore
+/wire-os-victor/tools/birther/**/birthcertificate
+
+# From wire-os-victor/tools/build/.gitignore
+/wire-os-victor/tools/build/**/.DS_Store
+/wire-os-victor/tools/build/**/*.pyc
+
+/wire-os-victor/tools/build/build-breakpad/
+/wire-os-victor/tools/build/stage/
+/wire-os-victor/tools/build/build-android-sdk/
+/wire-os-victor/tools/build/**/*~
+/wire-os-victor/tools/build/**/venv
+
+# From wire-os-victor/tools/build/lib/ruby/lib/plist/.gitignore
+/wire-os-victor/tools/build/lib/ruby/lib/plist/**/rdoc
+/wire-os-victor/tools/build/lib/ruby/lib/plist/**/coverage
+/wire-os-victor/tools/build/lib/ruby/lib/plist/**/pkg
+
+# From wire-os-victor/tools/build/lib/ruby/lib/rubyzip/.gitignore
+/wire-os-victor/tools/build/lib/ruby/lib/rubyzip/**/.idea
+/wire-os-victor/tools/build/lib/ruby/lib/rubyzip/**/*.gem
+/wire-os-victor/tools/build/lib/ruby/lib/rubyzip/test/5entry_copy.zip
+/wire-os-victor/tools/build/lib/ruby/lib/rubyzip/test/cdirtest.bin
+/wire-os-victor/tools/build/lib/ruby/lib/rubyzip/test/cdir64test.bin
+/wire-os-victor/tools/build/lib/ruby/lib/rubyzip/test/huge.zip
+/wire-os-victor/tools/build/lib/ruby/lib/rubyzip/test/centralEntryHeader.bin
+/wire-os-victor/tools/build/lib/ruby/lib/rubyzip/test/data/generated/
+/wire-os-victor/tools/build/lib/ruby/lib/rubyzip/test/deflatertest.bin
+/wire-os-victor/tools/build/lib/ruby/lib/rubyzip/test/compressiontest_*.bin
+/wire-os-victor/tools/build/lib/ruby/lib/rubyzip/test/dummy.txt
+/wire-os-victor/tools/build/lib/ruby/lib/rubyzip/test/localEntryHeader.bin
+/wire-os-victor/tools/build/lib/ruby/lib/rubyzip/test/okToDeleteMoved.txt
+/wire-os-victor/tools/build/lib/ruby/lib/rubyzip/test/output.zip
+/wire-os-victor/tools/build/lib/ruby/lib/rubyzip/test/test_putOnClosedStream.zip
+/wire-os-victor/tools/build/lib/ruby/lib/rubyzip/test/zipWithDirs_copy.zip
+/wire-os-victor/tools/build/lib/ruby/lib/rubyzip/test/coverage
+/wire-os-victor/tools/build/lib/ruby/lib/rubyzip/**/.bundle
+/wire-os-victor/tools/build/lib/ruby/lib/rubyzip/**/Gemfile.lock
+/wire-os-victor/tools/build/lib/ruby/lib/rubyzip/+samples/*.zip
+/wire-os-victor/tools/build/lib/ruby/lib/rubyzip/+samples/*.zip.*
+/wire-os-victor/tools/build/lib/ruby/lib/rubyzip/**/coverage
+
+# From wire-os-victor/tools/build/lib/ruby/lib/twine/.gitignore
+#Ruby gem
+/wire-os-victor/tools/build/lib/ruby/lib/twine/**/*.gem
+
+# From wire-os-victor/tools/crash-tools/.gitignore
+/wire-os-victor/tools/crash-tools/crashes/*.dmp
+/wire-os-victor/tools/crash-tools/crashes/*.dmp.uploaded
+/wire-os-victor/tools/crash-tools/**/callstack.txt
+/wire-os-victor/tools/crash-tools/**/get-callstack-temp
+
+# From wire-os-victor/tools/gyp/.gitignore
+/wire-os-victor/tools/gyp/**/*.pyc
+
+# From wire-os-victor/tools/protobuf/plugin/.gitignore
+/wire-os-victor/tools/protobuf/plugin/**/protocCppPlugin
+/wire-os-victor/tools/protobuf/plugin/**/protocCppPlugin2
+/wire-os-victor/tools/protobuf/plugin/**/protocCppPlugin3
+
+# From wire-os-victor/tools/sdk/.gitignore
+/wire-os-victor/tools/sdk/**/.DS_Store
+/wire-os-victor/tools/sdk/**/*.sw?
+/wire-os-victor/tools/sdk/**/__pycache__
+/wire-os-victor/tools/sdk/**/*.pyc
+/wire-os-victor/tools/sdk/**/*.tox
+/wire-os-victor/tools/sdk/**/*.egg
+/wire-os-victor/tools/sdk/**/*.egg-info
+/wire-os-victor/tools/sdk/**/.cache
+/wire-os-victor/tools/sdk/**/build
+
+# From wire-os-victor/tools/sdk/gateway-tests/.gitignore
+/wire-os-victor/tools/sdk/gateway-tests/**/.pytest_cache
+/wire-os-victor/tools/sdk/gateway-tests/**/*.proto
+/wire-os-victor/tools/sdk/gateway-tests/**/*_pb2*.py
+
+# From wire-os-victor/tools/sdk/vector-python-sdk-private/.gitignore
+# Byte-compiled / optimized / DLL files
+/wire-os-victor/tools/sdk/vector-python-sdk-private/__pycache__/
+/wire-os-victor/tools/sdk/vector-python-sdk-private/generated/
+/wire-os-victor/tools/sdk/vector-python-sdk-private/**/*.py[cod]
+/wire-os-victor/tools/sdk/vector-python-sdk-private/**/*$py.class
+
+# C extensions
+/wire-os-victor/tools/sdk/vector-python-sdk-private/**/*.so
+
+# Distribution / packaging
+/wire-os-victor/tools/sdk/vector-python-sdk-private/**/.Python
+/wire-os-victor/tools/sdk/vector-python-sdk-private/build/
+/wire-os-victor/tools/sdk/vector-python-sdk-private/develop-eggs/
+/wire-os-victor/tools/sdk/vector-python-sdk-private/dist/
+/wire-os-victor/tools/sdk/vector-python-sdk-private/downloads/
+/wire-os-victor/tools/sdk/vector-python-sdk-private/eggs/
+/wire-os-victor/tools/sdk/vector-python-sdk-private/.eggs/
+/wire-os-victor/tools/sdk/vector-python-sdk-private/lib/
+/wire-os-victor/tools/sdk/vector-python-sdk-private/lib64/
+/wire-os-victor/tools/sdk/vector-python-sdk-private/parts/
+/wire-os-victor/tools/sdk/vector-python-sdk-private/sdist/
+/wire-os-victor/tools/sdk/vector-python-sdk-private/var/
+/wire-os-victor/tools/sdk/vector-python-sdk-private/wheels/
+/wire-os-victor/tools/sdk/vector-python-sdk-private/share/python-wheels/
+/wire-os-victor/tools/sdk/vector-python-sdk-private/*.egg-info/
+/wire-os-victor/tools/sdk/vector-python-sdk-private/**/.installed.cfg
+/wire-os-victor/tools/sdk/vector-python-sdk-private/**/*.egg
+/wire-os-victor/tools/sdk/vector-python-sdk-private/**/MANIFEST
+
+# PyInstaller
+#  Usually these files are written by a python script from a template
+#  before PyInstaller builds the exe, so as to inject date/other infos into it.
+/wire-os-victor/tools/sdk/vector-python-sdk-private/**/*.manifest
+/wire-os-victor/tools/sdk/vector-python-sdk-private/**/*.spec
+
+# Installer logs
+/wire-os-victor/tools/sdk/vector-python-sdk-private/**/pip-log.txt
+/wire-os-victor/tools/sdk/vector-python-sdk-private/**/pip-delete-this-directory.txt
+
+# Unit test / coverage reports
+/wire-os-victor/tools/sdk/vector-python-sdk-private/htmlcov/
+/wire-os-victor/tools/sdk/vector-python-sdk-private/.tox/
+/wire-os-victor/tools/sdk/vector-python-sdk-private/.nox/
+/wire-os-victor/tools/sdk/vector-python-sdk-private/**/.coverage
+/wire-os-victor/tools/sdk/vector-python-sdk-private/**/.coverage.*
+/wire-os-victor/tools/sdk/vector-python-sdk-private/**/.cache
+/wire-os-victor/tools/sdk/vector-python-sdk-private/**/nosetests.xml
+/wire-os-victor/tools/sdk/vector-python-sdk-private/**/coverage.xml
+/wire-os-victor/tools/sdk/vector-python-sdk-private/**/*.cover
+/wire-os-victor/tools/sdk/vector-python-sdk-private/.hypothesis/
+/wire-os-victor/tools/sdk/vector-python-sdk-private/.pytest_cache/
+
+# Translations
+/wire-os-victor/tools/sdk/vector-python-sdk-private/**/*.mo
+/wire-os-victor/tools/sdk/vector-python-sdk-private/**/*.pot
+
+# Django stuff:
+/wire-os-victor/tools/sdk/vector-python-sdk-private/**/*.log
+/wire-os-victor/tools/sdk/vector-python-sdk-private/**/local_settings.py
+/wire-os-victor/tools/sdk/vector-python-sdk-private/**/db.sqlite3
+
+# Flask stuff:
+/wire-os-victor/tools/sdk/vector-python-sdk-private/instance/
+/wire-os-victor/tools/sdk/vector-python-sdk-private/**/.webassets-cache
+
+# Scrapy stuff:
+/wire-os-victor/tools/sdk/vector-python-sdk-private/**/.scrapy
+
+# Sphinx documentation
+/wire-os-victor/tools/sdk/vector-python-sdk-private/docs/_build/
+
+# PyBuilder
+/wire-os-victor/tools/sdk/vector-python-sdk-private/target/
+
+# Jupyter Notebook
+/wire-os-victor/tools/sdk/vector-python-sdk-private/**/.ipynb_checkpoints
+
+# IPython
+/wire-os-victor/tools/sdk/vector-python-sdk-private/profile_default/
+/wire-os-victor/tools/sdk/vector-python-sdk-private/**/ipython_config.py
+
+# pyenv
+/wire-os-victor/tools/sdk/vector-python-sdk-private/**/.python-version
+
+# celery beat schedule file
+/wire-os-victor/tools/sdk/vector-python-sdk-private/**/celerybeat-schedule
+
+# SageMath parsed files
+/wire-os-victor/tools/sdk/vector-python-sdk-private/**/*.sage.py
+
+# Environments
+/wire-os-victor/tools/sdk/vector-python-sdk-private/**/.env
+/wire-os-victor/tools/sdk/vector-python-sdk-private/**/.venv
+/wire-os-victor/tools/sdk/vector-python-sdk-private/env/
+/wire-os-victor/tools/sdk/vector-python-sdk-private/venv/
+/wire-os-victor/tools/sdk/vector-python-sdk-private/ENV/
+/wire-os-victor/tools/sdk/vector-python-sdk-private/env.bak/
+/wire-os-victor/tools/sdk/vector-python-sdk-private/venv.bak/
+
+# Spyder project settings
+/wire-os-victor/tools/sdk/vector-python-sdk-private/**/.spyderproject
+/wire-os-victor/tools/sdk/vector-python-sdk-private/**/.spyproject
+
+# Rope project settings
+/wire-os-victor/tools/sdk/vector-python-sdk-private/**/.ropeproject
+
+# mkdocs documentation
+/wire-os-victor/tools/sdk/vector-python-sdk-private/site
+
+# mypy
+/wire-os-victor/tools/sdk/vector-python-sdk-private/.mypy_cache/
+/wire-os-victor/tools/sdk/vector-python-sdk-private/**/.dmypy.json
+/wire-os-victor/tools/sdk/vector-python-sdk-private/**/dmypy.json
+
+# Pyre type checker
+/wire-os-victor/tools/sdk/vector-python-sdk-private/.pyre/
+
+
+### repo-specific ignores ###
+/wire-os-victor/tools/sdk/vector-python-sdk-private/deps/*
+/wire-os-victor/tools/sdk/vector-python-sdk-private/sdk/anki_vector/LICENSE.txt
+/wire-os-victor/tools/sdk/vector-python-sdk-private/sdk/examples/LICENSE.txt
+/wire-os-victor/tools/sdk/vector-python-sdk-private/sdk/docs/output_file.txt
+/wire-os-victor/tools/sdk/vector-python-sdk-private/**/licenses.csv
+/wire-os-victor/tools/sdk/vector-python-sdk-private/**/pip-licenses.out
+/wire-os-victor/tools/sdk/vector-python-sdk-private/**/pip-list.out
+/wire-os-victor/tools/sdk/vector-python-sdk-private/license_env/
+
+# From wire-os-victor/tools/sdk/vector-python-sdk-private/sdk/.gitignore
+# Byte-compiled / optimized / DLL files
+/wire-os-victor/tools/sdk/vector-python-sdk-private/sdk/__pycache__/
+/wire-os-victor/tools/sdk/vector-python-sdk-private/sdk/generated/
+/wire-os-victor/tools/sdk/vector-python-sdk-private/sdk/**/*.py[cod]
+/wire-os-victor/tools/sdk/vector-python-sdk-private/sdk/**/*$py.class
+
+# C extensions
+/wire-os-victor/tools/sdk/vector-python-sdk-private/sdk/**/*.so
+
+# Distribution / packaging
+/wire-os-victor/tools/sdk/vector-python-sdk-private/sdk/**/.Python
+/wire-os-victor/tools/sdk/vector-python-sdk-private/sdk/build/
+/wire-os-victor/tools/sdk/vector-python-sdk-private/sdk/develop-eggs/
+/wire-os-victor/tools/sdk/vector-python-sdk-private/sdk/dist/
+/wire-os-victor/tools/sdk/vector-python-sdk-private/sdk/downloads/
+/wire-os-victor/tools/sdk/vector-python-sdk-private/sdk/eggs/
+/wire-os-victor/tools/sdk/vector-python-sdk-private/sdk/.eggs/
+/wire-os-victor/tools/sdk/vector-python-sdk-private/sdk/lib/
+/wire-os-victor/tools/sdk/vector-python-sdk-private/sdk/lib64/
+/wire-os-victor/tools/sdk/vector-python-sdk-private/sdk/parts/
+/wire-os-victor/tools/sdk/vector-python-sdk-private/sdk/sdist/
+/wire-os-victor/tools/sdk/vector-python-sdk-private/sdk/var/
+/wire-os-victor/tools/sdk/vector-python-sdk-private/sdk/wheels/
+/wire-os-victor/tools/sdk/vector-python-sdk-private/sdk/share/python-wheels/
+/wire-os-victor/tools/sdk/vector-python-sdk-private/sdk/*.egg-info/
+/wire-os-victor/tools/sdk/vector-python-sdk-private/sdk/**/.installed.cfg
+/wire-os-victor/tools/sdk/vector-python-sdk-private/sdk/**/*.egg
+/wire-os-victor/tools/sdk/vector-python-sdk-private/sdk/**/MANIFEST
+
+# PyInstaller
+#  Usually these files are written by a python script from a template
+#  before PyInstaller builds the exe, so as to inject date/other infos into it.
+/wire-os-victor/tools/sdk/vector-python-sdk-private/sdk/**/*.manifest
+/wire-os-victor/tools/sdk/vector-python-sdk-private/sdk/**/*.spec
+
+# Installer logs
+/wire-os-victor/tools/sdk/vector-python-sdk-private/sdk/**/pip-log.txt
+/wire-os-victor/tools/sdk/vector-python-sdk-private/sdk/**/pip-delete-this-directory.txt
+
+# Unit test / coverage reports
+/wire-os-victor/tools/sdk/vector-python-sdk-private/sdk/htmlcov/
+/wire-os-victor/tools/sdk/vector-python-sdk-private/sdk/.tox/
+/wire-os-victor/tools/sdk/vector-python-sdk-private/sdk/.nox/
+/wire-os-victor/tools/sdk/vector-python-sdk-private/sdk/**/.coverage
+/wire-os-victor/tools/sdk/vector-python-sdk-private/sdk/**/.coverage.*
+/wire-os-victor/tools/sdk/vector-python-sdk-private/sdk/**/.cache
+/wire-os-victor/tools/sdk/vector-python-sdk-private/sdk/**/nosetests.xml
+/wire-os-victor/tools/sdk/vector-python-sdk-private/sdk/**/coverage.xml
+/wire-os-victor/tools/sdk/vector-python-sdk-private/sdk/**/*.cover
+/wire-os-victor/tools/sdk/vector-python-sdk-private/sdk/.hypothesis/
+/wire-os-victor/tools/sdk/vector-python-sdk-private/sdk/.pytest_cache/
+
+# Translations
+/wire-os-victor/tools/sdk/vector-python-sdk-private/sdk/**/*.mo
+/wire-os-victor/tools/sdk/vector-python-sdk-private/sdk/**/*.pot
+
+# Django stuff:
+/wire-os-victor/tools/sdk/vector-python-sdk-private/sdk/**/*.log
+/wire-os-victor/tools/sdk/vector-python-sdk-private/sdk/**/local_settings.py
+/wire-os-victor/tools/sdk/vector-python-sdk-private/sdk/**/db.sqlite3
+
+# Flask stuff:
+/wire-os-victor/tools/sdk/vector-python-sdk-private/sdk/instance/
+/wire-os-victor/tools/sdk/vector-python-sdk-private/sdk/**/.webassets-cache
+
+# Scrapy stuff:
+/wire-os-victor/tools/sdk/vector-python-sdk-private/sdk/**/.scrapy
+
+# Sphinx documentation
+/wire-os-victor/tools/sdk/vector-python-sdk-private/sdk/docs/_build/
+
+# PyBuilder
+/wire-os-victor/tools/sdk/vector-python-sdk-private/sdk/target/
+
+# Jupyter Notebook
+/wire-os-victor/tools/sdk/vector-python-sdk-private/sdk/**/.ipynb_checkpoints
+
+# IPython
+/wire-os-victor/tools/sdk/vector-python-sdk-private/sdk/profile_default/
+/wire-os-victor/tools/sdk/vector-python-sdk-private/sdk/**/ipython_config.py
+
+# pyenv
+/wire-os-victor/tools/sdk/vector-python-sdk-private/sdk/**/.python-version
+
+# celery beat schedule file
+/wire-os-victor/tools/sdk/vector-python-sdk-private/sdk/**/celerybeat-schedule
+
+# SageMath parsed files
+/wire-os-victor/tools/sdk/vector-python-sdk-private/sdk/**/*.sage.py
+
+# Environments
+/wire-os-victor/tools/sdk/vector-python-sdk-private/sdk/**/.env
+/wire-os-victor/tools/sdk/vector-python-sdk-private/sdk/**/.venv
+/wire-os-victor/tools/sdk/vector-python-sdk-private/sdk/env/
+/wire-os-victor/tools/sdk/vector-python-sdk-private/sdk/venv/
+/wire-os-victor/tools/sdk/vector-python-sdk-private/sdk/ENV/
+/wire-os-victor/tools/sdk/vector-python-sdk-private/sdk/env.bak/
+/wire-os-victor/tools/sdk/vector-python-sdk-private/sdk/venv.bak/
+
+# Spyder project settings
+/wire-os-victor/tools/sdk/vector-python-sdk-private/sdk/**/.spyderproject
+/wire-os-victor/tools/sdk/vector-python-sdk-private/sdk/**/.spyproject
+
+# Rope project settings
+/wire-os-victor/tools/sdk/vector-python-sdk-private/sdk/**/.ropeproject
+
+# mkdocs documentation
+/wire-os-victor/tools/sdk/vector-python-sdk-private/sdk/site
+
+# mypy
+/wire-os-victor/tools/sdk/vector-python-sdk-private/sdk/.mypy_cache/
+/wire-os-victor/tools/sdk/vector-python-sdk-private/sdk/**/.dmypy.json
+/wire-os-victor/tools/sdk/vector-python-sdk-private/sdk/**/dmypy.json
+
+# Pyre type checker
+/wire-os-victor/tools/sdk/vector-python-sdk-private/sdk/.pyre/
+
+# From wire-os-victor/tools/sdk/vector-python-sdk-private/sdk/docs/source/.gitignore
+/wire-os-victor/tools/sdk/vector-python-sdk-private/sdk/docs/source/generated/
+
+# From wire-os-victor/tools/sdk/vector-python-sdk-private/sdk/docs/source/_static/.gitignore
+# No files should be checked into this directory
+/wire-os-victor/tools/sdk/vector-python-sdk-private/sdk/docs/source/_static/**/*
+!/wire-os-victor/tools/sdk/vector-python-sdk-private/sdk/docs/source/_static/**/.gitignore
+
+# From wire-os-victor/tools/sdk/vector-sdk-tests/automated/.gitignore
+/wire-os-victor/tools/sdk/vector-sdk-tests/automated/env/
+
+# From wire-os-victor/victor-clad/.gitignore
+/wire-os-victor/victor-clad/_build/
+/wire-os-victor/victor-clad/generated/
+
+# From wire-os-victor/victor-clad/tools/build/.gitignore
+/wire-os-victor/victor-clad/tools/build/**/.DS_Store
+/wire-os-victor/victor-clad/tools/build/**/*.pyc
+
+/wire-os-victor/victor-clad/tools/build/build-breakpad/
+/wire-os-victor/victor-clad/tools/build/stage/
+/wire-os-victor/victor-clad/tools/build/build-android-sdk/
+/wire-os-victor/victor-clad/tools/build/**/*~
+/wire-os-victor/victor-clad/tools/build/**/venv
+
+# From wire-os-victor/victor-clad/tools/message-buffers/.gitignore
+# Compiled Object files
+/wire-os-victor/victor-clad/tools/message-buffers/**/*.slo
+/wire-os-victor/victor-clad/tools/message-buffers/**/*.lo
+/wire-os-victor/victor-clad/tools/message-buffers/**/*.o
+/wire-os-victor/victor-clad/tools/message-buffers/**/*.obj
+
+# Precompiled Headers
+/wire-os-victor/victor-clad/tools/message-buffers/**/*.gch
+/wire-os-victor/victor-clad/tools/message-buffers/**/*.pch
+
+# Compiled Dynamic libraries
+/wire-os-victor/victor-clad/tools/message-buffers/**/*.so
+/wire-os-victor/victor-clad/tools/message-buffers/**/*.dylib
+/wire-os-victor/victor-clad/tools/message-buffers/**/*.dll
+
+# Compiled Python files
+/wire-os-victor/victor-clad/tools/message-buffers/**/__pycache__
+/wire-os-victor/victor-clad/tools/message-buffers/**/*.pyc
+
+# Generated lex/yacc tables
+/wire-os-victor/victor-clad/tools/message-buffers/**/*lextab.py
+/wire-os-victor/victor-clad/tools/message-buffers/**/*yacctab.py
+
+# virtualenv environment
+/wire-os-victor/victor-clad/tools/message-buffers/**/.env
+
+# Fortran module files
+/wire-os-victor/victor-clad/tools/message-buffers/**/*.mod
+
+# Compiled Static libraries
+/wire-os-victor/victor-clad/tools/message-buffers/**/*.lai
+/wire-os-victor/victor-clad/tools/message-buffers/**/*.la
+/wire-os-victor/victor-clad/tools/message-buffers/**/*.a
+/wire-os-victor/victor-clad/tools/message-buffers/**/*.lib
+
+# Executables
+/wire-os-victor/victor-clad/tools/message-buffers/**/*.exe
+/wire-os-victor/victor-clad/tools/message-buffers/**/*.out
+/wire-os-victor/victor-clad/tools/message-buffers/**/*.app
+
+# Debug Symbols
+/wire-os-victor/victor-clad/tools/message-buffers/**/*.dSYM
+/wire-os-victor/victor-clad/tools/message-buffers/**/*.mdb
+
+# Vagrant
+/wire-os-victor/victor-clad/tools/message-buffers/**/.vagrant
+
+# Idea IDE
+/wire-os-victor/victor-clad/tools/message-buffers/**/.idea
+
+/wire-os-victor/victor-clad/tools/message-buffers/emitters/tests/cladUnitTests/cladUnitTests.xcodeproj/project.xcworkspace/xcuserdata
+/wire-os-victor/victor-clad/tools/message-buffers/emitters/tests/cladUnitTests/cladUnitTests.xcodeproj/xcuserdata/
+/wire-os-victor/victor-clad/tools/message-buffers/emitters/tests/cladUnitTests/cladUnitTests.xcodeproj/project.xcworkspace/xcshareddata/cladUnitTests.xccheckout
+/wire-os-victor/victor-clad/tools/message-buffers/emitters/tests/cladUnitTests/cladUnitTests.xcodeproj/project.xcworkspace/xcshareddata/cladUnitTests.xcscmblueprint
+/wire-os-victor/victor-clad/tools/message-buffers/emitters/tests/cpp/_build
+
+# From wire-os-victor/victor-clad/tools/message-buffers/emitters/tests/.gitignore
+/wire-os-victor/victor-clad/tools/message-buffers/emitters/tests/**/build
+
+# From wire-pod/.gitignore
+/wire-pod/stt
+/wire-pod/vector-cloud/build/vic-cloud
+/wire-pod/chipper/source.sh
+/wire-pod/vector-cloud/build
+/wire-pod/chipper/chipper
+/wire-pod/certs
+/wire-pod/vector-cloud/packagesGotten
+/wire-pod/vector-cloud/cloud/cert.go
+/wire-pod/chipper/aarch64
+/wire-pod/chipper/armarch
+/wire-pod/chipper/processOnce
+/wire-pod/ssh_root_key
+/wire-pod/.vscode
+/wire-pod/chipper/botConfig.json
+/wire-pod/chipper/.vscode
+/wire-pod/chipper/useepod
+/wire-pod/chipper/pico.key
+/wire-pod/chipper/libvosk.so
+/wire-pod/vosk
+/wire-pod/chipper/customIntents.json
+/wire-pod/chipper/botConfig.json
+/wire-pod/chipper/jdocs/*.json
+/wire-pod/chipper/nvm
+/wire-pod/chipper/apiConfig.json
+/wire-pod/chipper/session-certs/0*
+/wire-pod/chipper/vbuild/vic-toolchain
+/wire-pod/chipper/vbuild/chipper
+/wire-pod/chipper/vbuild/botpack.tar.gz
+/wire-pod/chipper/windows/tmp
+/wire-pod/chipper/windows/chipper.exe
+/wire-pod/chipper/windows/*.zip
+/wire-pod/chipper/windows/*.exe
+/wire-pod/chipper/vbuild/built-libs
+/wire-pod/chipper/windows/libs
+/wire-pod/chipper/windows/opus
+/wire-pod/chipper/windows/ogg
+/wire-pod/chipper/windows/.aptDone
+/wire-pod/chipper/macos/libs
+/wire-pod/chipper/macos/target
+/wire-pod/chipper/plugins/*.so
+/wire-pod/whisper.cpp
+/wire-pod/**/.DS_Store
+/wire-pod/chipper/openaiChats.json
+
+# From wire-pod/vector-cloud/.gitignore
+/wire-pod/vector-cloud/build
+
