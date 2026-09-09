@@ -4,7 +4,7 @@ Master build spec for coding agents working in `https://github.com/BrutalHex/vic
 
 This file is the source of truth. Implement against it. Do not invent a second architecture. Do not install a third-party community firmware (WireOS, Viccyware, etc.) as the product. Community trees may be **read as hardware reference only**.
 
-Owner: Mohammad Abbasi (`BrutalHex`). Domain used by the robot to reach the development machine: `robot.mohammad.abbasi.com`.
+Owner: Mohammad Abbasi (`BrutalHex`). Domain used by the robot to reach the development machine: `robot.mohammadabbasi.com`.
 
 ---
 
@@ -114,21 +114,21 @@ Both machines are on the same Wi-Fi.
 
 | Name | Meaning |
 |---|---|
-| `robot.mohammad.abbasi.com` | Hostname the **robot** uses for the hub. Not public DNS. Resolved by `/etc/hosts` on the robot to the current LAN IPv4 of the development machine. |
+| `robot.mohammadabbasi.com` | Hostname the **robot** uses for the hub. Not public DNS. Resolved by `/etc/hosts` on the robot to the current LAN IPv4 of the development machine. |
 | Hub container publish | Host network or published ports on the development machine. |
 
 ### Robot `/etc/hosts`
 
 ```
 # managed-by: victor-agent
-<DEV_MACHINE_LAN_IP>    robot.mohammad.abbasi.com hub
+<DEV_MACHINE_LAN_IP>    robot.mohammadabbasi.com hub
 ```
 
 Requirements:
 
 - File must stay writable. Yocto image must **not** freeze `/etc/hosts` read-only. Prefer a rw overlay or a generated fragment under `/etc/hosts.d` included by a systemd oneshot.
 - Ship `/usr/bin/victor-set-hub-ip` that rewrites the managed block and does not touch other lines.
-- Agent retries: if TCP to `robot.mohammad.abbasi.com:7443` fails, use `/data/victor/hub.env` fallback IP.
+- Agent retries: if TCP to `robot.mohammadabbasi.com:7443` fails, use `/data/victor/hub.env` fallback IP.
 - After DHCP change on the development machine, operator runs `scripts/push-hub-ip.sh` over SSH.
 
 ### Ports (development machine / hub)
@@ -282,7 +282,7 @@ OPENAI_MODEL=gpt-4o-mini
 OPENAI_TRANSCRIBE_MODEL=gpt-4o-mini-transcribe
 OPENAI_TTS_MODEL=gpt-4o-mini-tts
 OPENAI_VOICE=alloy
-HUB_PUBLIC_NAME=robot.mohammad.abbasi.com
+HUB_PUBLIC_NAME=robot.mohammadabbasi.com
 ROBOT_SSH_IP=
 ROBOT_SSH_KEY=keys/ssh_root_key
 ```
@@ -314,7 +314,7 @@ One owner of the spine. Do not keep `vic-engine` running “for animations”.
 ## 10. Definition of done
 
 - [ ] `docker compose up` starts `hub`.
-- [ ] Robot `/etc/hosts` maps `robot.mohammad.abbasi.com` to the dev machine.
+- [ ] Robot `/etc/hosts` maps `robot.mohammadabbasi.com` to the dev machine.
 - [ ] Agent streams SENSOR ≥ 20 Hz plus audio/video at spec rates.
 - [ ] Killing the hub container stops wheels within 250 ms.
 - [ ] Desk-edge slide triggers on-robot veto without hub.

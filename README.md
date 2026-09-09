@@ -18,7 +18,7 @@ The robot stays a thin real-time agent. The development machine runs all intelli
 
 ## Hub hostname
 
-The robot reaches the development machine as `robot.mohammad.abbasi.com`, resolved by `/etc/hosts` on the robot to the current LAN IP.
+The robot reaches the development machine as `robot.mohammadabbasi.com`, resolved by `/etc/hosts` on the robot to the current LAN IP.
 
 ## Quick start (once code exists)
 
