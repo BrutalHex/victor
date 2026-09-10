@@ -2,7 +2,7 @@
 
 Owner-built stack for a Vector 2.0 robot plus a Docker brain named `hub`.
 
-The robot stays a thin real-time agent. The development machine runs all intelligence (fall veto, desk exploration, face names, ChatGPT voice).
+The robot stays a thin real-time agent. The old laptop runs a tiny NVIDIA-exported ONNX edge model (CPU first) plus exploration, faces, and ChatGPT voice. IR cliffs on the robot remain the hard stop.
 
 **Read [GROK_INSTRUCTIONS.md](GROK_INSTRUCTIONS.md) before writing code.** That file is the build spec for coding agents working in this repository.
 
@@ -25,6 +25,10 @@ The robot reaches the development machine as `robot.mohammadabbasi.com`, resolve
 BLE is used **once**: pair on the charger, push Wi-Fi, start the first OTA (`deploy/ble-bootstrap`). After SSH answers, BLE is disabled on the running image.
 
 Later debug access is **CHARGE-LATCH** (robot on charger: double-click button, raise and lower the lift, triple-click). That toggles port 22. Face shows `SSH ON` / `SSH OFF`. Hub telemetry stays up while SSH is closed.
+
+## Edge model
+
+Hub runs a tiny NVIDIA TAO export (DetectNet_v2 ResNet10 or MobileNet-V2, ONNX INT8, \u226415 MB). Default backend is ONNX Runtime CPU so an old laptop without a useful GPU still works. TensorRT is optional. The model only votes `stop` / `back_off`. IR cliffs on the robot still win.
 
 ## Quick start (once code exists)
 
