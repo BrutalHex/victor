@@ -20,6 +20,12 @@ The robot stays a thin real-time agent. The development machine runs all intelli
 
 The robot reaches the development machine as `robot.mohammadabbasi.com`, resolved by `/etc/hosts` on the robot to the current LAN IP.
 
+## First flash and SSH
+
+BLE is used **once**: pair on the charger, push Wi-Fi, start the first OTA (`deploy/ble-bootstrap`). After SSH answers, BLE is disabled on the running image.
+
+Later debug access is **CHARGE-LATCH** (robot on charger: double-click button, raise and lower the lift, triple-click). That toggles port 22. Face shows `SSH ON` / `SSH OFF`. Hub telemetry stays up while SSH is closed.
+
 ## Quick start (once code exists)
 
 ```bash
@@ -30,4 +36,4 @@ docker compose -f hub/docker-compose.yml up -d --build
 ./deploy/sync-agent.sh
 ```
 
-SSH to the robot must stay available on port 22 after every boot.
+First boot leaves SSH on so `ble-bootstrap` can finish. After that, CHARGE-LATCH owns port 22.
