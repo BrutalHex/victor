@@ -76,7 +76,8 @@ func Check(in Input) Reason {
 	if frontCliff(in) {
 		return Cliff
 	}
-	if in.Forward && (in.ProxMM == 0 || in.ProxMM > ToFMaxMM) {
+	// Close return while creeping: obstacle. 0 = no return (open), not a stop.
+	if in.Forward && in.ProxMM > 0 && in.ProxMM < 80 {
 		return ToF
 	}
 	if in.HasHeartbeat && in.HeartbeatAge > Heartbeat {

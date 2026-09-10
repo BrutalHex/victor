@@ -79,9 +79,9 @@ func (h *Hub) SendSensor(s vct1.Sensor) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if h.LogPath != "" {
-		line := fmt.Sprintf("%d seq=%d batt=%d charger=%d flags=%d lift=%d cliffs=%d,%d,%d,%d\n",
+		line := fmt.Sprintf("%d seq=%d batt=%d charger=%d flags=%d lift=%d cliffs=%d,%d,%d,%d prox=%d\n",
 			time.Now().UnixNano(), seq, s.BattMV, s.ChargerMV, s.Flags, s.EncLift,
-			s.Cliffs[0], s.Cliffs[1], s.Cliffs[2], s.Cliffs[3])
+			s.Cliffs[0], s.Cliffs[1], s.Cliffs[2], s.Cliffs[3], s.ProxMM)
 		f, err := os.OpenFile(h.LogPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 		if err == nil {
 			_, _ = f.WriteString(line)

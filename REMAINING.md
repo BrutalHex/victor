@@ -54,7 +54,9 @@ Wander gate (tested in `skill.AllowWheels`):
 ./deploy/prove-explore.sh --drive  # only if Vector is off the contacts on the floor/blocks
 ```
 
-Do **not** create `/data/victor/explore.enabled` on a live desk.
+Live off-charger creep (2026-09-10): `motors=1200,-1200,0,0` at `skill=creep_forward`, cliffs stayed ~320+, then flag removed → `0,0,0,0`.
+
+Do **not** leave `/data/victor/explore.enabled` on a live desk.
 
 ### Phase 3 — camera, faces, voice
 

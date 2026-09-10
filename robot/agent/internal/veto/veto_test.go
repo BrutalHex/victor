@@ -62,12 +62,17 @@ func TestBattery(t *testing.T) {
 func TestToFOnlyWhenForward(t *testing.T) {
 	in := base()
 	in.ProxMM = 0
-	if Check(in) != Clear {
-		t.Fatalf("idle tof got %s", Check(in))
-	}
 	in.Forward = true
+	if Check(in) != Clear {
+		t.Fatalf("no-return tof must not block creep, got %s", Check(in))
+	}
+	in.ProxMM = 30
 	if Check(in) != ToF {
-		t.Fatalf("forward tof got %s", Check(in))
+		t.Fatalf("close tof got %s", Check(in))
+	}
+	in.Forward = false
+	if Check(in) != Clear {
+		t.Fatalf("idle close tof got %s", Check(in))
 	}
 }
 
