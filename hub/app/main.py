@@ -21,7 +21,9 @@ STATE = {
     "last_ns": None,
     "last_sensor": None,
     "started": time.time(),
+    "hz": 0.0,
 }
+_WINDOW = []
 LOCK = threading.Lock()
 
 
@@ -41,12 +43,18 @@ def udp_loop(host: str, port: int) -> None:
             sensor = unpack_sensor(payload)
         except ValueError:
             continue
+        now = time.time()
         with LOCK:
             STATE["sensors"] += 1
             STATE["last_seq"] = hdr.seq
             STATE["last_ns"] = hdr.t_ns
             STATE["last_sensor"] = sensor
             STATE["last_from"] = addr[0]
+            _WINDOW.append(now)
+            cutoff = now - 1.0
+            while _WINDOW and _WINDOW[0] < cutoff:
+                _WINDOW.pop(0)
+            STATE["hz"] = float(len(_WINDOW))
 
 
 def tcp_heartbeat(host: str, port: int) -> None:

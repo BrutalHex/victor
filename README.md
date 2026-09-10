@@ -4,7 +4,7 @@ Owner-built stack for a Vector 2.0 robot plus a Docker brain named `hub`.
 
 The robot stays a thin real-time agent. The old laptop runs a tiny NVIDIA-exported ONNX edge model (CPU first) plus exploration, faces, and ChatGPT voice. IR cliffs on the robot remain the hard stop.
 
-**Read [GROK_INSTRUCTIONS.md](GROK_INSTRUCTIONS.md) before writing code.** That file is the build spec for coding agents working in this repository.
+**Read [GROK_INSTRUCTIONS.md](GROK_INSTRUCTIONS.md) before writing code.** Leftover work is in [REMAINING.md](REMAINING.md).
 
 ## Layout
 
@@ -40,6 +40,7 @@ make agent-arm
 docker compose -f hub/docker-compose.yml up -d --build
 ./deploy/sync-agent.sh
 ./deploy/prove-phase0.sh
+./deploy/prove-phase1.sh   # stops Anki, takes the spine; restore with ./deploy/restore-anki.sh
 ```
 
 SSH (unlocked Vector / WireOS / our image):

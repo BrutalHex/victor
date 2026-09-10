@@ -25,3 +25,6 @@ sync: agent-arm
 
 prove: test agent-arm
 	./deploy/prove-phase0.sh
+
+prove1: test agent-arm
+	./deploy/prove-phase1.sh

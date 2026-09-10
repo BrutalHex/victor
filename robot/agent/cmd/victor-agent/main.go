@@ -12,10 +12,12 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/BrutalHex/victor/robot/agent/internal/anki"
 	"github.com/BrutalHex/victor/robot/agent/internal/blemask"
 	"github.com/BrutalHex/victor/robot/agent/internal/face"
 	"github.com/BrutalHex/victor/robot/agent/internal/latch"
 	"github.com/BrutalHex/victor/robot/agent/internal/simulate"
+	"github.com/BrutalHex/victor/robot/agent/internal/spine"
 	"github.com/BrutalHex/victor/robot/agent/internal/sshctl"
 	"github.com/BrutalHex/victor/robot/agent/internal/telem"
 	"github.com/BrutalHex/victor/robot/agent/internal/vct1"
@@ -42,6 +44,20 @@ func main() {
 			return
 		case "latch-simulate":
 			os.Exit(runSimulate())
+		case "mask-anki":
+			if err := anki.Mask(); err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				os.Exit(1)
+			}
+			fmt.Println("anki-robot.target stopped")
+			return
+		case "restore-anki":
+			if err := anki.Restore(); err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				os.Exit(1)
+			}
+			fmt.Println("anki-robot.target started")
+			return
 		case "run":
 			os.Args = append([]string{os.Args[0]}, os.Args[2:]...)
 		}
@@ -82,7 +98,7 @@ func runSimulate() int {
 		fmt.Fprintln(os.Stderr, err)
 		return 1
 	}
-	showFace(on, false, "")
+	showFace(on, false)
 	fmt.Printf("CHARGE-LATCH simulated ssh.enabled=%v\n", on)
 	return 0
 }
@@ -91,6 +107,7 @@ func printStatus() {
 	c := sshctl.New()
 	fmt.Printf("ssh.enabled=%v\n", c.Enabled())
 	fmt.Println(blemask.StatusLine())
+	fmt.Printf("anki.masked=%v engine=%v\n", anki.Masked(), anki.EngineActive())
 	fmt.Printf("openai_key_on_robot=%v\n", openaiPresent())
 }
 
@@ -111,13 +128,14 @@ func openaiPresent() bool {
 
 func runDaemon() int {
 	var (
-		hubHost    = flag.String("hub", env("HUB_HOST", "robot.mohammadabbasi.com"), "hub hostname or IP")
-		hubPort    = flag.Int("sensor-port", 7502, "UDP SENSOR port")
-		grpcPort   = flag.Int("grpc-port", 7443, "TCP heartbeat/gRPC port")
-		inject     = flag.String("inject", "/run/victor/inject", "unix socket for CHARGE-LATCH samples")
-		faceDev    = flag.String("face", env("FACE_DEV", ""), "optional raw RGB565 device")
-		logPath    = flag.String("telem-log", "/data/victor/telemetry.log", "local telemetry log")
-		rate       = flag.Duration("sensor-hz", 20*time.Millisecond, "sensor emit period")
+		hubHost   = flag.String("hub", env("HUB_HOST", "robot.mohammadabbasi.com"), "hub hostname or IP")
+		hubPort   = flag.Int("sensor-port", 7502, "UDP SENSOR port")
+		grpcPort  = flag.Int("grpc-port", 7443, "TCP heartbeat/gRPC port")
+		inject    = flag.String("inject", "/run/victor/inject", "unix socket for CHARGE-LATCH samples")
+		logPath   = flag.String("telem-log", "/data/victor/telemetry.log", "local telemetry log")
+		rate      = flag.Duration("period", 20*time.Millisecond, "control/sensor period")
+		ownSpine  = flag.Bool("own-spine", anki.Masked(), "stop Anki and take /dev/ttyHS0")
+		spineDev  = flag.String("spine", spine.DefaultDevice, "spine UART")
 	)
 	flag.Parse()
 	_ = os.MkdirAll("/data/victor", 0755)
@@ -132,6 +150,23 @@ func runDaemon() int {
 		_ = blemask.Apply()
 	}
 
+	var body *spine.Body
+	if *ownSpine {
+		if err := anki.Mask(); err != nil {
+			fmt.Fprintf(os.Stderr, "mask anki: %v\n", err)
+		}
+		time.Sleep(400 * time.Millisecond)
+		b, err := spine.Open(*spineDev)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "spine open: %v (SENSOR will be empty)\n", err)
+		} else {
+			body = b
+			defer body.Close()
+			body.SetSSHLED(ssh.Enabled())
+			fmt.Println("spine owned, motors held at 0")
+		}
+	}
+
 	hub := &telem.Hub{
 		Host:       *hubHost,
 		SensorPort: *hubPort,
@@ -143,38 +178,53 @@ func runDaemon() int {
 	}
 
 	m := latch.New()
-	go injectLoop(*inject, m, ssh, *faceDev)
-	go watchdog(ssh, hub, *faceDev)
+	go injectLoop(*inject, m, ssh, body)
+	go watchdog(ssh, hub, body)
+	face.EOK()
 
 	tick := time.NewTicker(*rate)
 	defer tick.Stop()
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
+	start := time.Now()
+	gotSpine := false
 
-	var seq int
-	onCharger := false
-	button := false
-	lift := 0.0
 	for {
 		select {
 		case <-sig:
 			return 0
 		case <-tick.C:
-			seq++
-			s := vct1.Sensor{
-				EncLift:   int32(lift * 900),
-				BattMV:    3900,
-				ChargerMV: 0,
-				Flags:     0,
+			if body != nil {
+				if err := body.Pump(); err != nil {
+					fmt.Fprintf(os.Stderr, "spine: %v\n", err)
+				}
 			}
-			if onCharger {
-				s.ChargerMV = 5000
-				s.Flags |= vct1.FlagOnCharger
-			}
-			if button {
-				s.Flags |= vct1.FlagButton
+			s := vct1.Sensor{BattMV: 3900}
+			if body != nil {
+				if fr, ok := body.Last(); ok {
+					gotSpine = true
+					s = fr.Sensor()
+					lo, hi := body.LiftRange()
+					if m.Feed(latch.Sample{
+						T:         time.Since(start),
+						Button:    fr.Button,
+						OnCharger: fr.OnCharger(),
+						Driving:   fr.Driving(),
+						LiftNorm:  fr.LiftNorm(lo, hi),
+					}) == latch.ToggleSSH {
+						on, err := ssh.Toggle()
+						fmt.Printf("CHARGE-LATCH ssh.enabled=%v err=%v\n", on, err)
+						showFace(on, false)
+						if body != nil {
+							body.SetSSHLED(on)
+						}
+					}
+				}
 			}
 			_ = hub.SendSensor(s)
+			if gotSpine {
+				_ = os.WriteFile("/data/victor/spine.ok", []byte("1\n"), 0644)
+			}
 		}
 	}
 }
@@ -187,7 +237,7 @@ type inj struct {
 	Phrase    string   `json:"phrase"`
 }
 
-func injectLoop(path string, m *latch.Machine, ssh *sshctl.Controller, faceDev string) {
+func injectLoop(path string, m *latch.Machine, ssh *sshctl.Controller, body *spine.Body) {
 	_ = os.Remove(path)
 	ln, err := net.Listen("unix", path)
 	if err != nil {
@@ -214,7 +264,10 @@ func injectLoop(path string, m *latch.Machine, ssh *sshctl.Controller, faceDev s
 					if simulate.ChargeLatch(m) == latch.ToggleSSH {
 						on, err := ssh.Toggle()
 						fmt.Fprintf(conn, "toggle ssh.enabled=%v err=%v\n", on, err)
-						showFace(on, false, faceDev)
+						showFace(on, false)
+						if body != nil {
+							body.SetSSHLED(on)
+						}
 					} else {
 						fmt.Fprintf(conn, "fsm miss\n")
 					}
@@ -239,7 +292,10 @@ func injectLoop(path string, m *latch.Machine, ssh *sshctl.Controller, faceDev s
 				if m.Feed(sample) == latch.ToggleSSH {
 					on, err := ssh.Toggle()
 					fmt.Fprintf(conn, "toggle ssh.enabled=%v err=%v\n", on, err)
-					showFace(on, false, faceDev)
+					showFace(on, false)
+					if body != nil {
+						body.SetSSHLED(on)
+					}
 				} else {
 					fmt.Fprintf(conn, "ok phase=%s\n", m.Phase())
 				}
@@ -248,7 +304,7 @@ func injectLoop(path string, m *latch.Machine, ssh *sshctl.Controller, faceDev s
 	}
 }
 
-func watchdog(ssh *sshctl.Controller, hub *telem.Hub, faceDev string) {
+func watchdog(ssh *sshctl.Controller, hub *telem.Hub, body *spine.Body) {
 	t := time.NewTicker(30 * time.Second)
 	defer t.Stop()
 	offSince := time.Time{}
@@ -262,12 +318,15 @@ func watchdog(ssh *sshctl.Controller, hub *telem.Hub, faceDev string) {
 		}
 		if time.Since(offSince) >= 24*time.Hour && hub.HeartbeatMissing(10*time.Minute) {
 			_ = ssh.Set(true)
-			showFace(true, true, faceDev)
+			showFace(true, true)
+			if body != nil {
+				body.SetSSHLED(true)
+			}
 		}
 	}
 }
 
-func showFace(sshOn, auto bool, faceDev string) {
+func showFace(sshOn, auto bool) {
 	text := "SSH OFF"
 	fg := face.Red
 	if auto {
@@ -277,9 +336,7 @@ func showFace(sshOn, auto bool, faceDev string) {
 		text = "SSH ON"
 		fg = face.Green
 	}
-	frame := face.Frame(text, fg)
-	_ = os.WriteFile("/data/victor/face.rgb565", frame, 0644)
-	_ = face.WriteDev(faceDev, frame)
+	face.Show(text, fg)
 	fmt.Printf("face %s\n", text)
 }
 
