@@ -6,6 +6,11 @@
 /.vscode/
 /_build/
 /ssh_root_key
+/.env
+/keys/ssh_root_key
+/robot/agent/dist/
+/deploy/ble-bootstrap/ble-bootstrap
+/deploy/ble-bootstrap/ble-bootstrap.exe
 
 # From vector-infra/.gitignore
 /vector-infra/**/bin

@@ -1,0 +1,16 @@
+[Unit]
+Description=victor-agent (CHARGE-LATCH, telemetry, SSH latch)
+After=network-online.target sshd.socket
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/data/victor/victor-agent run
+Restart=always
+RestartSec=2
+# Do not put OPENAI_API_KEY here.
+EnvironmentFile=-/data/victor/hub.env
+WorkingDirectory=/data/victor
+
+[Install]
+WantedBy=multi-user.target

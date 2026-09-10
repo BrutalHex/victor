@@ -1,0 +1,9 @@
+name: victor
+services:
+  hub:
+    container_name: hub
+    build: .
+    network_mode: host
+    env_file:
+      - ../.env
+    restart: unless-stopped

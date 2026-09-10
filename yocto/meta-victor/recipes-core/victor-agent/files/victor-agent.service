@@ -1,0 +1,15 @@
+[Unit]
+Description=victor-agent (CHARGE-LATCH, telemetry, SSH latch)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/victor-agent run
+Restart=always
+RestartSec=2
+EnvironmentFile=-/data/victor/hub.env
+WorkingDirectory=/data/victor
+
+[Install]
+WantedBy=multi-user.target

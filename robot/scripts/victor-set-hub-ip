@@ -1,0 +1,21 @@
+#!/bin/sh
+# Rewrite the managed-by: victor-agent block in /etc/hosts. Do not touch other lines.
+set -e
+IP="${1:?usage: victor-set-hub-ip <ipv4> [hostname]}"
+NAME="${2:-robot.mohammadabbasi.com}"
+HOSTS="${3:-/etc/hosts}"
+TMP="$(mktemp)"
+awk -v ip="$IP" -v name="$NAME" '
+  BEGIN { skip=0 }
+  /^# managed-by: victor-agent/ { skip=1; next }
+  skip==1 && /^# end-managed-by: victor-agent/ { skip=0; next }
+  skip==1 { next }
+  { print }
+  END {
+    print "# managed-by: victor-agent"
+    print ip "    " name " hub"
+    print "# end-managed-by: victor-agent"
+  }
+' "$HOSTS" > "$TMP"
+cat "$TMP" > "$HOSTS"
+rm -f "$TMP"

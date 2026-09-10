@@ -30,14 +30,29 @@ Later debug access is **CHARGE-LATCH** (robot on charger: double-click button, r
 
 Hub runs a tiny NVIDIA TAO export (DetectNet_v2 ResNet10 or MobileNet-V2, ONNX INT8, \u226415 MB). Default backend is ONNX Runtime CPU so an old laptop without a useful GPU still works. TensorRT is optional. The model only votes `stop` / `back_off`. IR cliffs on the robot still win.
 
-## Quick start (once code exists)
+## Quick start
 
 ```bash
 cp .env.example .env
-# fill OPENAI_API_KEY, OPENAI_MODEL, ROBOT_SSH_IP
+# fill OPENAI_API_KEY, WIFI_*, VECTOR_BLE_PIN; ROBOT_SSH_IP defaults to 192.168.0.6
+make test
+make agent-arm
 docker compose -f hub/docker-compose.yml up -d --build
-./deploy/push-hub-ip.sh
 ./deploy/sync-agent.sh
+./deploy/prove-phase0.sh
 ```
+
+SSH (unlocked Vector / WireOS / our image):
+
+```bash
+./deploy/ssh.sh
+# equivalent:
+ssh -i keys/ssh_root_key \
+  -o PubkeyAcceptedAlgorithms=+ssh-rsa \
+  -o HostKeyAlgorithms=+ssh-rsa \
+  root@$ROBOT_SSH_IP
+```
+
+First flash (BLE, once, robot on charger in recovery): `./deploy/first-flash --pin … --ssid … --password … --url http://…/victor.ota`
 
 First boot leaves SSH on so `ble-bootstrap` can finish. After that, CHARGE-LATCH owns port 22.

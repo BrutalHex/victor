@@ -1,0 +1,13 @@
+[Unit]
+Description=Disable BLE on the running victor image
+DefaultDependencies=no
+After=sysinit.target
+Before=network.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/victor-ble-mask
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

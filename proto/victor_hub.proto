@@ -1,0 +1,79 @@
+syntax = "proto3";
+
+package victor.hub.v1;
+
+option go_package = "github.com/BrutalHex/victor/proto/victorhubv1";
+
+// Control plane. Sensors travel VCT1 UDP, not gRPC.
+
+service Hub {
+  rpc Heartbeat(stream HeartbeatFrame) returns (stream HeartbeatFrame);
+  rpc CommandStream(stream RobotReport) returns (stream HubCommand);
+  rpc ReportFace(FaceReport) returns (Ack);
+  rpc SetDisplay(DisplayFrame) returns (Ack);
+}
+
+message HeartbeatFrame {
+  uint64 t_ns = 1;
+  uint32 seq = 2;
+}
+
+message RobotReport {
+  uint64 t_ns = 1;
+  bool on_charger = 2;
+  bool ssh_enabled = 3;
+  bool ble_disabled = 4;
+}
+
+message HubCommand {
+  oneof body {
+    Stop stop = 1;
+    Twist twist = 2;
+    PoseDelta pose_delta = 3;
+    FaceUi face_ui = 4;
+    Speak speak = 5;
+    Led led = 6;
+  }
+  uint32 ttl_ms = 10;
+}
+
+message Stop {}
+
+message Twist {
+  float vx = 1;
+  float wz = 2;
+}
+
+message PoseDelta {
+  float dx_mm = 1;
+  float dy_mm = 2;
+  float dtheta_rad = 3;
+}
+
+message FaceUi {
+  string mode = 1;
+  string caption = 2;
+}
+
+message Speak {
+  bytes pcm_s16le = 1;
+}
+
+message Led {
+  uint32 front = 1;
+  uint32 middle = 2;
+  uint32 back = 3;
+}
+
+message FaceReport {
+  string name = 1;
+  float score = 2;
+}
+
+message DisplayFrame {
+  bytes rgb565 = 1;
+}
+
+message Ack {
+  bool ok = 1;
+}

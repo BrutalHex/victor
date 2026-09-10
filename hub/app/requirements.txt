@@ -1,0 +1,1 @@
+# Hub is Python 3.12+; OpenAI stays here, never on the robot.

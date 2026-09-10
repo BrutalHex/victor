@@ -1,0 +1,98 @@
+#!/usr/bin/env bash
+# Recovery advertise → PIN → wifi → HTTP OTA → probe :22 → mask BLE.
+# Recovery (first OTA): on charger, hold button ~15 s until rear lights are
+# dark blue, then double-press to advertise.
+set -euo pipefail
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# shellcheck disable=SC1091
+source "${ROOT}/deploy/lib.sh"
+
+PIN="${VECTOR_BLE_PIN:-${PIN:-}}"
+SSID="${WIFI_SSID:-}"
+PASS="${WIFI_PASSWORD:-}"
+URL="${OTA_URL:-}"
+NAME="${VECTOR_BLE_NAME:-}"
+OTA_FILE="${OTA_FILE:-}"
+HTTP_PORT="${OTA_HTTP_PORT:-8088}"
+
+usage() {
+  cat <<EOF
+usage: deploy/first-flash --pin NNNNNN --ssid SSID --password PASS --url http://HOST/FILE.ota
+       deploy/first-flash --pin NNNNNN --ssid SSID --password PASS --ota-file path/to/file.ota
+
+Put Vector on the charger. Hold the backpack button ~15 s until rear lights
+are dark blue (recovery). Double-press so it advertises Vector-XXXX.
+This host must have BLE (cap_net_raw) and the OTA URL must be HTTP, not HTTPS.
+EOF
+}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --pin) PIN="$2"; shift 2 ;;
+    --ssid) SSID="$2"; shift 2 ;;
+    --password) PASS="$2"; shift 2 ;;
+    --url) URL="$2"; shift 2 ;;
+    --name) NAME="$2"; shift 2 ;;
+    --ota-file) OTA_FILE="$2"; shift 2 ;;
+    -h|--help) usage; exit 0 ;;
+    *) echo "unknown $1"; usage; exit 2 ;;
+  esac
+done
+
+if [[ -z "$PIN" || -z "$SSID" ]]; then
+  usage
+  exit 2
+fi
+
+BIN="${ROOT}/deploy/ble-bootstrap/ble-bootstrap"
+if [[ ! -x "$BIN" ]]; then
+  echo "building ble-bootstrap..."
+  make -C "$ROOT" ble-bootstrap
+fi
+
+HTTP_PID=""
+cleanup() {
+  if [[ -n "$HTTP_PID" ]]; then
+    kill "$HTTP_PID" 2>/dev/null || true
+  fi
+}
+trap cleanup EXIT
+
+if [[ -n "$OTA_FILE" && -z "$URL" ]]; then
+  HOST_IP="$(hostname -I | awk '{print $1}')"
+  DIR="$(cd "$(dirname "$OTA_FILE")" && pwd)"
+  BASE="$(basename "$OTA_FILE")"
+  python3 -m http.server "$HTTP_PORT" --bind 0.0.0.0 --directory "$DIR" &
+  HTTP_PID=$!
+  URL="http://${HOST_IP}:${HTTP_PORT}/${BASE}"
+  echo "hosting OTA at $URL"
+fi
+
+if [[ -z "$URL" || "$URL" == https://* ]]; then
+  echo "need an HTTP --url (recovery cannot pull HTTPS)" >&2
+  exit 2
+fi
+
+echo "waiting for Vector BLE advertisement (recovery + double-press)..."
+"$BIN" first-flash --pin "$PIN" --name "$NAME" --ssid "$SSID" --password "$PASS" --url "$URL" --env-out "${ROOT}/.env"
+
+echo "waiting for reboot and SSH on port 22..."
+IP="${ROBOT_SSH_IP:-}"
+if [[ -f "${ROOT}/.env" ]]; then
+  # shellcheck disable=SC1091
+  source "${ROOT}/.env"
+  IP="${ROBOT_SSH_IP}"
+fi
+for i in $(seq 1 90); do
+  if timeout 1 bash -c "echo >/dev/tcp/${IP}/22" 2>/dev/null; then
+    echo "port 22 is open on $IP"
+    break
+  fi
+  sleep 2
+done
+
+robot_ssh true
+echo "SSH ok. masking BLE on the running image."
+"${ROOT}/deploy/mask-ble.sh"
+robot_ssh true
+echo "first-flash complete. CHARGE-LATCH now owns port 22; first boot left SSH ON."
