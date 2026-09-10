@@ -47,7 +47,14 @@ On-robot veto owns motors. Hub sends skills only. `explore.enabled` is required 
 - Hub death → heartbeat veto, motors 0
 - Desk-edge with hub dead: force-cliffs → `veto=cliff`, motors 0
 
-Do **not** create `/data/victor/explore.enabled` on a live desk until Phase 2 has been proven on the floor/blocks.
+Wander gate (tested in `skill.AllowWheels`):
+
+```bash
+./deploy/prove-explore.sh          # flag + on charger → wheels stay 0
+./deploy/prove-explore.sh --drive  # only if Vector is off the contacts on the floor/blocks
+```
+
+Do **not** create `/data/victor/explore.enabled` on a live desk.
 
 ### Phase 3 — camera, faces, voice
 

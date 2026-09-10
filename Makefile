@@ -31,3 +31,7 @@ prove1: test agent-arm
 
 prove2: test agent-arm
 	./deploy/prove-phase2.sh
+
+# On-charger gate only. Off-charger creep: ./deploy/prove-explore.sh --drive
+prove-explore: test agent-arm
+	./deploy/prove-explore.sh

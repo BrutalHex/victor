@@ -276,7 +276,12 @@ func runDaemon() int {
 			if k, ok := ov.skill(); ok {
 				kind = k
 				lastCmd = time.Now()
-			} else if kind != skill.Idle && kind != skill.Stop {
+			}
+			if b, err := os.ReadFile("/data/victor/force-skill"); err == nil {
+				kind = skill.Parse(strings.TrimSpace(string(b)))
+				lastCmd = time.Now()
+			}
+			if kind != skill.Idle && kind != skill.Stop {
 				lastCmd = time.Now()
 			}
 			lastKind = kind
@@ -301,7 +306,7 @@ func runDaemon() int {
 				vin.CommandAge = time.Since(lastCmd)
 			}
 			reason := veto.Check(vin)
-			allow := skill.ExploreEnabled() && reason == veto.Clear && !vin.OnCharger
+			allow := skill.AllowWheels(skill.ExploreEnabled(), reason == veto.Clear, vin.OnCharger)
 			pwm := skill.PWM(kind, allow)
 			if reason != veto.Clear {
 				pwm = [4]int16{}

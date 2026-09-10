@@ -18,6 +18,12 @@ func ExploreEnabled() bool {
 	return err == nil
 }
 
+// AllowWheels is the Phase-2 drive interlock.
+// Wander at ~50 mm/s only when the flag exists, veto is clear, and the body is off the charger.
+func AllowWheels(exploreEnabled, vetoClear, onCharger bool) bool {
+	return exploreEnabled && vetoClear && !onCharger
+}
+
 func PWM(k Kind, allowWheels bool) [4]int16 {
 	var m [4]int16
 	if !allowWheels {

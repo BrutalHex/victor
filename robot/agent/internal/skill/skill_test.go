@@ -26,6 +26,32 @@ func TestForwardDifferential(t *testing.T) {
 	}
 }
 
+func TestAllowWheelsGates(t *testing.T) {
+	cases := []struct {
+		explore, clear, charger, want bool
+		name                          string
+	}{
+		{false, true, false, false, "no flag"},
+		{true, true, true, false, "on charger"},
+		{true, false, false, false, "veto"},
+		{true, true, false, true, "floor wander"},
+		{false, true, true, false, "no flag on charger"},
+	}
+	for _, c := range cases {
+		got := AllowWheels(c.explore, c.clear, c.charger)
+		if got != c.want {
+			t.Fatalf("%s: got %v want %v", c.name, got, c.want)
+		}
+		pwm := PWM(CreepForward, got)
+		if !c.want && (pwm[0] != 0 || pwm[1] != 0) {
+			t.Fatalf("%s leaked wheel pwm %v", c.name, pwm)
+		}
+		if c.want && (pwm[0] == 0 || pwm[1] == 0) {
+			t.Fatalf("%s expected creep pwm, got %v", c.name, pwm)
+		}
+	}
+}
+
 func TestStopIsZero(t *testing.T) {
 	m := PWM(Stop, true)
 	if m != [4]int16{} {
