@@ -41,6 +41,7 @@ docker compose -f hub/docker-compose.yml up -d --build
 ./deploy/sync-agent.sh
 ./deploy/prove-phase0.sh
 ./deploy/prove-phase1.sh   # stops Anki, takes the spine; restore with ./deploy/restore-anki.sh
+./deploy/prove-phase2.sh   # cliff cal + veto; wheels stay 0 unless explore.enabled
 ```
 
 SSH (unlocked Vector / WireOS / our image):

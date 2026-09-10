@@ -22,7 +22,8 @@ type Body struct {
 	ok     bool
 	liftMin int32
 	liftMax int32
-	leds   [12]byte
+	leds    [12]byte
+	drive   [4]int16
 }
 
 func Open(dev string) (*Body, error) {
@@ -56,6 +57,18 @@ func (b *Body) Last() (Frame, bool) {
 	return b.last, b.ok
 }
 
+func (b *Body) SetDrive(m [4]int16) {
+	b.mu.Lock()
+	b.drive = m
+	b.mu.Unlock()
+}
+
+func (b *Body) Drive() [4]int16 {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.drive
+}
+
 func (b *Body) SetSSHLED(on bool) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -74,8 +87,8 @@ func (b *Body) Pump() error {
 	b.seq++
 	b.mu.Unlock()
 
-	// Always zero PWM. Do not guess motor signs on a live desk.
-	if err := b.send(EncodeCtrl(seq, [4]int16{}, leds)); err != nil {
+	drive := b.Drive()
+	if err := b.send(EncodeCtrl(seq, drive, leds)); err != nil {
 		return err
 	}
 	tmp := make([]byte, 4096)

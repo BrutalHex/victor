@@ -1,18 +1,17 @@
 #!/usr/bin/env python3
-"""Hub brain process. Phase 0: receive VCT1 SENSOR, HTTP status, TCP heartbeat.
-
-OpenAI keys stay in this process / container env. Never write them to the robot.
-"""
+"""Hub brain. Phase 2: VCT1 SENSOR, heartbeat+skills on :7443, explorer."""
 
 from __future__ import annotations
 
 import json
 import os
 import socket
+import struct
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+from explore import NAMES, Explorer
 from protocol import TYPE_SENSOR, decode, unpack_sensor
 
 STATE = {
@@ -22,9 +21,13 @@ STATE = {
     "last_sensor": None,
     "started": time.time(),
     "hz": 0.0,
+    "skill": "idle",
+    "veto": 0,
+    "heartbeats": 0,
 }
 _WINDOW = []
 LOCK = threading.Lock()
+EXPLORER = Explorer()
 
 
 def udp_loop(host: str, port: int) -> None:
@@ -57,15 +60,38 @@ def udp_loop(host: str, port: int) -> None:
             STATE["hz"] = float(len(_WINDOW))
 
 
-def tcp_heartbeat(host: str, port: int) -> None:
+def handle_robot(conn: socket.socket) -> None:
+    conn.settimeout(2.0)
+    while True:
+        buf = b""
+        while len(buf) < 18:
+            chunk = conn.recv(18 - len(buf))
+            if not chunk:
+                return
+            buf += chunk
+        if buf[:4] != b"VHB1":
+            return
+        veto = buf[17]
+        with LOCK:
+            sensor = STATE.get("last_sensor")
+            STATE["veto"] = veto
+            STATE["heartbeats"] += 1
+            skill = EXPLORER.step(sensor, veto)
+            STATE["skill"] = NAMES.get(skill, "idle")
+        t_ns = time.time_ns()
+        reply = b"VHB1" + bytes([2]) + buf[5:9] + struct.pack("<Q", t_ns) + bytes([skill])
+        conn.sendall(reply)
+
+
+def tcp_loop(host: str, port: int) -> None:
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     sock.bind((host, port))
     sock.listen(16)
-    print(f"hub heartbeat TCP {host}:{port}", flush=True)
+    print(f"hub heartbeat+skill TCP {host}:{port}", flush=True)
     while True:
         conn, _ = sock.accept()
-        conn.close()
+        threading.Thread(target=lambda c=conn: (handle_robot(c), c.close()), daemon=True).start()
 
 
 class Status(BaseHTTPRequestHandler):
@@ -89,10 +115,13 @@ def main() -> None:
     if os.environ.get("OPENAI_API_KEY"):
         print("openai key present on hub only", flush=True)
     host = "0.0.0.0"
-    threading.Thread(target=udp_loop, args=(host, 7502), daemon=True).start()
-    threading.Thread(target=tcp_heartbeat, args=(host, 7443), daemon=True).start()
-    httpd = ThreadingHTTPServer((host, 8080), Status)
-    print("hub HTTP 8080", flush=True)
+    udp_port = int(os.environ.get("HUB_SENSOR_PORT", "7502"))
+    tcp_port = int(os.environ.get("HUB_SKILL_PORT", "7443"))
+    http_port = int(os.environ.get("HUB_HTTP_PORT", "8080"))
+    threading.Thread(target=udp_loop, args=(host, udp_port), daemon=True).start()
+    threading.Thread(target=tcp_loop, args=(host, tcp_port), daemon=True).start()
+    httpd = ThreadingHTTPServer((host, http_port), Status)
+    print(f"hub HTTP {http_port}", flush=True)
     httpd.serve_forever()
 
 

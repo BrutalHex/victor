@@ -28,3 +28,6 @@ prove: test agent-arm
 
 prove1: test agent-arm
 	./deploy/prove-phase1.sh
+
+prove2: test agent-arm
+	./deploy/prove-phase2.sh

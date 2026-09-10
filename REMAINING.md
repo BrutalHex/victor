@@ -29,7 +29,7 @@ Proven 2026-09-10:
 
 Still soft: LCD may not light if SPI GPIO init failed (frame is always written to disk). Backpack LED is sent on the spine keepalive. Physical CHARGE-LATCH is wired to real button/lift now — confirm on the charger.
 
-## After Phase 1
+## After Phase 2
 
 ### Phase 0 leftovers (do when hardware allows)
 
@@ -37,13 +37,17 @@ Still soft: LCD may not light if SPI GPIO init failed (frame is always written t
 - Physical CHARGE-LATCH on the charger (needs spine ownership from Phase 1)
 - Hub hostname `robot.mohammadabbasi.com` on a same-LAN laptop (this VM is NAT’d; robot cannot ping it)
 
-### Phase 2 — safety + wander
+## Phase 2 — done on Vector-W1V9 (wheels gated)
 
-- On-robot veto: front cliffs, bad ToF while moving, pickup/fall, hub heartbeat 250 ms, command TTL, `BATT_STOP_MV`
-- Cliff calibration
-- Hub explorer IDLE/CREEP/LOOK/TURN/BACK_OFF/DOCK at 40–60 mm/s
-- Killing hub stops wheels within 250 ms
-- Desk-edge stop with hub dead
+On-robot veto owns motors. Hub sends skills only. `explore.enabled` is required before any wheel PWM; on charger wheels stay 0.
+
+- Veto: front cliffs, ToF while forward, pickup/fall, hub heartbeat 250 ms, command TTL, `BATT_STOP_MV=3450`
+- Cliff calibration → `/data/victor/cliffs.cal`
+- Hub explorer IDLE/CREEP/LOOK/TURN/BACK_OFF/DOCK at 50 mm/s class
+- Hub death → heartbeat veto, motors 0
+- Desk-edge with hub dead: force-cliffs → `veto=cliff`, motors 0
+
+Do **not** create `/data/victor/explore.enabled` on a live desk until Phase 2 has been proven on the floor/blocks.
 
 ### Phase 3 — camera, faces, voice
 

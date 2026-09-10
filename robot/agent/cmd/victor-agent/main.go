@@ -9,18 +9,23 @@ import (
 	"os"
 	"os/signal"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
 	"github.com/BrutalHex/victor/robot/agent/internal/anki"
 	"github.com/BrutalHex/victor/robot/agent/internal/blemask"
+	"github.com/BrutalHex/victor/robot/agent/internal/cliffcal"
 	"github.com/BrutalHex/victor/robot/agent/internal/face"
 	"github.com/BrutalHex/victor/robot/agent/internal/latch"
+	"github.com/BrutalHex/victor/robot/agent/internal/link"
 	"github.com/BrutalHex/victor/robot/agent/internal/simulate"
+	"github.com/BrutalHex/victor/robot/agent/internal/skill"
 	"github.com/BrutalHex/victor/robot/agent/internal/spine"
 	"github.com/BrutalHex/victor/robot/agent/internal/sshctl"
 	"github.com/BrutalHex/victor/robot/agent/internal/telem"
 	"github.com/BrutalHex/victor/robot/agent/internal/vct1"
+	"github.com/BrutalHex/victor/robot/agent/internal/veto"
 )
 
 func main() {
@@ -57,6 +62,10 @@ func main() {
 				os.Exit(1)
 			}
 			fmt.Println("anki-robot.target started")
+			return
+		case "calibrate":
+			_ = os.Remove(cliffcal.Path)
+			fmt.Println("cliff calibration cleared; agent will recapture floor samples")
 			return
 		case "run":
 			os.Args = append([]string{os.Args[0]}, os.Args[2:]...)
@@ -109,6 +118,16 @@ func printStatus() {
 	fmt.Println(blemask.StatusLine())
 	fmt.Printf("anki.masked=%v engine=%v\n", anki.Masked(), anki.EngineActive())
 	fmt.Printf("openai_key_on_robot=%v\n", openaiPresent())
+	if b, err := os.ReadFile("/data/victor/veto.txt"); err == nil {
+		fmt.Printf("veto=%s", b)
+	}
+	if b, err := os.ReadFile("/data/victor/skill.txt"); err == nil {
+		fmt.Printf("skill=%s", b)
+	}
+	if b, err := os.ReadFile("/data/victor/motors.txt"); err == nil {
+		fmt.Printf("motors=%s", b)
+	}
+	fmt.Printf("explore.enabled=%v\n", skill.ExploreEnabled())
 }
 
 func openaiPresent() bool {
@@ -177,8 +196,18 @@ func runDaemon() int {
 		fmt.Fprintf(os.Stderr, "hub udp: %v (continuing with local log)\n", err)
 	}
 
+	hbHost := env("HUB_HOST", *hubHost)
+	lnk := &link.Client{Addr: fmt.Sprintf("%s:%d", hbHost, *grpcPort)}
+	defer lnk.Close()
+
+	cal, _ := cliffcal.Load(cliffcal.Path)
+	if cal == nil {
+		cal = &cliffcal.Cal{}
+	}
+
+	ov := &overlay{}
 	m := latch.New()
-	go injectLoop(*inject, m, ssh, body)
+	go injectLoop(*inject, m, ssh, body, ov)
 	go watchdog(ssh, hub, body)
 	face.EOK()
 
@@ -188,6 +217,10 @@ func runDaemon() int {
 	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
 	start := time.Now()
 	gotSpine := false
+	var lastCmd time.Time
+	var lastKind skill.Kind
+	var lastReason veto.Reason
+	wroteCal := cal.Ready()
 
 	for {
 		select {
@@ -200,26 +233,105 @@ func runDaemon() int {
 				}
 			}
 			s := vct1.Sensor{BattMV: 3900}
+			fr, have := spine.Frame{}, false
 			if body != nil {
-				if fr, ok := body.Last(); ok {
-					gotSpine = true
-					s = fr.Sensor()
-					lo, hi := body.LiftRange()
-					if m.Feed(latch.Sample{
-						T:         time.Since(start),
-						Button:    fr.Button,
-						OnCharger: fr.OnCharger(),
-						Driving:   fr.Driving(),
-						LiftNorm:  fr.LiftNorm(lo, hi),
-					}) == latch.ToggleSSH {
-						on, err := ssh.Toggle()
-						fmt.Printf("CHARGE-LATCH ssh.enabled=%v err=%v\n", on, err)
-						showFace(on, false)
-						if body != nil {
-							body.SetSSHLED(on)
-						}
+				fr, have = body.Last()
+			}
+			if have {
+				gotSpine = true
+				s = fr.Sensor()
+				if !fr.Driving() && !cal.Ready() {
+					cal.Add(fr.Cliffs)
+					if cal.Ready() && !wroteCal {
+						_ = cal.Save(cliffcal.Path)
+						wroteCal = true
+						fmt.Printf("cliffs calibrated floor=%v thresh=%v\n", cal.Floor, cal.Thresh)
 					}
 				}
+				lo, hi := body.LiftRange()
+				if m.Feed(latch.Sample{
+					T:         time.Since(start),
+					Button:    fr.Button,
+					OnCharger: fr.OnCharger(),
+					Driving:   fr.Driving(),
+					LiftNorm:  fr.LiftNorm(lo, hi),
+				}) == latch.ToggleSSH {
+					on, err := ssh.Toggle()
+					fmt.Printf("CHARGE-LATCH ssh.enabled=%v err=%v\n", on, err)
+					showFace(on, false)
+					body.SetSSHLED(on)
+				}
+			}
+			cliffs := s.Cliffs
+			if c := ov.cliffs(); c != nil {
+				cliffs = *c
+			}
+			if b, err := os.ReadFile("/data/victor/force-cliffs"); err == nil {
+				var a, b2, c, d int
+				if n, _ := fmt.Sscanf(string(b), "%d,%d,%d,%d", &a, &b2, &c, &d); n == 4 {
+					cliffs = [4]uint16{uint16(a), uint16(b2), uint16(c), uint16(d)}
+				}
+			}
+			kind := lnk.Skill()
+			if k, ok := ov.skill(); ok {
+				kind = k
+				lastCmd = time.Now()
+			} else if kind != skill.Idle && kind != skill.Stop {
+				lastCmd = time.Now()
+			}
+			lastKind = kind
+
+			vin := veto.Input{
+				Cliffs:       cliffs,
+				Thresh:       cal.Thresh,
+				Calibrated:   cal.Ready(),
+				ProxMM:       s.ProxMM,
+				Forward:      kind.Forward(),
+				OnCharger:    have && fr.OnCharger(),
+				PickedUp:     false,
+				Falling:      false,
+				HasHeartbeat: !lnk.LastOK().IsZero(),
+				BattMV:       s.BattMV,
+				HasCommand:   lastKind != skill.Idle && lastKind != skill.Stop && lastKind != skill.Dock,
+			}
+			if vin.HasHeartbeat {
+				vin.HeartbeatAge = time.Since(lnk.LastOK())
+			}
+			if vin.HasCommand {
+				vin.CommandAge = time.Since(lastCmd)
+			}
+			reason := veto.Check(vin)
+			allow := skill.ExploreEnabled() && reason == veto.Clear && !vin.OnCharger
+			pwm := skill.PWM(kind, allow)
+			if reason != veto.Clear {
+				pwm = [4]int16{}
+			}
+			if body != nil {
+				body.SetDrive(pwm)
+			}
+			if reason != lastReason {
+				lastReason = reason
+				if reason == veto.Cliff || reason == veto.Pickup || reason == veto.Fall || reason == veto.Battery {
+					face.Show(strings.ToUpper(reason.String()), face.Red)
+				} else if reason == veto.Clear {
+					face.EOK()
+				}
+			}
+			_ = os.WriteFile("/data/victor/veto.txt", []byte(reason.String()+"\n"), 0644)
+			ageMs := int64(0)
+			if vin.HasHeartbeat {
+				ageMs = vin.HeartbeatAge.Milliseconds()
+			}
+			_ = os.WriteFile("/data/victor/hb_age_ms.txt", []byte(fmt.Sprintf("%d\n", ageMs)), 0644)
+			_ = os.WriteFile("/data/victor/skill.txt", []byte(kind.String()+"\n"), 0644)
+			_ = os.WriteFile("/data/victor/motors.txt", []byte(fmt.Sprintf("%d,%d,%d,%d\n", pwm[0], pwm[1], pwm[2], pwm[3])), 0644)
+			if _, err := os.Stat("/data/victor/hub.down"); err == nil {
+				lnk.Close()
+			} else {
+				if !lnk.LastOK().IsZero() {
+					hub.NoteOK()
+				}
+				lnk.Tick(uint8(reason))
 			}
 			_ = hub.SendSensor(s)
 			if gotSpine {
@@ -229,15 +341,38 @@ func runDaemon() int {
 	}
 }
 
-type inj struct {
-	Button    *bool    `json:"button"`
-	OnCharger *bool    `json:"on_charger"`
-	Driving   *bool    `json:"driving"`
-	Lift      *float64 `json:"lift"`
-	Phrase    string   `json:"phrase"`
+type overlay struct {
+	mu     sync.Mutex
+	cl     *[4]uint16
+	sk     *skill.Kind
 }
 
-func injectLoop(path string, m *latch.Machine, ssh *sshctl.Controller, body *spine.Body) {
+func (o *overlay) cliffs() *[4]uint16 {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return o.cl
+}
+
+func (o *overlay) skill() (skill.Kind, bool) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	if o.sk == nil {
+		return 0, false
+	}
+	return *o.sk, true
+}
+
+type inj struct {
+	Button    *bool     `json:"button"`
+	OnCharger *bool     `json:"on_charger"`
+	Driving   *bool     `json:"driving"`
+	Lift      *float64  `json:"lift"`
+	Phrase    string    `json:"phrase"`
+	Cliffs    *[4]uint16 `json:"cliffs"`
+	Skill     string    `json:"skill"`
+}
+
+func injectLoop(path string, m *latch.Machine, ssh *sshctl.Controller, body *spine.Body, ov *overlay) {
 	_ = os.Remove(path)
 	ln, err := net.Listen("unix", path)
 	if err != nil {
@@ -258,6 +393,21 @@ func injectLoop(path string, m *latch.Machine, ssh *sshctl.Controller, body *spi
 				var s inj
 				if err := json.Unmarshal(sc.Bytes(), &s); err != nil {
 					fmt.Fprintf(conn, "err %v\n", err)
+					continue
+				}
+				if s.Cliffs != nil && ov != nil {
+					ov.mu.Lock()
+					ov.cl = s.Cliffs
+					ov.mu.Unlock()
+					fmt.Fprintf(conn, "cliffs override %v\n", *s.Cliffs)
+					continue
+				}
+				if s.Skill != "" && ov != nil {
+					k := skill.Parse(s.Skill)
+					ov.mu.Lock()
+					ov.sk = &k
+					ov.mu.Unlock()
+					fmt.Fprintf(conn, "skill %s\n", k)
 					continue
 				}
 				if s.Phrase == "toggle" || s.Phrase == "charge-latch" {
