@@ -31,30 +31,28 @@ MAX_SAMPLES = RATE * 6
 
 
 def speech_like(pcm: bytes) -> bool:
-    """False when the clip is the 150-300 Hz band, or that band is on the rail.
+    """False only for a hard-clipped sub-200 Hz band.
 
-    A shout has pre-emphasised energy above the low-band leak. The saved
-    last.wav files were the opposite: 72% in 150-300 Hz and peak 32767.
+    A laptop recording in this room peaks at 5845 and sits in 300-800 Hz.
+    The previous gate called that shape rumble and dropped the sentence.
     """
     if len(pcm) < 640:
         return False
     n = len(pcm) // 2
     samples = [struct.unpack_from("<h", pcm, i * 2)[0] for i in range(n)]
-    clipped = sum(1 for s in samples if abs(s) > 28000)
+    peak = max(abs(s) for s in samples)
+    if peak < 20000:
+        return True
     low = 0.0
-    prev = 0.0
-    speech = 0.0
+    mid = 0.0
     rumble = 0.0
-    a = 0.075  # ~200 Hz leak at 16 kHz
+    a = 0.075
     for s in samples:
-        low += a * (s - low)
-        pe = s - 0.97 * prev
-        prev = float(s)
-        speech += pe * pe
+        low += a * (float(s) - low)
+        d = float(s) - low
+        mid += d * d
         rumble += low * low
-    if rumble > speech * 1.3:
-        return False
-    if clipped > n * 0.08:
+    if rumble > mid * 4:
         return False
     return True
 

@@ -97,7 +97,7 @@ func TestGrindChannelDropped(t *testing.T) {
 }
 
 func TestEchoReduced(t *testing.T) {
-	p := NewProcessor(ModeFast)
+	p := NewProcessor(ModeDirectional)
 	n := 1600
 	ref := make([]int16, n)
 	mic := make([]int16, n*Channels)
@@ -181,6 +181,9 @@ func TestFastKeepsShoutOnOneMic(t *testing.T) {
 	}
 	if peak > 29000 {
 		t.Fatalf("clipped %d", peak)
+	}
+	if peak < 4000 {
+		t.Fatalf("shout attenuated %d", peak)
 	}
 }
 
