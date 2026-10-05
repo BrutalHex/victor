@@ -159,7 +159,7 @@ func spiSetup(f *os.File) error {
 
 // panelWakeCmds leaves geometry alone. This kernel has CONFIG_FB disabled, so
 // there is no /dev/fb0, but the bootloader already programmed the controller.
-// SWRESET (0x01), COLMOD, or MADCTL shears the 184×96 image.
+// SWRESET (0x01), COLMOD, or MADCTL shears the 160×80 image.
 func panelWakeCmds() []byte {
 	return []byte{cmdSLPOUT, cmdDISPON}
 }

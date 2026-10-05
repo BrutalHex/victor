@@ -4,7 +4,7 @@ import "testing"
 
 func TestFrameSize(t *testing.T) {
 	f := EyesFrame(0, 0, 0)
-	if len(f) != Bytes || Bytes != 184*96*2 {
+	if len(f) != Bytes || Bytes != 160*80*2 {
 		t.Fatalf("len %d want %d", len(f), Bytes)
 	}
 }

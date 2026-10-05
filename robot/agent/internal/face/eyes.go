@@ -15,10 +15,10 @@ import (
 var eyeposeDefault []byte
 
 const (
-	eyeCenterX = 0
-	eyeCenterY = 1
-	eyeScaleX  = 2
-	eyeScaleY  = 3
+	eyeCenterX     = 0
+	eyeCenterY     = 1
+	eyeScaleX      = 2
+	eyeScaleY      = 3
 	eyeLowerInnerX = 5
 	eyeLowerInnerY = 6
 	eyeUpperInnerX = 7
@@ -27,13 +27,13 @@ const (
 	eyeUpperOuterY = 10
 	eyeLowerOuterX = 11
 	eyeLowerOuterY = 12
-	// Nominal half-size before EyeScale. Centers sit ±46 px from the panel center;
-	// EyeCenterX/Y from the pack are added on top.
+	// Nominal half-size before EyeScale. Centers sit ±40 px from the 160-wide
+	// panel center. EyeCenterX/Y from the pack are added on top.
 	eyeBaseHalfX = 18.0
 	eyeBaseHalfY = 20.0
-	eyeNomLeft   = 46.0
-	eyeNomRight  = 138.0
-	eyeNomY      = 48.0
+	eyeNomLeft   = 40.0
+	eyeNomRight  = 120.0
+	eyeNomY      = 40.0
 )
 
 func EyesFrame(lookX, lookY, blink float64) []byte {
