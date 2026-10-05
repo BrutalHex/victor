@@ -136,12 +136,9 @@ func writeSPI(frame []byte) error {
 	if err := gpioOut(gpioDC, 1); err != nil {
 		return err
 	}
-	wire := make([]byte, len(frame))
-	for i := 0; i+1 < len(frame); i += 2 {
-		wire[i] = frame[i+1]
-		wire[i+1] = frame[i]
-	}
-	return spiWrite(f, wire)
+	// Buffer is already RGB565 from put(). Swapping pairs made the Vector 2
+	// panel scan as stripes. Send the stored order.
+	return spiWrite(f, frame)
 }
 
 func spiSetup(f *os.File) error {
