@@ -185,7 +185,13 @@ func runDaemon() int {
 			fmt.Fprintf(os.Stderr, "spine open: %v (SENSOR will be empty)\n", err)
 		} else {
 			body = b
-			defer body.Close()
+			stopSpine := make(chan struct{})
+			go body.Serve(stopSpine)
+			defer func() {
+				close(stopSpine)
+				<-body.Stopped()
+				_ = body.Close()
+			}()
 			body.SetSSHLED(ssh.Enabled())
 			fmt.Println("spine owned, motors held at 0")
 		}
@@ -240,11 +246,6 @@ func runDaemon() int {
 		case <-sig:
 			return 0
 		case <-tick.C:
-			if body != nil {
-				if err := body.Pump(); err != nil {
-					fmt.Fprintf(os.Stderr, "spine: %v\n", err)
-				}
-			}
 			s := vct1.Sensor{BattMV: 3900}
 			fr, have := spine.Frame{}, false
 			if body != nil {
