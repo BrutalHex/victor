@@ -1,4 +1,3 @@
-// Package audio mixes spine mics to 16 kHz mono and plays hub TTS on the speaker.
 package audio
 
 import (
@@ -35,8 +34,9 @@ func Energies(interleaved []int16) [Channels]int64 {
 	return e
 }
 
-// MixMono keeps the quietest backpack channel. Averaging the others still
-// mixes in the grind (Vector-W1V9: ch0 ~3e10, ch2 ~2e11).
+// MixMono keeps the quietest backpack channel. Fast mode still uses this.
+// Directional mode is the default; averaging the grind channels
+// (Vector-W1V9: ch0 ~3e10, ch2 ~2e11) is worse than a steered beam.
 func MixMono(interleaved []int16) []int16 {
 	if len(interleaved) < Channels {
 		return nil
