@@ -40,6 +40,7 @@ STATE = {
     "last_reply": "",
     "audio_rms": 0,
     "noise_rms": 0,
+    "voice_busy": False,
 }
 _WINDOW = []
 LOCK = threading.Lock()
@@ -130,6 +131,10 @@ def _enqueue_utterance(utt: bytes) -> None:
 
 
 def _on_audio(pcm: bytes) -> None:
+    with LOCK:
+        busy = bool(STATE.get("voice_busy"))
+    if busy:
+        return
     utt = VOICE.push(pcm)
     with LOCK:
         STATE["audio_rms"] = getattr(VOICE, "last_rms", 0)
@@ -140,6 +145,9 @@ def _on_audio(pcm: bytes) -> None:
         print(f"voice skip short {len(utt)} bytes", flush=True)
         return
     with LOCK:
+        if STATE.get("voice_busy"):
+            return
+        STATE["voice_busy"] = True
         STATE["thinking"] = True
     queue_cmd(CMD_FACEUI, b"thinking|")
     print(f"voice utterance {len(utt)} bytes rms={VOICE.last_rms} noise={int(VOICE.noise)}", flush=True)
@@ -152,9 +160,10 @@ def _on_audio(pcm: bytes) -> None:
 
 
 def voice_loop() -> None:
-    """OpenAI stays off the :7443 reader. Robot read deadline is 2s."""
+    """One OpenAI turn at a time. Mic stays closed until the reply is queued."""
     while True:
         pcm = UTTERANCES.get()
+        queue_cmd(CMD_FACEUI, b"thinking|")
         text = VOICE.transcribe(pcm)
         reply = VOICE.chat(text) if text else ""
         audio = VOICE.tts(reply) if reply else b""
@@ -163,11 +172,12 @@ def voice_loop() -> None:
         VOICE.thinking = False
         with LOCK:
             STATE["thinking"] = False
+            STATE["voice_busy"] = False
             STATE["last_transcript"] = text
             STATE["last_reply"] = reply
-        queue_cmd(CMD_FACEUI, b"idle|")
         if audio:
             queue_cmd(CMD_SPEAK, audio)
+        queue_cmd(CMD_FACEUI, b"idle|")
         print(f"voice transcript={text!r} reply={reply!r} speak={len(audio)}", flush=True)
 
 
