@@ -4,7 +4,9 @@ import (
 	"encoding/binary"
 	"os"
 	"strconv"
+	"syscall"
 	"time"
+	"unsafe"
 )
 
 const (
@@ -30,15 +32,9 @@ func Show(text string, fg uint16) {
 // Init wakes the face panel. A robot reset leaves the controller asleep, so a
 // later fb write can succeed and still show nothing.
 func Init() {
+	// Do not SWRESET or rewrite MADCTL. That scrambles a panel the kernel
+	// already programmed, and the eyes come out as a sheared shape.
 	setBacklight(10)
-	_ = spiCmd(0x01) // SWRESET
-	time.Sleep(50 * time.Millisecond)
-	_ = spiCmd(cmdSLPOUT)
-	time.Sleep(120 * time.Millisecond)
-	_ = spiCmd(cmdCOLMOD, 0x05) // RGB565
-	_ = spiCmd(cmdMADCTL, 0xC0)
-	_ = spiCmd(cmdDISPON)
-	time.Sleep(20 * time.Millisecond)
 	panelReady = true
 }
 
@@ -57,18 +53,15 @@ func Blit(frame []byte) {
 	_ = os.WriteFile("/data/victor/face.rgb565", frame, 0644)
 	ensurePanel()
 	setBacklight(10)
+	if err := writeFB(frame); err == nil {
+		return
+	}
 	_ = writeSPI(frame)
-	_ = writeFB(frame)
 }
 
 // Boot re-inits the panel and restores the last frame across agent restarts.
 func Boot() {
 	Init()
-	b, err := os.ReadFile("/data/victor/face.rgb565")
-	if err == nil && len(b) == Bytes {
-		Blit(b)
-		return
-	}
 	EOK()
 }
 
@@ -85,13 +78,41 @@ func setBacklight(level int) {
 }
 
 func writeFB(frame []byte) error {
-	f, err := os.OpenFile(fbDev, os.O_WRONLY, 0)
+	f, err := os.OpenFile(fbDev, os.O_RDWR, 0)
 	if err != nil {
 		return err
 	}
 	defer f.Close()
-	_, err = f.Write(frame)
-	return err
+	stride := fbLineLength(f)
+	if stride < Width*2 {
+		stride = Width * 2
+	}
+	if stride == Width*2 && Height*stride == len(frame) {
+		_, err = f.Write(frame)
+		return err
+	}
+	// /dev/fb0 on Vector is often wider than 160. Packed rows shear into a blob.
+	row := make([]byte, stride)
+	for y := 0; y < Height; y++ {
+		src := frame[y*Width*2 : (y+1)*Width*2]
+		copy(row, src)
+		for i := len(src); i < len(row); i++ {
+			row[i] = 0
+		}
+		if _, err = f.WriteAt(row, int64(y*stride)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func fbLineLength(f *os.File) int {
+	buf := make([]byte, 256)
+	_, _, errno := syscall.Syscall(syscall.SYS_IOCTL, f.Fd(), 0x4602, uintptr(unsafe.Pointer(&buf[0])))
+	if errno != 0 {
+		return 0
+	}
+	return int(binary.LittleEndian.Uint32(buf[48:52]))
 }
 
 func writeSPI(frame []byte) error {
