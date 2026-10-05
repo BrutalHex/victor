@@ -52,19 +52,14 @@ func Blit(frame []byte) {
 	}
 	_ = os.MkdirAll("/data/victor", 0755)
 	_ = os.WriteFile("/data/victor/face.rgb565", frame, 0644)
-	ensurePanel()
 	setBacklight(10)
-	// /dev/fb0 accepts the write and is not the panel the user sees.
-	fbErr := writeFB(frame)
-	spiErr := writeSPI(frame)
-	if fbErr != nil && spiErr != nil {
-		fmt.Fprintf(os.Stderr, "face blit fb=%v spi=%v\n", fbErr, spiErr)
+	if err := writeSPI(frame); err != nil {
+		fmt.Fprintf(os.Stderr, "face spi: %v\n", err)
 	}
 }
 
-// Boot re-inits the panel and restores the last frame across agent restarts.
+// Boot draws a fresh frame. This robot has no /dev/fb0.
 func Boot() {
-	Init()
 	EOK()
 }
 
@@ -80,66 +75,108 @@ func setBacklight(level int) {
 	_ = os.WriteFile("/sys/class/leds/face-backlight-right/brightness", []byte(s), 0644)
 }
 
-func writeFB(frame []byte) error {
-	f, err := os.OpenFile(fbDev, os.O_RDWR, 0)
+func writeSPI(frame []byte) error {
+	f, err := os.OpenFile(spiDev, os.O_RDWR, 0)
 	if err != nil {
 		return err
 	}
 	defer f.Close()
-	stride := fbLineLength(f)
-	if stride < Width*2 {
-		stride = Width * 2
-	}
-	if stride == Width*2 && Height*stride == len(frame) {
-		_, err = f.Write(frame)
+	if err := spiSetup(f); err != nil {
 		return err
 	}
-	// /dev/fb0 on Vector is often wider than 160. Packed rows shear into a blob.
-	row := make([]byte, stride)
-	for y := 0; y < Height; y++ {
-		src := frame[y*Width*2 : (y+1)*Width*2]
-		copy(row, src)
-		for i := len(src); i < len(row); i++ {
-			row[i] = 0
-		}
-		if _, err = f.WriteAt(row, int64(y*stride)); err != nil {
+	if !panelReady {
+		if err := panelInit(f); err != nil {
 			return err
 		}
+		panelReady = true
 	}
-	return nil
-}
-
-func fbLineLength(f *os.File) int {
-	buf := make([]byte, 256)
-	_, _, errno := syscall.Syscall(syscall.SYS_IOCTL, f.Fd(), 0x4602, uintptr(unsafe.Pointer(&buf[0])))
-	if errno != 0 {
-		return 0
+	if err := spiCmdFD(f, cmdCASET, append(u16be(0), u16be(Width-1)...)...); err != nil {
+		return err
 	}
-	return int(binary.LittleEndian.Uint32(buf[48:52]))
-}
-
-func writeSPI(frame []byte) error {
-	bumpSPIBuf()
-	if err := lcdWindow(); err != nil {
+	if err := spiCmdFD(f, cmdRASET, append(u16be(0), u16be(Height-1)...)...); err != nil {
+		return err
+	}
+	if err := spiCmdFD(f, cmdRAMWR); err != nil {
 		return err
 	}
 	if err := gpioOut(gpioDC, 1); err != nil {
 		return err
 	}
-	f, err := os.OpenFile(spiDev, os.O_WRONLY, 0)
-	if err != nil {
-		return err
+	// Anki screen.rgb565_bytepair is little-endian on the wire. Our buffer is big-endian.
+	wire := make([]byte, len(frame))
+	for i := 0; i+1 < len(frame); i += 2 {
+		wire[i] = frame[i+1]
+		wire[i+1] = frame[i]
 	}
-	defer f.Close()
-	for off := 0; off < len(frame); {
+	for off := 0; off < len(wire); {
 		n := spiChunk
-		if n > len(frame)-off {
-			n = len(frame) - off
+		if n > len(wire)-off {
+			n = len(wire) - off
 		}
-		if _, err := f.Write(frame[off : off+n]); err != nil {
+		if _, err := f.Write(wire[off : off+n]); err != nil {
 			return err
 		}
 		off += n
+	}
+	return nil
+}
+
+func spiSetup(f *os.File) error {
+	mode := uint8(0)
+	bits := uint8(8)
+	speed := uint32(8000000)
+	if err := ioctl(f, 0x40016b01, uintptr(unsafe.Pointer(&mode))); err != nil { // SPI_IOC_WR_MODE
+		return err
+	}
+	if err := ioctl(f, 0x40016b03, uintptr(unsafe.Pointer(&bits))); err != nil { // SPI_IOC_WR_BITS_PER_WORD
+		return err
+	}
+	return ioctl(f, 0x40046b04, uintptr(unsafe.Pointer(&speed))) // SPI_IOC_WR_MAX_SPEED_HZ
+}
+
+func panelInit(f *os.File) error {
+	if err := spiCmdFD(f, 0x01); err != nil { // SWRESET
+		return err
+	}
+	time.Sleep(50 * time.Millisecond)
+	if err := spiCmdFD(f, cmdSLPOUT); err != nil {
+		return err
+	}
+	time.Sleep(120 * time.Millisecond)
+	if err := spiCmdFD(f, cmdCOLMOD, 0x05); err != nil { // RGB565
+		return err
+	}
+	if err := spiCmdFD(f, cmdMADCTL, 0x00); err != nil {
+		return err
+	}
+	if err := spiCmdFD(f, cmdDISPON); err != nil {
+		return err
+	}
+	time.Sleep(20 * time.Millisecond)
+	return nil
+}
+
+func spiCmdFD(f *os.File, cmd byte, data ...byte) error {
+	if err := gpioOut(gpioDC, 0); err != nil {
+		return err
+	}
+	if _, err := f.Write([]byte{cmd}); err != nil {
+		return err
+	}
+	if len(data) == 0 {
+		return nil
+	}
+	if err := gpioOut(gpioDC, 1); err != nil {
+		return err
+	}
+	_, err := f.Write(data)
+	return err
+}
+
+func ioctl(f *os.File, req uintptr, arg uintptr) error {
+	_, _, errno := syscall.Syscall(syscall.SYS_IOCTL, f.Fd(), req, arg)
+	if errno != 0 {
+		return errno
 	}
 	return nil
 }
