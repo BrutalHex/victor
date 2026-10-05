@@ -17,28 +17,47 @@ const (
 	MicFile    = "/data/victor/mic.pcm"
 )
 
-// MixMono picks the loudest of 4 interleaved mic channels (Vector backpack array).
+// Energies is the sum of squares for each interleaved backpack mic.
+func Energies(interleaved []int16) [Channels]int64 {
+	var e [Channels]int64
+	if len(interleaved) < Channels {
+		return e
+	}
+	n := len(interleaved) / Channels
+	for c := 0; c < Channels; c++ {
+		var acc int64
+		for i := 0; i < n; i++ {
+			v := int64(interleaved[i*Channels+c])
+			acc += v * v
+		}
+		e[c] = acc
+	}
+	return e
+}
+
+// MixMono drops the loudest backpack channel (motor/fan grind) and averages the other three.
 func MixMono(interleaved []int16) []int16 {
 	if len(interleaved) < Channels {
 		return nil
 	}
 	n := len(interleaved) / Channels
-	best := 0
-	bestE := int64(-1)
-	for c := 0; c < Channels; c++ {
-		var e int64
-		for i := 0; i < n; i++ {
-			v := int64(interleaved[i*Channels+c])
-			e += v * v
-		}
-		if e > bestE {
-			bestE = e
-			best = c
+	e := Energies(interleaved)
+	drop := 0
+	for c := 1; c < Channels; c++ {
+		if e[c] > e[drop] {
+			drop = c
 		}
 	}
 	out := make([]int16, n)
 	for i := 0; i < n; i++ {
-		out[i] = interleaved[i*Channels+best]
+		var sum int32
+		for c := 0; c < Channels; c++ {
+			if c == drop {
+				continue
+			}
+			sum += int32(interleaved[i*Channels+c])
+		}
+		out[i] = int16(sum / 3)
 	}
 	return out
 }
