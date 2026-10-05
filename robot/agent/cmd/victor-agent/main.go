@@ -135,11 +135,7 @@ func printStatus() {
 }
 
 func openaiPresent() bool {
-	paths := []string{
-		"/data/victor/.env",
-		"/data/openai.key",
-		"/anki/etc/openai",
-	}
+	paths := []string{"/data/victor/.env", "/data/openai.key", "/anki/etc/openai"}
 	for _, p := range paths {
 		b, err := os.ReadFile(p)
 		if err == nil && strings.Contains(strings.ToLower(string(b)), "sk-") {
@@ -151,14 +147,14 @@ func openaiPresent() bool {
 
 func runDaemon() int {
 	var (
-		hubHost   = flag.String("hub", env("HUB_HOST", "robot.mohammadabbasi.com"), "hub hostname or IP")
-		hubPort   = flag.Int("sensor-port", 7502, "UDP SENSOR port")
-		grpcPort  = flag.Int("grpc-port", 7443, "TCP heartbeat/gRPC port")
-		inject    = flag.String("inject", "/run/victor/inject", "unix socket for CHARGE-LATCH samples")
-		logPath   = flag.String("telem-log", "/data/victor/telemetry.log", "local telemetry log")
-		rate      = flag.Duration("period", 20*time.Millisecond, "control/sensor period")
-		ownSpine  = flag.Bool("own-spine", anki.Masked(), "stop Anki and take /dev/ttyHS0")
-		spineDev  = flag.String("spine", spine.DefaultDevice, "spine UART")
+		hubHost  = flag.String("hub", env("HUB_HOST", "robot.mohammadabbasi.com"), "hub hostname or IP")
+		hubPort  = flag.Int("sensor-port", 7502, "UDP SENSOR port")
+		grpcPort = flag.Int("grpc-port", 7443, "TCP heartbeat/gRPC port")
+		inject   = flag.String("inject", "/run/victor/inject", "unix socket for CHARGE-LATCH samples")
+		logPath  = flag.String("telem-log", "/data/victor/telemetry.log", "local telemetry log")
+		rate     = flag.Duration("period", 20*time.Millisecond, "control/sensor period")
+		ownSpine = flag.Bool("own-spine", anki.Masked(), "stop Anki and take /dev/ttyHS0")
+		spineDev = flag.String("spine", spine.DefaultDevice, "spine UART")
 	)
 	flag.Parse()
 	_ = os.MkdirAll("/data/victor", 0755)
@@ -197,37 +193,27 @@ func runDaemon() int {
 		}
 	}
 
-	hub := &telem.Hub{
-		Host:       *hubHost,
-		SensorPort: *hubPort,
-		AudioPort:  7501,
-		VideoPort:  7500,
-		GRPCPort:   *grpcPort,
-		LogPath:    *logPath,
-	}
+	hub := &telem.Hub{Host: *hubHost, SensorPort: *hubPort, AudioPort: 7501, VideoPort: 7500, GRPCPort: *grpcPort, LogPath: *logPath}
 	if err := hub.Start(); err != nil {
 		fmt.Fprintf(os.Stderr, "hub udp: %v (continuing with local log)\n", err)
 	}
-
 	hbHost := env("HUB_HOST", *hubHost)
 	lnk := &link.Client{Addr: fmt.Sprintf("%s:%d", hbHost, *grpcPort)}
 	defer lnk.Close()
-
 	cal, _ := cliffcal.Load(cliffcal.Path)
 	if cal == nil {
 		cal = &cliffcal.Cal{}
 	}
-
 	ov := &overlay{}
 	m := latch.New()
 	ui := &uiState{mode: "idle"}
+	proc := audio.NewProcessor(audio.ModeFromEnv())
 	go injectLoop(*inject, m, ssh, body, ov, ui)
 	go watchdog(ssh, hub, body, ui)
 	go cameraLoop(hub, lnk)
-	go cmdLoop(lnk, ui)
+	go cmdLoop(lnk, ui, proc)
 	face.Boot()
 	var lastFaceAt time.Time
-
 	tick := time.NewTicker(*rate)
 	defer tick.Stop()
 	sig := make(chan os.Signal, 1)
@@ -240,7 +226,6 @@ func runDaemon() int {
 	wroteCal := cal.Ready()
 	pk := &audio.Packetizer{}
 	var lastMicLog time.Time
-
 	for {
 		select {
 		case <-sig:
@@ -263,13 +248,7 @@ func runDaemon() int {
 					}
 				}
 				lo, hi := body.LiftRange()
-				if m.Feed(latch.Sample{
-					T:         time.Since(start),
-					Button:    fr.Button,
-					OnCharger: fr.OnCharger(),
-					Driving:   fr.Driving(),
-					LiftNorm:  fr.LiftNorm(lo, hi),
-				}) == latch.ToggleSSH {
+				if m.Feed(latch.Sample{T: time.Since(start), Button: fr.Button, OnCharger: fr.OnCharger(), Driving: fr.Driving(), LiftNorm: fr.LiftNorm(lo, hi)}) == latch.ToggleSSH {
 					on, err := ssh.Toggle()
 					fmt.Printf("CHARGE-LATCH ssh.enabled=%v err=%v\n", on, err)
 					showFaceUI(on, false, ui)
@@ -299,20 +278,7 @@ func runDaemon() int {
 				lastCmd = time.Now()
 			}
 			lastKind = kind
-
-			vin := veto.Input{
-				Cliffs:       cliffs,
-				Thresh:       cal.Thresh,
-				Calibrated:   cal.Ready(),
-				ProxMM:       s.ProxMM,
-				Forward:      kind.Forward(),
-				OnCharger:    have && fr.OnCharger(),
-				PickedUp:     false,
-				Falling:      false,
-				HasHeartbeat: !lnk.LastOK().IsZero(),
-				BattMV:       s.BattMV,
-				HasCommand:   lastKind != skill.Idle && lastKind != skill.Stop && lastKind != skill.Dock,
-			}
+			vin := veto.Input{Cliffs: cliffs, Thresh: cal.Thresh, Calibrated: cal.Ready(), ProxMM: s.ProxMM, Forward: kind.Forward(), OnCharger: have && fr.OnCharger(), HasHeartbeat: !lnk.LastOK().IsZero(), BattMV: s.BattMV, HasCommand: lastKind != skill.Idle && lastKind != skill.Stop && lastKind != skill.Dock}
 			if vin.HasHeartbeat {
 				vin.HeartbeatAge = time.Since(lnk.LastOK())
 			}
@@ -337,11 +303,11 @@ func runDaemon() int {
 				if mic := body.DrainMic(); len(mic) > 0 {
 					if time.Since(lastMicLog) >= time.Second {
 						e := audio.Energies(mic)
-						_ = os.WriteFile("/data/victor/mics.txt", []byte(fmt.Sprintf("%d,%d,%d,%d\n", e[0], e[1], e[2], e[3])), 0644)
+						_ = os.WriteFile("/data/victor/mics.txt", []byte(fmt.Sprintf("%d,%d,%d,%d dir=%d mode=%s\n", e[0], e[1], e[2], e[3], proc.Direction(), proc.Mode())), 0644)
 						lastMicLog = time.Now()
 					}
 					if !ui.thinking() {
-						for _, pkt := range pk.Push(audio.MixMono(mic)) {
+						for _, pkt := range pk.Push(proc.Process(mic)) {
 							lnk.QueueMedia(hub.SendAudio(pkt))
 						}
 					}
@@ -367,8 +333,7 @@ func runDaemon() int {
 			_ = os.WriteFile("/data/victor/hb_age_ms.txt", []byte(fmt.Sprintf("%d\n", ageMs)), 0644)
 			_ = os.WriteFile("/data/victor/skill.txt", []byte(kind.String()+"\n"), 0644)
 			_ = os.WriteFile("/data/victor/motors.txt", []byte(fmt.Sprintf("%d,%d,%d,%d\n", pwm[0], pwm[1], pwm[2], pwm[3])), 0644)
-			_ = os.WriteFile("/data/victor/drive.txt", []byte(fmt.Sprintf("allow=%v explore=%v veto=%s charger=%v skill=%s pwm=%d,%d,%d,%d batt_raw=%d chg_raw=%d\n",
-				allow, skill.ExploreEnabled(), reason, vin.OnCharger, kind, pwm[0], pwm[1], pwm[2], pwm[3], fr.BattVoltage, fr.ChargerVoltage)), 0644)
+			_ = os.WriteFile("/data/victor/drive.txt", []byte(fmt.Sprintf("allow=%v explore=%v veto=%s charger=%v skill=%s pwm=%d,%d,%d,%d batt_raw=%d chg_raw=%d\n", allow, skill.ExploreEnabled(), reason, vin.OnCharger, kind, pwm[0], pwm[1], pwm[2], pwm[3], fr.BattVoltage, fr.ChargerVoltage)), 0644)
 			if _, err := os.Stat("/data/victor/hub.down"); err == nil {
 				lnk.Close()
 			} else {
@@ -386,9 +351,9 @@ func runDaemon() int {
 }
 
 type overlay struct {
-	mu     sync.Mutex
-	cl     *[4]uint16
-	sk     *skill.Kind
+	mu sync.Mutex
+	cl *[4]uint16
+	sk *skill.Kind
 }
 
 func (o *overlay) cliffs() *[4]uint16 {
@@ -407,13 +372,13 @@ func (o *overlay) skill() (skill.Kind, bool) {
 }
 
 type inj struct {
-	Button    *bool     `json:"button"`
-	OnCharger *bool     `json:"on_charger"`
-	Driving   *bool     `json:"driving"`
-	Lift      *float64  `json:"lift"`
-	Phrase    string    `json:"phrase"`
+	Button    *bool      `json:"button"`
+	OnCharger *bool      `json:"on_charger"`
+	Driving   *bool      `json:"driving"`
+	Lift      *float64   `json:"lift"`
+	Phrase    string     `json:"phrase"`
 	Cliffs    *[4]uint16 `json:"cliffs"`
-	Skill     string    `json:"skill"`
+	Skill     string     `json:"skill"`
 }
 
 func injectLoop(path string, m *latch.Machine, ssh *sshctl.Controller, body *spine.Body, ov *overlay, ui *uiState) {
@@ -467,10 +432,7 @@ func injectLoop(path string, m *latch.Machine, ssh *sshctl.Controller, body *spi
 					}
 					continue
 				}
-				sample := latch.Sample{
-					T:         time.Since(start),
-					OnCharger: true,
-				}
+				sample := latch.Sample{T: time.Since(start), OnCharger: true}
 				if s.Button != nil {
 					sample.Button = *s.Button
 				}
@@ -626,10 +588,11 @@ func cameraLoop(hub *telem.Hub, lnk *link.Client) {
 	}
 }
 
-func cmdLoop(lnk *link.Client, ui *uiState) {
+func cmdLoop(lnk *link.Client, ui *uiState, proc *audio.Processor) {
 	for cmd := range lnk.Commands() {
 		switch cmd.Kind {
 		case link.CmdSpeak:
+			proc.NotePlayback(cmd.Payload)
 			_ = audio.Play(cmd.Payload)
 		case link.CmdDisplay:
 			if len(cmd.Payload) == face.Bytes {
@@ -653,9 +616,7 @@ func cmdLoop(lnk *link.Client, ui *uiState) {
 	}
 }
 
-func showFace(sshOn, auto bool) {
-	showFaceUI(sshOn, auto, nil)
-}
+func showFace(sshOn, auto bool) { showFaceUI(sshOn, auto, nil) }
 
 func showFaceUI(sshOn, auto bool, ui *uiState) {
 	text := "SSH OFF"
@@ -696,5 +657,3 @@ func env(k, def string) string {
 	}
 	return def
 }
-
-

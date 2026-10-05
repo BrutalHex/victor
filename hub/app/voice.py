@@ -2,6 +2,9 @@
 
 push() only segments audio. Transcription, chat, and TTS run off the skill socket
 so a 2s robot read deadline cannot drop the reply.
+
+The robot now sends directional 16 kHz mono (high-passed, beamformed, noise-suppressed).
+This VAD only has to open on that beam, not on the raw backpack grind.
 """
 
 from __future__ import annotations
@@ -17,8 +20,8 @@ import wave
 
 RATE = 16000
 TTS_RATE = 24000  # OpenAI response_format=pcm
-VAD_RMS = 700
-VAD_RATIO = 2.0
+VAD_RMS = 450
+VAD_RATIO = 1.7
 START_FRAMES = 5
 END_FRAMES = 8
 CAL_FRAMES = 50  # 1s at 20 ms packets; learn the room before arming
@@ -31,10 +34,17 @@ def rms(pcm: bytes) -> int:
         return 0
     n = len(pcm) // 2
     samples = [struct.unpack_from("<h", pcm, i * 2)[0] for i in range(n)]
-    mean = sum(samples) / n
-    acc = 0.0
+    # Pre-emphasis. Track rumble that survived the robot high-pass should not set the floor.
+    prev = 0.0
+    emph = []
     for s in samples:
-        d = s - mean
+        y = s - 0.97 * prev
+        prev = float(s)
+        emph.append(y)
+    mean = sum(emph) / n
+    acc = 0.0
+    for y in emph:
+        d = y - mean
         acc += d * d
     return int(math.sqrt(acc / n))
 
