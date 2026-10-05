@@ -2,6 +2,7 @@ package face
 
 import (
 	"encoding/binary"
+	"fmt"
 	"os"
 	"strconv"
 	"syscall"
@@ -53,10 +54,12 @@ func Blit(frame []byte) {
 	_ = os.WriteFile("/data/victor/face.rgb565", frame, 0644)
 	ensurePanel()
 	setBacklight(10)
-	if err := writeFB(frame); err == nil {
-		return
+	// /dev/fb0 accepts the write and is not the panel the user sees.
+	fbErr := writeFB(frame)
+	spiErr := writeSPI(frame)
+	if fbErr != nil && spiErr != nil {
+		fmt.Fprintf(os.Stderr, "face blit fb=%v spi=%v\n", fbErr, spiErr)
 	}
-	_ = writeSPI(frame)
 }
 
 // Boot re-inits the panel and restores the last frame across agent restarts.
