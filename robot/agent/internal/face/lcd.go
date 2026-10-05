@@ -11,7 +11,7 @@ import (
 )
 
 const (
-	spiDev   = "/dev/spidev1.0"
+	spiDev   = "/dev/spidev0.0"
 	fbDev    = "/dev/fb0"
 	gpioDC   = 110
 	cmdCASET = 0x2A
