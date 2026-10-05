@@ -3,8 +3,9 @@
 push() only segments audio. Transcription, chat, and TTS run off the skill socket
 so a 2s robot read deadline cannot drop the reply.
 
-The robot now sends directional 16 kHz mono (high-passed, beamformed, noise-suppressed).
-This VAD only has to open on that beam, not on the raw backpack grind.
+The robot sends one backpack mic at 16 kHz (high-passed, mild noise floor).
+A rumble-dominated clip is not an utterance: the 4 cm array cannot null a
+200 Hz fan, and the transcriber invents words for that band.
 """
 
 from __future__ import annotations
@@ -27,6 +28,35 @@ END_FRAMES = 8
 CAL_FRAMES = 50  # 1s at 20 ms packets; learn the room before arming
 MIN_UTTERANCE_BYTES = int(RATE * 0.4) * 2
 MAX_SAMPLES = RATE * 6
+
+
+def speech_like(pcm: bytes) -> bool:
+    """False when the clip is the 150-300 Hz band, or that band is on the rail.
+
+    A shout has pre-emphasised energy above the low-band leak. The saved
+    last.wav files were the opposite: 72% in 150-300 Hz and peak 32767.
+    """
+    if len(pcm) < 640:
+        return False
+    n = len(pcm) // 2
+    samples = [struct.unpack_from("<h", pcm, i * 2)[0] for i in range(n)]
+    clipped = sum(1 for s in samples if abs(s) > 28000)
+    low = 0.0
+    prev = 0.0
+    speech = 0.0
+    rumble = 0.0
+    a = 0.075  # ~200 Hz leak at 16 kHz
+    for s in samples:
+        low += a * (s - low)
+        pe = s - 0.97 * prev
+        prev = float(s)
+        speech += pe * pe
+        rumble += low * low
+    if rumble > speech * 1.3:
+        return False
+    if clipped > n * 0.08:
+        return False
+    return True
 
 
 def rms(pcm: bytes) -> int:

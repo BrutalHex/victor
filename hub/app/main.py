@@ -19,7 +19,7 @@ from explore import NAMES, Explorer
 from faces import FaceDB
 from protocol import FLAG_FACE, TYPE_AUDIO, TYPE_SENSOR, TYPE_VIDEO, decode, unpack_sensor
 from safety import classical_vote
-from voice import MIN_UTTERANCE_BYTES, Voice, _wav_wrap, tone
+from voice import MIN_UTTERANCE_BYTES, Voice, _wav_wrap, speech_like, tone
 
 STATE = {
     "sensors": 0,
@@ -143,6 +143,9 @@ def _on_audio(pcm: bytes) -> None:
         return
     if len(utt) < MIN_UTTERANCE_BYTES:
         print(f"voice skip short {len(utt)} bytes", flush=True)
+        return
+    if not speech_like(utt):
+        print(f"voice skip rumble {len(utt)} bytes rms={VOICE.last_rms} noise={int(VOICE.noise)}", flush=True)
         return
     with LOCK:
         if STATE.get("voice_busy"):
