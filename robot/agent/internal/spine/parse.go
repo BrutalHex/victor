@@ -27,9 +27,16 @@ type Frame struct {
 	ProxRawRangeMM uint16
 	Touch          uint16
 	Button         bool
+	// Mic is 4 channels × 80 samples (interleaved) when the 768-byte dataframe is present.
+	Mic []int16
 }
 
-const packedMin = 95
+const (
+	packedMin  = 95
+	micOffset  = 125
+	micSamples = 320
+	micBytes   = micSamples * 2
+)
 
 func ParsePacked(b []byte) (Frame, error) {
 	var f Frame
@@ -65,6 +72,12 @@ func ParsePacked(b []byte) (Frame, error) {
 	}
 	f.Touch = binary.LittleEndian.Uint16(b[touchOff:])
 	f.Button = binary.LittleEndian.Uint16(b[touchOff+2:]) > 0
+	if len(b) >= micOffset+micBytes {
+		f.Mic = make([]int16, micSamples)
+		for i := 0; i < micSamples; i++ {
+			f.Mic[i] = int16(binary.LittleEndian.Uint16(b[micOffset+i*2:]))
+		}
+	}
 	return f, nil
 }
 

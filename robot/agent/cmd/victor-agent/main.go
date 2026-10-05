@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"math"
 	"net"
 	"os"
 	"os/signal"
@@ -14,9 +15,12 @@ import (
 	"time"
 
 	"github.com/BrutalHex/victor/robot/agent/internal/anki"
+	"github.com/BrutalHex/victor/robot/agent/internal/audio"
 	"github.com/BrutalHex/victor/robot/agent/internal/blemask"
+	"github.com/BrutalHex/victor/robot/agent/internal/camera"
 	"github.com/BrutalHex/victor/robot/agent/internal/cliffcal"
 	"github.com/BrutalHex/victor/robot/agent/internal/face"
+	"github.com/BrutalHex/victor/robot/agent/internal/hosts"
 	"github.com/BrutalHex/victor/robot/agent/internal/latch"
 	"github.com/BrutalHex/victor/robot/agent/internal/link"
 	"github.com/BrutalHex/victor/robot/agent/internal/simulate"
@@ -160,6 +164,7 @@ func runDaemon() int {
 	_ = os.MkdirAll("/data/victor", 0755)
 	_ = os.MkdirAll("/run/victor", 0755)
 	loadHubEnv()
+	_ = hosts.Apply("/etc/hosts", os.Getenv("HUB_IP"), env("HUB_HOST", *hubHost))
 
 	ssh := sshctl.New()
 	if err := ssh.Apply(); err != nil {
@@ -189,6 +194,8 @@ func runDaemon() int {
 	hub := &telem.Hub{
 		Host:       *hubHost,
 		SensorPort: *hubPort,
+		AudioPort:  7501,
+		VideoPort:  7500,
 		GRPCPort:   *grpcPort,
 		LogPath:    *logPath,
 	}
@@ -207,9 +214,13 @@ func runDaemon() int {
 
 	ov := &overlay{}
 	m := latch.New()
-	go injectLoop(*inject, m, ssh, body, ov)
-	go watchdog(ssh, hub, body)
+	ui := &uiState{mode: "idle"}
+	go injectLoop(*inject, m, ssh, body, ov, ui)
+	go watchdog(ssh, hub, body, ui)
+	go cameraLoop(hub, lnk)
+	go cmdLoop(lnk, ui)
 	face.EOK()
+	var lastFaceAt time.Time
 
 	tick := time.NewTicker(*rate)
 	defer tick.Stop()
@@ -221,6 +232,7 @@ func runDaemon() int {
 	var lastKind skill.Kind
 	var lastReason veto.Reason
 	wroteCal := cal.Ready()
+	pk := &audio.Packetizer{}
 
 	for {
 		select {
@@ -258,7 +270,7 @@ func runDaemon() int {
 				}) == latch.ToggleSSH {
 					on, err := ssh.Toggle()
 					fmt.Printf("CHARGE-LATCH ssh.enabled=%v err=%v\n", on, err)
-					showFace(on, false)
+					showFaceUI(on, false, ui)
 					body.SetSSHLED(on)
 				}
 			}
@@ -308,19 +320,35 @@ func runDaemon() int {
 			reason := veto.Check(vin)
 			allow := skill.AllowWheels(skill.ExploreEnabled(), reason == veto.Clear, vin.OnCharger)
 			pwm := skill.PWM(kind, allow)
-			if reason != veto.Clear {
+			if reason == veto.Battery || reason == veto.Fall || reason == veto.Pickup || reason == veto.Cliff {
 				pwm = [4]int16{}
+			}
+			if pwm[0] == 0 && pwm[1] == 0 && pwm[3] == 0 && reason != veto.Battery && reason != veto.Fall {
+				if time.Now().UnixMilli()/1200%2 == 0 {
+					pwm[3] = skill.LookUp.Head()
+				} else {
+					pwm[3] = skill.LookDown.Head()
+				}
 			}
 			if body != nil {
 				body.SetDrive(pwm)
+				if mic := body.DrainMic(); len(mic) > 0 {
+					for _, pkt := range pk.Push(audio.MixMono(mic)) {
+						lnk.QueueMedia(hub.SendAudio(pkt))
+					}
+				}
+			}
+			if inj := audio.InjectMic(); len(inj) > 0 {
+				for _, pkt := range pk.Push(inj) {
+					lnk.QueueMedia(hub.SendAudio(pkt))
+				}
 			}
 			if reason != lastReason {
 				lastReason = reason
-				if reason == veto.Cliff || reason == veto.Pickup || reason == veto.Fall || reason == veto.Battery {
-					face.Show(strings.ToUpper(reason.String()), face.Red)
-				} else if reason == veto.Clear {
-					face.EOK()
-				}
+			}
+			if time.Since(lastFaceAt) >= 80*time.Millisecond {
+				renderFace(ui, reason)
+				lastFaceAt = time.Now()
 			}
 			_ = os.WriteFile("/data/victor/veto.txt", []byte(reason.String()+"\n"), 0644)
 			ageMs := int64(0)
@@ -330,6 +358,8 @@ func runDaemon() int {
 			_ = os.WriteFile("/data/victor/hb_age_ms.txt", []byte(fmt.Sprintf("%d\n", ageMs)), 0644)
 			_ = os.WriteFile("/data/victor/skill.txt", []byte(kind.String()+"\n"), 0644)
 			_ = os.WriteFile("/data/victor/motors.txt", []byte(fmt.Sprintf("%d,%d,%d,%d\n", pwm[0], pwm[1], pwm[2], pwm[3])), 0644)
+			_ = os.WriteFile("/data/victor/drive.txt", []byte(fmt.Sprintf("allow=%v explore=%v veto=%s charger=%v skill=%s pwm=%d,%d,%d,%d batt_raw=%d chg_raw=%d\n",
+				allow, skill.ExploreEnabled(), reason, vin.OnCharger, kind, pwm[0], pwm[1], pwm[2], pwm[3], fr.BattVoltage, fr.ChargerVoltage)), 0644)
 			if _, err := os.Stat("/data/victor/hub.down"); err == nil {
 				lnk.Close()
 			} else {
@@ -338,7 +368,7 @@ func runDaemon() int {
 				}
 				lnk.Tick(uint8(reason))
 			}
-			_ = hub.SendSensor(s)
+			lnk.QueueMedia(hub.SendSensor(s))
 			if gotSpine {
 				_ = os.WriteFile("/data/victor/spine.ok", []byte("1\n"), 0644)
 			}
@@ -377,7 +407,7 @@ type inj struct {
 	Skill     string    `json:"skill"`
 }
 
-func injectLoop(path string, m *latch.Machine, ssh *sshctl.Controller, body *spine.Body, ov *overlay) {
+func injectLoop(path string, m *latch.Machine, ssh *sshctl.Controller, body *spine.Body, ov *overlay, ui *uiState) {
 	_ = os.Remove(path)
 	ln, err := net.Listen("unix", path)
 	if err != nil {
@@ -419,7 +449,7 @@ func injectLoop(path string, m *latch.Machine, ssh *sshctl.Controller, body *spi
 					if simulate.ChargeLatch(m) == latch.ToggleSSH {
 						on, err := ssh.Toggle()
 						fmt.Fprintf(conn, "toggle ssh.enabled=%v err=%v\n", on, err)
-						showFace(on, false)
+						showFaceUI(on, false, ui)
 						if body != nil {
 							body.SetSSHLED(on)
 						}
@@ -447,7 +477,7 @@ func injectLoop(path string, m *latch.Machine, ssh *sshctl.Controller, body *spi
 				if m.Feed(sample) == latch.ToggleSSH {
 					on, err := ssh.Toggle()
 					fmt.Fprintf(conn, "toggle ssh.enabled=%v err=%v\n", on, err)
-					showFace(on, false)
+					showFaceUI(on, false, ui)
 					if body != nil {
 						body.SetSSHLED(on)
 					}
@@ -459,7 +489,7 @@ func injectLoop(path string, m *latch.Machine, ssh *sshctl.Controller, body *spi
 	}
 }
 
-func watchdog(ssh *sshctl.Controller, hub *telem.Hub, body *spine.Body) {
+func watchdog(ssh *sshctl.Controller, hub *telem.Hub, body *spine.Body, ui *uiState) {
 	t := time.NewTicker(30 * time.Second)
 	defer t.Stop()
 	offSince := time.Time{}
@@ -473,7 +503,7 @@ func watchdog(ssh *sshctl.Controller, hub *telem.Hub, body *spine.Body) {
 		}
 		if time.Since(offSince) >= 24*time.Hour && hub.HeartbeatMissing(10*time.Minute) {
 			_ = ssh.Set(true)
-			showFace(true, true)
+			showFaceUI(true, true, ui)
 			if body != nil {
 				body.SetSSHLED(true)
 			}
@@ -481,7 +511,135 @@ func watchdog(ssh *sshctl.Controller, hub *telem.Hub, body *spine.Body) {
 	}
 }
 
+type uiState struct {
+	mu         sync.Mutex
+	mode       string
+	caption    string
+	until      time.Time
+	thinkStart time.Time
+	lastDrawn  string
+}
+
+func (u *uiState) set(mode, caption string, d time.Duration) {
+	if u == nil {
+		return
+	}
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	u.mode, u.caption = mode, caption
+	if d > 0 {
+		u.until = time.Now().Add(d)
+	} else {
+		u.until = time.Time{}
+	}
+	if mode == "thinking" {
+		u.thinkStart = time.Now()
+	}
+	u.lastDrawn = ""
+}
+
+func renderFace(u *uiState, reason veto.Reason) {
+	if u == nil {
+		return
+	}
+	u.mu.Lock()
+	mode, cap, until, t0 := u.mode, u.caption, u.until, u.thinkStart
+	if !until.IsZero() && time.Now().After(until) && mode != "thinking" {
+		u.mode, u.caption, mode, cap = "idle", "", "idle", ""
+	}
+	key := mode + "|" + cap + "|" + reason.String()
+	if mode == "thinking" {
+		u.mu.Unlock()
+		phase := time.Since(t0).Seconds()
+		phase = phase - float64(int(phase))
+		if phase < 0 {
+			phase = 0
+		}
+		face.Thinking(phase)
+		return
+	}
+	blink := 0.0
+	if int(time.Now().UnixMilli()/80)%40 == 0 {
+		blink = 0.85
+	}
+	if mode != "idle" && key == u.lastDrawn {
+		u.mu.Unlock()
+		return
+	}
+	u.lastDrawn = key
+	u.mu.Unlock()
+	switch mode {
+	case "ssh", "display":
+		return
+	case "name":
+		face.Name(cap)
+		return
+	}
+	if reason == veto.Cliff || reason == veto.Pickup || reason == veto.Fall || reason == veto.Battery {
+		face.Blit(face.EyesCaption(strings.ToUpper(reason.String()), face.Red))
+		return
+	}
+	lx := 0.15 * math.Sin(float64(time.Now().UnixMilli())/900.0)
+	face.Blit(face.EyesFrame(lx, 0, blink))
+}
+
+func cameraLoop(hub *telem.Hub, lnk *link.Client) {
+	t := time.NewTicker(100 * time.Millisecond)
+	defer t.Stop()
+	n := 0
+	for range t.C {
+		jpeg, err := camera.Grab()
+		if err != nil || len(jpeg) == 0 {
+			continue
+		}
+		nav, err := camera.ScaleJPEG(jpeg, camera.NavW, camera.NavH)
+		if err != nil {
+			nav = jpeg
+		}
+		lnk.QueueMedia(hub.SendVideo(nav, vct1.FlagNavJPEG))
+		n++
+		if n%2 == 0 {
+			big, err := camera.ScaleJPEG(jpeg, camera.FaceW, camera.FaceH)
+			if err != nil {
+				big = jpeg
+			}
+			lnk.QueueMedia(hub.SendVideo(big, vct1.FlagFaceJPEG))
+		}
+	}
+}
+
+func cmdLoop(lnk *link.Client, ui *uiState) {
+	for cmd := range lnk.Commands() {
+		switch cmd.Kind {
+		case link.CmdSpeak:
+			_ = audio.Play(cmd.Payload)
+		case link.CmdDisplay:
+			if len(cmd.Payload) == face.Bytes {
+				_ = os.WriteFile("/data/victor/face.rgb565", cmd.Payload, 0644)
+				ui.set("display", "", 2*time.Second)
+			}
+		case link.CmdFaceUI:
+			mode, cap, _ := strings.Cut(string(cmd.Payload), "|")
+			mode = strings.ToLower(strings.TrimSpace(mode))
+			switch mode {
+			case "thinking":
+				ui.set("thinking", cap, 0)
+			case "name":
+				ui.set("name", cap, 3*time.Second)
+			case "idle", "e-ok", "":
+				ui.set("idle", "", 0)
+			default:
+				ui.set("name", cap, 2*time.Second)
+			}
+		}
+	}
+}
+
 func showFace(sshOn, auto bool) {
+	showFaceUI(sshOn, auto, nil)
+}
+
+func showFaceUI(sshOn, auto bool, ui *uiState) {
 	text := "SSH OFF"
 	fg := face.Red
 	if auto {
@@ -492,6 +650,7 @@ func showFace(sshOn, auto bool) {
 		fg = face.Green
 	}
 	face.Show(text, fg)
+	ui.set("ssh", text, 1500*time.Millisecond)
 	fmt.Printf("face %s\n", text)
 }
 

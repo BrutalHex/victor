@@ -16,6 +16,12 @@ const (
 	TypeUIAck  = 4
 	HeaderSize = 4 + 1 + 1 + 4 + 8 + 4 // magic, type, flags, seq, t_ns, len
 	CRCSize    = 4
+
+	// VIDEO flags: nav is 320×180 JPEG at 10–15 fps; face is 640×360 at ~5 fps.
+	FlagNavJPEG  uint8 = 1 << 0
+	FlagFaceJPEG uint8 = 1 << 1
+	// AUDIO flags: payload is s16le mono. RateHz is 1000*flags if flags>=8, else 16000.
+	AudioRate16k uint8 = 16
 )
 
 var crcTable = crc32.MakeTable(crc32.IEEE)
@@ -173,3 +179,15 @@ const (
 	FlagOnCharger uint16 = 1 << 2
 	FlagFalling   uint16 = 1 << 3
 )
+
+// AudioPacket is 16 kHz s16le mono. 20 ms = 320 samples = 640 bytes.
+func EncodeAudio(seq uint32, pcm []byte) []byte {
+	return Encode(Header{Type: TypeAudio, Flags: AudioRate16k, Seq: seq, Tns: NowTns()}, pcm)
+}
+
+func EncodeVideo(seq uint32, jpeg []byte, flags uint8) []byte {
+	if flags == 0 {
+		flags = FlagNavJPEG
+	}
+	return Encode(Header{Type: TypeVideo, Flags: flags, Seq: seq, Tns: NowTns()}, jpeg)
+}

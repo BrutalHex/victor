@@ -51,6 +51,20 @@ func TestParsePackedFields(t *testing.T) {
 	}
 }
 
+func TestParseMic(t *testing.T) {
+	b := make([]byte, 768)
+	for i := 0; i < 320; i++ {
+		binary.LittleEndian.PutUint16(b[125+i*2:], uint16(i+1))
+	}
+	f, err := ParsePacked(b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(f.Mic) != 320 || f.Mic[0] != 1 || f.Mic[319] != 320 {
+		t.Fatalf("mic %d %v", len(f.Mic), f.Mic[:3])
+	}
+}
+
 func TestBadCRCDropped(t *testing.T) {
 	buf := Encode(TypeData, make([]byte, 8))
 	binary.LittleEndian.PutUint32(buf[0:4], HeaderRX)

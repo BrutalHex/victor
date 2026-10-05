@@ -1,9 +1,9 @@
 package face
 
 import (
+	"encoding/binary"
 	"os"
 	"strconv"
-	"strings"
 	"time"
 )
 
@@ -11,11 +11,24 @@ const (
 	spiDev   = "/dev/spidev1.0"
 	fbDev    = "/dev/fb0"
 	gpioDC   = 110
-	cmdWrite = 0x2C
+	cmdCASET = 0x2A
+	cmdRASET = 0x2B
+	cmdRAMWR = 0x2C
+	cmdSLPOUT = 0x11
+	cmdDISPON = 0x29
+	cmdCOLMOD = 0x3A
+	cmdMADCTL = 0x36
+	spiChunk = 4096
 )
 
 func Show(text string, fg uint16) {
-	frame := Frame(text, fg)
+	Blit(EyesCaption(text, fg))
+}
+
+func Blit(frame []byte) {
+	if len(frame) != Bytes {
+		return
+	}
 	_ = os.WriteFile("/data/victor/face.rgb565", frame, 0644)
 	setBacklight(10)
 	if err := writeFB(frame); err == nil {
@@ -47,7 +60,11 @@ func writeFB(frame []byte) error {
 }
 
 func writeSPI(frame []byte) error {
-	if err := gpioOut(gpioDC, 0); err != nil {
+	bumpSPIBuf()
+	if err := lcdWindow(); err != nil {
+		return err
+	}
+	if err := gpioOut(gpioDC, 1); err != nil {
 		return err
 	}
 	f, err := os.OpenFile(spiDev, os.O_WRONLY, 0)
@@ -55,14 +72,63 @@ func writeSPI(frame []byte) error {
 		return err
 	}
 	defer f.Close()
-	if _, err := f.Write([]byte{cmdWrite}); err != nil {
+	for off := 0; off < len(frame); {
+		n := spiChunk
+		if n > len(frame)-off {
+			n = len(frame) - off
+		}
+		if _, err := f.Write(frame[off : off+n]); err != nil {
+			return err
+		}
+		off += n
+	}
+	return nil
+}
+
+func lcdWindow() error {
+	cols := append(u16be(0), u16be(Width-1)...)
+	rows := append(u16be(0), u16be(Height-1)...)
+	if err := spiCmd(cmdCASET, cols...); err != nil {
 		return err
+	}
+	if err := spiCmd(cmdRASET, rows...); err != nil {
+		return err
+	}
+	return spiCmd(cmdRAMWR)
+}
+
+func spiCmd(cmd byte, data ...byte) error {
+	if err := gpioOut(gpioDC, 0); err != nil {
+		return err
+	}
+	f, err := os.OpenFile(spiDev, os.O_WRONLY, 0)
+	if err != nil {
+		return err
+	}
+	if _, err := f.Write([]byte{cmd}); err != nil {
+		_ = f.Close()
+		return err
+	}
+	if len(data) == 0 {
+		return f.Close()
 	}
 	if err := gpioOut(gpioDC, 1); err != nil {
+		_ = f.Close()
 		return err
 	}
-	_, err = f.Write(frame)
+	_, err = f.Write(data)
+	_ = f.Close()
 	return err
+}
+
+func u16be(v int) []byte {
+	var b [2]byte
+	binary.BigEndian.PutUint16(b[:], uint16(v))
+	return b[:]
+}
+
+func bumpSPIBuf() {
+	_ = os.WriteFile("/sys/module/spidev/parameters/bufsiz", []byte("65536\n"), 0644)
 }
 
 func gpioOut(pin, value int) error {
@@ -82,14 +148,18 @@ func gpioOut(pin, value int) error {
 }
 
 func EOK() {
-	Show("E-OK", Green)
+	Blit(EyesFrame(0, 0, 0))
+}
+
+func Thinking(phase float64) {
+	Blit(EyesThinking(phase))
+}
+
+func Name(name string) {
+	Blit(EyesCaption(Caption(name), Green))
 }
 
 func Present() bool {
 	_, err := os.Stat("/data/victor/face.rgb565")
 	return err == nil
-}
-
-func Caption(s string) string {
-	return strings.ToUpper(strings.TrimSpace(s))
 }

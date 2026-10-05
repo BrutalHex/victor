@@ -1,1 +1,6 @@
 # Hub is Python 3.12+; OpenAI stays here, never on the robot.
+# onnxruntime CPU is the default backend. TensorRT is optional.
+numpy>=1.26
+onnxruntime>=1.17
+Pillow>=10.0
+onnx>=1.16

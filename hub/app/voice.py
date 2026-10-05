@@ -1,0 +1,184 @@
+"""VAD → thinking bar → OpenAI STT → OPENAI_MODEL → TTS PCM. Key stays on the hub."""
+
+from __future__ import annotations
+
+import io
+import json
+import math
+import os
+import struct
+import urllib.error
+import urllib.request
+import wave
+
+RATE = 16000
+VAD_RMS = 700
+START_FRAMES = 5
+END_FRAMES = 8
+MAX_SAMPLES = RATE * 6
+
+
+def rms(pcm: bytes) -> int:
+    if len(pcm) < 4:
+        return 0
+    n = len(pcm) // 2
+    samples = [struct.unpack_from("<h", pcm, i * 2)[0] for i in range(n)]
+    mean = sum(samples) / n
+    acc = 0.0
+    for s in samples:
+        d = s - mean
+        acc += d * d
+    return int(math.sqrt(acc / n))
+
+
+def tone(hz: float = 440.0, ms: int = 300, rate: int = RATE) -> bytes:
+    n = rate * ms // 1000
+    buf = bytearray()
+    for i in range(n):
+        s = int(8000 * math.sin(2 * math.pi * hz * i / rate))
+        buf += struct.pack("<h", s)
+    return bytes(buf)
+
+
+class Voice:
+    def __init__(self) -> None:
+        self.buf = bytearray()
+        self.voiced = 0
+        self.silence = 0
+        self.active = False
+        self.thinking = False
+        self.last_text = ""
+        self.last_reply = ""
+        self.key = os.environ.get("OPENAI_API_KEY", "")
+        self.model = os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
+        self.stt_model = os.environ.get("OPENAI_TRANSCRIBE_MODEL", "gpt-4o-mini-transcribe")
+        self.tts_model = os.environ.get("OPENAI_TTS_MODEL", "gpt-4o-mini-tts")
+        self.voice = os.environ.get("OPENAI_VOICE", "alloy")
+        self.last_rms = 0
+        self.noise = 200.0
+
+    def push(self, pcm: bytes) -> dict | None:
+        if not pcm:
+            return None
+        energy = rms(pcm)
+        self.last_rms = energy
+        if not self.active:
+            self.noise = (0.97 * self.noise) + (0.03 * float(energy))
+        thresh = max(VAD_RMS, self.noise * 3.5)
+        if energy >= thresh:
+            self.voiced += 1
+            self.silence = 0
+            if not self.active and self.voiced >= START_FRAMES:
+                self.active = True
+                self.buf = bytearray()
+            if self.active:
+                self.buf += pcm
+        else:
+            self.voiced = 0
+            if self.active:
+                self.silence += 1
+                self.buf += pcm
+                if self.silence >= END_FRAMES:
+                    return self._finish()
+        if self.active and len(self.buf) >= MAX_SAMPLES * 2:
+            return self._finish()
+        return None
+
+    def _finish(self) -> dict:
+        pcm = bytes(self.buf)
+        self.buf.clear()
+        self.active = False
+        self.silence = 0
+        self.voiced = 0
+        self.thinking = True
+        text = self.transcribe(pcm)
+        self.last_text = text
+        reply = self.chat(text) if text else ""
+        self.last_reply = reply
+        audio = self.tts(reply) if reply else b""
+        self.thinking = False
+        return {"text": text, "reply": reply, "pcm": audio}
+
+    def transcribe(self, pcm: bytes) -> str:
+        if not self.key:
+            return ""
+        wav = _wav_wrap(pcm)
+        boundary = "----victor"
+        body = (
+            f"--{boundary}\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\n{self.stt_model}\r\n"
+            f"--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"a.wav\"\r\n"
+            f"Content-Type: audio/wav\r\n\r\n"
+        ).encode() + wav + f"\r\n--{boundary}--\r\n".encode()
+        req = urllib.request.Request(
+            "https://api.openai.com/v1/audio/transcriptions",
+            data=body,
+            headers={
+                "Authorization": f"Bearer {self.key}",
+                "Content-Type": f"multipart/form-data; boundary={boundary}",
+            },
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                data = json.loads(resp.read().decode())
+            return str(data.get("text") or "").strip()
+        except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, OSError):
+            return ""
+
+    def chat(self, text: str) -> str:
+        if not self.key or not text:
+            return ""
+        payload = json.dumps(
+            {
+                "model": self.model,
+                "messages": [
+                    {
+                        "role": "system",
+                        "content": "You are Vector, a small desk robot. Replies under 12 words. No markdown.",
+                    },
+                    {"role": "user", "content": text},
+                ],
+            }
+        ).encode()
+        req = urllib.request.Request(
+            "https://api.openai.com/v1/chat/completions",
+            data=payload,
+            headers={"Authorization": f"Bearer {self.key}", "Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                data = json.loads(resp.read().decode())
+            return data["choices"][0]["message"]["content"].strip()
+        except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, OSError, KeyError, IndexError):
+            return ""
+
+    def tts(self, text: str) -> bytes:
+        if not text:
+            return b""
+        if not self.key:
+            return tone()
+        payload = json.dumps(
+            {"model": self.tts_model, "voice": self.voice, "input": text, "response_format": "pcm"}
+        ).encode()
+        req = urllib.request.Request(
+            "https://api.openai.com/v1/audio/speech",
+            data=payload,
+            headers={"Authorization": f"Bearer {self.key}", "Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                return resp.read()
+        except (urllib.error.URLError, TimeoutError, OSError):
+            return tone()
+
+
+def _wav_wrap(pcm: bytes, rate: int = RATE) -> bytes:
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(rate)
+        w.writeframes(pcm)
+    return buf.getvalue()

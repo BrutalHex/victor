@@ -37,3 +37,18 @@ func TestCRCMismatch(t *testing.T) {
 		t.Fatal("expected crc error")
 	}
 }
+
+func TestAudioVideo(t *testing.T) {
+	pcm := make([]byte, 640)
+	buf := EncodeAudio(3, pcm)
+	h, p, err := Decode(buf)
+	if err != nil || h.Type != TypeAudio || len(p) != 640 {
+		t.Fatalf("%+v %d %v", h, len(p), err)
+	}
+	jpeg := []byte{0xff, 0xd8, 0xff, 0xd9}
+	buf = EncodeVideo(4, jpeg, FlagFaceJPEG)
+	h, p, err = Decode(buf)
+	if err != nil || h.Type != TypeVideo || h.Flags != FlagFaceJPEG || string(p) != string(jpeg) {
+		t.Fatalf("%+v %v", h, err)
+	}
+}

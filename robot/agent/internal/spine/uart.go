@@ -3,6 +3,7 @@ package spine
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"sync"
 	"syscall"
@@ -14,16 +15,17 @@ import (
 const DefaultDevice = "/dev/ttyHS0"
 
 type Body struct {
-	mu     sync.Mutex
-	f      *os.File
-	buf    []byte
-	seq    uint32
-	last   Frame
-	ok     bool
+	mu      sync.Mutex
+	f       *os.File
+	buf     []byte
+	seq     uint32
+	last    Frame
+	ok      bool
 	liftMin int32
 	liftMax int32
 	leds    [12]byte
 	drive   [4]int16
+	mic     []int16
 }
 
 func Open(dev string) (*Body, error) {
@@ -93,6 +95,9 @@ func (b *Body) Pump() error {
 	}
 	tmp := make([]byte, 4096)
 	n, err := b.f.Read(tmp)
+	if n == 0 {
+		return nil
+	}
 	if n > 0 {
 		b.mu.Lock()
 		b.buf = append(b.buf, tmp[:n]...)
@@ -111,6 +116,12 @@ func (b *Body) Pump() error {
 			}
 			b.last = f
 			b.ok = true
+			if len(f.Mic) > 0 {
+				b.mic = append(b.mic, f.Mic...)
+				if len(b.mic) > 16000 {
+					b.mic = b.mic[len(b.mic)-8000:]
+				}
+			}
 			if b.liftMin == 0 && b.liftMax == 1 {
 				b.liftMin = f.Motors[2].Pos
 				b.liftMax = f.Motors[2].Pos + 1
@@ -124,7 +135,7 @@ func (b *Body) Pump() error {
 		}
 		b.mu.Unlock()
 	}
-	if err != nil && !isAgain(err) {
+	if err != nil && !isAgain(err) && !errors.Is(err, io.EOF) {
 		return err
 	}
 	return nil
@@ -148,6 +159,21 @@ func (b *Body) LiftRange() (int32, int32) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return b.liftMin, b.liftMax
+}
+
+// DrainMic returns interleaved 4-channel spine PCM since the last drain.
+func (b *Body) DrainMic() []int16 {
+	if b == nil {
+		return nil
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if len(b.mic) == 0 {
+		return nil
+	}
+	out := b.mic
+	b.mic = nil
+	return out
 }
 
 func (b *Body) send(p []byte) error {

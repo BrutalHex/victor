@@ -1,0 +1,13 @@
+[Unit]
+Description=Victor first boot: SSH ON, BLE mask flag, /data exec
+DefaultDependencies=no
+After=local-fs.target
+Before=victor-agent.service victor-ble-mask.service dropbear.service sshd.socket
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/victor-firstboot
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

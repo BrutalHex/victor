@@ -15,12 +15,18 @@ import (
 type Hub struct {
 	Host       string
 	SensorPort int
+	AudioPort  int
+	VideoPort  int
 	GRPCPort   int
 	LogPath    string
 
 	seq      uint32
+	aseq     uint32
+	vseq     uint32
 	lastOK   atomic.Int64
 	udp      *net.UDPConn
+	aud      *net.UDPConn
+	vid      *net.UDPConn
 	mu       sync.Mutex
 }
 
@@ -47,6 +53,12 @@ func (h *Hub) Start() error {
 	if h.GRPCPort == 0 {
 		h.GRPCPort = 7443
 	}
+	if h.AudioPort == 0 {
+		h.AudioPort = 7501
+	}
+	if h.VideoPort == 0 {
+		h.VideoPort = 7500
+	}
 	if h.Host == "" {
 		h.Host = "robot.mohammadabbasi.com"
 	}
@@ -59,6 +71,12 @@ func (h *Hub) Start() error {
 		return err
 	}
 	h.udp = c
+	if a, err := net.DialUDP("udp", nil, &net.UDPAddr{IP: addr.IP, Port: h.AudioPort}); err == nil {
+		h.aud = a
+	}
+	if v, err := net.DialUDP("udp", nil, &net.UDPAddr{IP: addr.IP, Port: h.VideoPort}); err == nil {
+		h.vid = v
+	}
 	if h.LogPath != "" {
 		_ = os.MkdirAll(filepath.Dir(h.LogPath), 0755)
 	}
@@ -69,7 +87,7 @@ func (h *Hub) NoteOK() {
 	h.lastOK.Store(time.Now().UnixNano())
 }
 
-func (h *Hub) SendSensor(s vct1.Sensor) error {
+func (h *Hub) SendSensor(s vct1.Sensor) []byte {
 	seq := atomic.AddUint32(&h.seq, 1)
 	buf := vct1.Encode(vct1.Header{
 		Type: vct1.TypeSensor,
@@ -88,9 +106,36 @@ func (h *Hub) SendSensor(s vct1.Sensor) error {
 			_ = f.Close()
 		}
 	}
-	if h.udp == nil {
+	if h.udp != nil {
+		_, _ = h.udp.Write(buf)
+	}
+	return buf
+}
+
+func (h *Hub) SendAudio(pcm []byte) []byte {
+	if len(pcm) == 0 {
 		return nil
 	}
-	_, err := h.udp.Write(buf)
-	return err
+	seq := atomic.AddUint32(&h.aseq, 1)
+	buf := vct1.EncodeAudio(seq, pcm)
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.aud != nil {
+		_, _ = h.aud.Write(buf)
+	}
+	return buf
+}
+
+func (h *Hub) SendVideo(jpeg []byte, flags uint8) []byte {
+	if len(jpeg) == 0 {
+		return nil
+	}
+	seq := atomic.AddUint32(&h.vseq, 1)
+	buf := vct1.EncodeVideo(seq, jpeg, flags)
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.vid != nil {
+		_, _ = h.vid.Write(buf)
+	}
+	return buf
 }

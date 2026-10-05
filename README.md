@@ -11,10 +11,10 @@ The robot stays a thin real-time agent. The old laptop runs a tiny NVIDIA-export
 | Path | What |
 |---|---|
 | `GROK_INSTRUCTIONS.md` | Architecture, protocol, Yocto rules, phases, definition of done |
-| `hub/` | Docker container `hub` (to be implemented) |
-| `robot/` | On-robot agent (to be implemented) |
-| `yocto/` | Our image recipes (to be implemented) |
-| `deploy/` | SSH / OTA helpers (to be implemented) |
+| `hub/` | Docker container `hub` (explore, faces, voice, ONNX edge) |
+| `robot/` | On-robot agent (veto, spine, camera, mics, LCD) |
+| `yocto/` | Our image recipes + A/B OTA packer |
+| `deploy/` | SSH / first-flash / prove / `make-ota.sh` |
 
 ## Hub hostname
 
@@ -42,6 +42,8 @@ docker compose -f hub/docker-compose.yml up -d --build
 ./deploy/prove-phase0.sh
 ./deploy/prove-phase1.sh   # stops Anki, takes the spine; restore with ./deploy/restore-anki.sh
 ./deploy/prove-phase2.sh   # cliff cal + veto; wheels stay 0 unless explore.enabled
+./deploy/prove-phase3.sh   # camera/audio, /faces, thinking bar
+./deploy/prove-phase4.sh   # Yocto recipes + HTTP .ota packer
 ```
 
 SSH (unlocked Vector / WireOS / our image):
@@ -58,3 +60,5 @@ ssh -i keys/ssh_root_key \
 First flash (BLE, once, robot on charger in recovery): `./deploy/first-flash --pin … --ssid … --password … --url http://…/victor.ota`
 
 First boot leaves SSH on so `ble-bootstrap` can finish. After that, CHARGE-LATCH owns port 22.
+
+Operator HTTP: `http://robot.mohammadabbasi.com:8080/status`, `/faces`, `/ui`. OpenAI key stays in `.env` on the hub.

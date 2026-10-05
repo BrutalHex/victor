@@ -11,6 +11,15 @@
 /robot/agent/dist/
 /deploy/ble-bootstrap/ble-bootstrap
 /deploy/ble-bootstrap/ble-bootstrap.exe
+/hub/app/__pycache__/
+/hub/data/
+/hub/models/tiny_edge.onnx
+/dist/
+/keys/ota_key.pem
+/keys/ota.pub
+/keys/ota.pas
+/keys/ota.pub.robot
+/ota-work/
 
 # From vector-infra/.gitignore
 /vector-infra/**/bin

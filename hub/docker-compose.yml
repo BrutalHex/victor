@@ -3,7 +3,21 @@ services:
   hub:
     container_name: hub
     build: .
-    network_mode: host
     env_file:
       - ../.env
+    environment:
+      HUB_HTTP_PORT: "8080"
+      HUB_SKILL_PORT: "7443"
+      HUB_SENSOR_PORT: "7502"
+      HUB_AUDIO_PORT: "7501"
+      HUB_VIDEO_PORT: "7500"
+    ports:
+      - "8080:8080"
+      - "7443:7443"
+      - "7500:7500/udp"
+      - "7501:7501/udp"
+      - "7502:7502/udp"
+    volumes:
+      - ./data:/app/data
+      - ./models:/app/models
     restart: unless-stopped

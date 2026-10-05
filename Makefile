@@ -1,4 +1,4 @@
-.PHONY: test agent-arm ble-bootstrap hub prove sync
+.PHONY: test agent-arm ble-bootstrap hub prove prove1 prove2 prove-explore prove3 prove4 ota sync
 
 GO ?= go
 AGENT := robot/agent
@@ -6,6 +6,7 @@ BOOT := deploy/ble-bootstrap
 
 test:
 	cd $(AGENT) && $(GO) test ./...
+	cd hub/app && python3 -m unittest test_phase3.py -v
 
 agent-arm:
 	mkdir -p $(AGENT)/dist
@@ -35,3 +36,12 @@ prove2: test agent-arm
 # On-charger gate only. Off-charger creep: ./deploy/prove-explore.sh --drive
 prove-explore: test agent-arm
 	./deploy/prove-explore.sh
+
+prove3: test agent-arm
+	./deploy/prove-phase3.sh
+
+prove4:
+	./deploy/prove-phase4.sh
+
+ota: agent-arm
+	./deploy/make-ota.sh

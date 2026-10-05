@@ -8,6 +8,12 @@ from dataclasses import dataclass
 
 MAGIC = b"VCT1"
 TYPE_SENSOR = 1
+TYPE_AUDIO = 2
+TYPE_VIDEO = 3
+TYPE_UIACK = 4
+
+FLAG_NAV = 1 << 0
+FLAG_FACE = 1 << 1
 HEADER = struct.Struct("<4sBBIQI")  # magic, type, flags, seq, t_ns, len
 
 
