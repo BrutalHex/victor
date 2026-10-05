@@ -1,4 +1,8 @@
-"""VAD → thinking bar → OpenAI STT → OPENAI_MODEL → TTS PCM. Key stays on the hub."""
+"""VAD → thinking bar → OpenAI STT → OPENAI_MODEL → TTS PCM. Key stays on the hub.
+
+push() only segments audio. Transcription, chat, and TTS run off the skill socket
+so a 2s robot read deadline cannot drop the reply.
+"""
 
 from __future__ import annotations
 
@@ -12,6 +16,7 @@ import urllib.request
 import wave
 
 RATE = 16000
+TTS_RATE = 24000  # OpenAI response_format=pcm
 VAD_RMS = 700
 START_FRAMES = 5
 END_FRAMES = 8
@@ -40,6 +45,32 @@ def tone(hz: float = 440.0, ms: int = 300, rate: int = RATE) -> bytes:
     return bytes(buf)
 
 
+def pcm16k(pcm: bytes, src_rate: int = TTS_RATE) -> bytes:
+    """Linear resample s16le mono to the robot speaker rate (16 kHz)."""
+    if not pcm or src_rate == RATE:
+        return pcm
+    n = len(pcm) // 2
+    if n < 2:
+        return pcm[: n * 2]
+    samples = struct.unpack("<" + "h" * n, pcm[: n * 2])
+    out_n = int(n * RATE / src_rate)
+    if out_n < 1:
+        return b""
+    out = []
+    last = n - 1
+    for i in range(out_n):
+        x = i * src_rate / RATE
+        j = int(x)
+        if j >= last:
+            out.append(samples[last])
+            continue
+        frac = x - j
+        a = samples[j]
+        b = samples[j + 1]
+        out.append(int(a + (b - a) * frac))
+    return struct.pack("<" + "h" * len(out), *out)
+
+
 class Voice:
     def __init__(self) -> None:
         self.buf = bytearray()
@@ -57,7 +88,8 @@ class Voice:
         self.last_rms = 0
         self.noise = 200.0
 
-    def push(self, pcm: bytes) -> dict | None:
+    def push(self, pcm: bytes) -> bytes | None:
+        """Return captured PCM when an utterance closes. Does not call OpenAI."""
         if not pcm:
             return None
         energy = rms(pcm)
@@ -79,25 +111,19 @@ class Voice:
                 self.silence += 1
                 self.buf += pcm
                 if self.silence >= END_FRAMES:
-                    return self._finish()
+                    return self._take()
         if self.active and len(self.buf) >= MAX_SAMPLES * 2:
-            return self._finish()
+            return self._take()
         return None
 
-    def _finish(self) -> dict:
+    def _take(self) -> bytes:
         pcm = bytes(self.buf)
         self.buf.clear()
         self.active = False
         self.silence = 0
         self.voiced = 0
         self.thinking = True
-        text = self.transcribe(pcm)
-        self.last_text = text
-        reply = self.chat(text) if text else ""
-        self.last_reply = reply
-        audio = self.tts(reply) if reply else b""
-        self.thinking = False
-        return {"text": text, "reply": reply, "pcm": audio}
+        return pcm
 
     def transcribe(self, pcm: bytes) -> str:
         if not self.key:
@@ -169,7 +195,7 @@ class Voice:
         )
         try:
             with urllib.request.urlopen(req, timeout=30) as resp:
-                return resp.read()
+                return pcm16k(resp.read(), TTS_RATE)
         except (urllib.error.URLError, TimeoutError, OSError):
             return tone()
 

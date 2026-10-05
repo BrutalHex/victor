@@ -15,7 +15,7 @@ from explore import BACK_OFF, LOOK_DOWN, LOOK_UP, STOP, Explorer  # noqa: E402
 from faces import FaceDB, cosine, embed  # noqa: E402
 from protocol import TYPE_AUDIO, TYPE_VIDEO, decode, encode, Header  # noqa: E402
 from safety import classical_vote  # noqa: E402
-from voice import Voice, rms, tone  # noqa: E402
+from voice import Voice, pcm16k, rms, tone  # noqa: E402
 
 
 class Protocol(unittest.TestCase):
@@ -94,6 +94,27 @@ class VoiceVAD(unittest.TestCase):
         t = tone(440, 200)
         self.assertGreater(rms(t), 100)
         self.assertGreater(len(t), 1000)
+
+    def test_utterance_is_pcm_not_api(self):
+        v = Voice()
+        v.key = "should-not-be-used"
+        loud = tone(440, 20)
+        for _ in range(5):
+            self.assertIsNone(v.push(loud))
+        self.assertTrue(v.active)
+        quiet = b"\x00\x00" * 320
+        for _ in range(7):
+            self.assertIsNone(v.push(quiet))
+        got = v.push(quiet)
+        self.assertIsInstance(got, bytes)
+        self.assertGreater(len(got), 1000)
+        self.assertTrue(v.thinking)
+
+    def test_resample_24k_to_16k(self):
+        pcm = tone(440, 300, rate=24000)
+        out = pcm16k(pcm, 24000)
+        self.assertEqual(len(out), (len(pcm) // 2) * 16000 // 24000 * 2)
+        self.assertEqual(pcm16k(tone(440, 20), 16000), tone(440, 20))
 
 
 class CRC(unittest.TestCase):

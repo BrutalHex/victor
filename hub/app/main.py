@@ -6,6 +6,7 @@ from __future__ import annotations
 import base64
 import json
 import os
+import queue
 import socket
 import struct
 import threading
@@ -46,6 +47,7 @@ FACE_DB = FaceDB(os.environ.get("HUB_FACE_DB", "/tmp/victor-faces.db"))
 VOICE = Voice()
 EDGE = Edge()
 PENDING: list[tuple[int, bytes]] = []
+UTTERANCES: queue.Queue[bytes] = queue.Queue(maxsize=2)
 LAST_JPEG = {"nav": b"", "face": b""}
 LAST_FACE_SPOKEN = {"name": "", "t": 0.0}
 CMD_FACEUI, CMD_SPEAK, CMD_DISPLAY = 1, 2, 3
@@ -113,24 +115,39 @@ def _ingest_vct1(buf: bytes, src: str = "") -> None:
 
 
 def _on_audio(pcm: bytes) -> None:
-    was = VOICE.thinking
-    result = VOICE.push(pcm)
+    utt = VOICE.push(pcm)
     with LOCK:
         STATE["audio_rms"] = getattr(VOICE, "last_rms", 0)
-    if VOICE.thinking and not was:
-        with LOCK:
-            STATE["thinking"] = True
-        queue_cmd(CMD_FACEUI, b"thinking|")
-    if not result:
+    if not utt:
         return
     with LOCK:
-        STATE["thinking"] = False
-        STATE["last_transcript"] = result.get("text") or ""
-        STATE["last_reply"] = result.get("reply") or ""
-    queue_cmd(CMD_FACEUI, b"idle|")
-    pcm_out = result.get("pcm") or b""
-    if pcm_out:
-        queue_cmd(CMD_SPEAK, pcm_out)
+        STATE["thinking"] = True
+    queue_cmd(CMD_FACEUI, b"thinking|")
+    print(f"voice utterance {len(utt)} bytes", flush=True)
+    try:
+        UTTERANCES.put_nowait(utt)
+    except queue.Full:
+        print("voice queue full; dropped utterance", flush=True)
+
+
+def voice_loop() -> None:
+    """OpenAI stays off the :7443 reader. Robot read deadline is 2s."""
+    while True:
+        pcm = UTTERANCES.get()
+        text = VOICE.transcribe(pcm)
+        reply = VOICE.chat(text) if text else ""
+        audio = VOICE.tts(reply) if reply else b""
+        VOICE.last_text = text
+        VOICE.last_reply = reply
+        VOICE.thinking = False
+        with LOCK:
+            STATE["thinking"] = False
+            STATE["last_transcript"] = text
+            STATE["last_reply"] = reply
+        queue_cmd(CMD_FACEUI, b"idle|")
+        if audio:
+            queue_cmd(CMD_SPEAK, audio)
+        print(f"voice transcript={text!r} reply={reply!r} speak={len(audio)}", flush=True)
 
 
 def _on_nav_frame(jpeg: bytes) -> None:
@@ -163,44 +180,55 @@ def _on_face_frame(jpeg: bytes) -> None:
 
 def handle_robot(conn: socket.socket) -> None:
     conn.settimeout(2.0)
-    while True:
-        buf = b""
-        while len(buf) < 18:
-            chunk = conn.recv(18 - len(buf))
-            if not chunk:
+    try:
+        while True:
+            buf = b""
+            while len(buf) < 18:
+                chunk = conn.recv(18 - len(buf))
+                if not chunk:
+                    return
+                buf += chunk
+            if buf[:4] != b"VHB1":
                 return
-            buf += chunk
-        if buf[:4] != b"VHB1":
-            return
-        typ = buf[4]
-        if typ == 5:
-            ln = _read_n(conn, 4)
-            if ln is None:
+            typ = buf[4]
+            if typ == 5:
+                ln = _read_n(conn, 4)
+                if ln is None:
+                    return
+                n = struct.unpack("<I", ln)[0]
+                if n > 2 << 20:
+                    return
+                payload = _read_n(conn, n) if n else b""
+                if payload is None:
+                    return
+                _ingest_vct1(payload)
+                continue
+            if typ != 1:
                 return
-            n = struct.unpack("<I", ln)[0]
-            if n > 2 << 20:
+            veto = buf[17]
+            with LOCK:
+                sensor = STATE.get("last_sensor")
+                STATE["veto"] = veto
+                STATE["heartbeats"] += 1
+                edge = int(STATE.get("_edge_int") or 0)
+                skill = EXPLORER.step(sensor, veto, edge)
+                STATE["skill"] = NAMES.get(skill, "idle")
+            t_ns = time.time_ns()
+            reply = b"VHB1" + bytes([2]) + buf[5:9] + struct.pack("<Q", t_ns) + bytes([skill])
+            cmds = pop_cmds()
+            sent = 0
+            try:
+                conn.sendall(reply)
+                for kind, payload in cmds:
+                    hdr = b"VHB1" + bytes([3]) + buf[5:9] + struct.pack("<Q", t_ns) + bytes([kind])
+                    conn.sendall(hdr + struct.pack("<I", len(payload)) + payload)
+                    sent += 1
+            except OSError:
+                for kind, payload in cmds[sent:]:
+                    queue_cmd(kind, payload)
                 return
-            payload = _read_n(conn, n) if n else b""
-            if payload is None:
-                return
-            _ingest_vct1(payload)
-            continue
-        if typ != 1:
-            return
-        veto = buf[17]
-        with LOCK:
-            sensor = STATE.get("last_sensor")
-            STATE["veto"] = veto
-            STATE["heartbeats"] += 1
-            edge = int(STATE.get("_edge_int") or 0)
-            skill = EXPLORER.step(sensor, veto, edge)
-            STATE["skill"] = NAMES.get(skill, "idle")
-        t_ns = time.time_ns()
-        reply = b"VHB1" + bytes([2]) + buf[5:9] + struct.pack("<Q", t_ns) + bytes([skill])
-        conn.sendall(reply)
-        for kind, payload in pop_cmds():
-            hdr = b"VHB1" + bytes([3]) + buf[5:9] + struct.pack("<Q", t_ns) + bytes([kind])
-            conn.sendall(hdr + struct.pack("<I", len(payload)) + payload)
+    except OSError:
+        return
 
 
 def _read_n(conn: socket.socket, n: int) -> bytes | None:
@@ -347,6 +375,7 @@ def main() -> None:
     udp_video = int(os.environ.get("HUB_VIDEO_PORT", "7500"))
     tcp_port = int(os.environ.get("HUB_SKILL_PORT", "7443"))
     http_port = int(os.environ.get("HUB_HTTP_PORT", "8080"))
+    threading.Thread(target=voice_loop, daemon=True).start()
     threading.Thread(target=udp_loop, args=(host, udp_sensor), daemon=True).start()
     threading.Thread(target=udp_loop, args=(host, udp_audio), daemon=True).start()
     threading.Thread(target=udp_loop, args=(host, udp_video), daemon=True).start()
