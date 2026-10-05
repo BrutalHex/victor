@@ -18,8 +18,11 @@ import wave
 RATE = 16000
 TTS_RATE = 24000  # OpenAI response_format=pcm
 VAD_RMS = 700
+VAD_RATIO = 2.0
 START_FRAMES = 5
 END_FRAMES = 8
+CAL_FRAMES = 50  # 1s at 20 ms packets; learn the room before arming
+MIN_UTTERANCE_BYTES = int(RATE * 0.4) * 2
 MAX_SAMPLES = RATE * 6
 
 
@@ -71,6 +74,16 @@ def pcm16k(pcm: bytes, src_rate: int = TTS_RATE) -> bytes:
     return struct.pack("<" + "h" * len(out), *out)
 
 
+def _http_error(where: str, exc: BaseException) -> None:
+    body = ""
+    if isinstance(exc, urllib.error.HTTPError):
+        try:
+            body = exc.read().decode(errors="replace")[:300]
+        except OSError:
+            body = ""
+    print(f"voice {where} error {exc} {body}", flush=True)
+
+
 class Voice:
     def __init__(self) -> None:
         self.buf = bytearray()
@@ -87,6 +100,7 @@ class Voice:
         self.voice = os.environ.get("OPENAI_VOICE", "alloy")
         self.last_rms = 0
         self.noise = 200.0
+        self.cal_frames = 0
 
     def push(self, pcm: bytes) -> bytes | None:
         """Return captured PCM when an utterance closes. Does not call OpenAI."""
@@ -94,9 +108,11 @@ class Voice:
             return None
         energy = rms(pcm)
         self.last_rms = energy
-        if not self.active:
-            self.noise = (0.97 * self.noise) + (0.03 * float(energy))
-        thresh = max(VAD_RMS, self.noise * 3.5)
+        if self.cal_frames < CAL_FRAMES:
+            self.cal_frames += 1
+            self.noise = (0.90 * self.noise) + (0.10 * float(energy))
+            return None
+        thresh = max(VAD_RMS, self.noise * VAD_RATIO)
         if energy >= thresh:
             self.voiced += 1
             self.silence = 0
@@ -107,6 +123,8 @@ class Voice:
                 self.buf += pcm
         else:
             self.voiced = 0
+            if not self.active:
+                self.noise = (0.97 * self.noise) + (0.03 * float(energy))
             if self.active:
                 self.silence += 1
                 self.buf += pcm
@@ -127,6 +145,7 @@ class Voice:
 
     def transcribe(self, pcm: bytes) -> str:
         if not self.key:
+            print("voice transcribe skipped; no key", flush=True)
             return ""
         wav = _wav_wrap(pcm)
         boundary = "----victor"
@@ -145,10 +164,15 @@ class Voice:
             method="POST",
         )
         try:
-            with urllib.request.urlopen(req, timeout=30) as resp:
-                data = json.loads(resp.read().decode())
-            return str(data.get("text") or "").strip()
-        except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, OSError):
+            with urllib.request.urlopen(req, timeout=20) as resp:
+                raw = resp.read().decode()
+            data = json.loads(raw)
+            text = str(data.get("text") or "").strip()
+            if not text:
+                print(f"voice transcribe empty {raw[:240]}", flush=True)
+            return text
+        except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, OSError) as exc:
+            _http_error("transcribe", exc)
             return ""
 
     def chat(self, text: str) -> str:
@@ -173,10 +197,11 @@ class Voice:
             method="POST",
         )
         try:
-            with urllib.request.urlopen(req, timeout=30) as resp:
+            with urllib.request.urlopen(req, timeout=20) as resp:
                 data = json.loads(resp.read().decode())
             return data["choices"][0]["message"]["content"].strip()
-        except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, OSError, KeyError, IndexError):
+        except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, OSError, KeyError, IndexError) as exc:
+            _http_error("chat", exc)
             return ""
 
     def tts(self, text: str) -> bytes:
@@ -194,10 +219,11 @@ class Voice:
             method="POST",
         )
         try:
-            with urllib.request.urlopen(req, timeout=30) as resp:
+            with urllib.request.urlopen(req, timeout=20) as resp:
                 return pcm16k(resp.read(), TTS_RATE)
-        except (urllib.error.URLError, TimeoutError, OSError):
-            return tone()
+        except (urllib.error.URLError, TimeoutError, OSError) as exc:
+            _http_error("tts", exc)
+            return b""
 
 
 def _wav_wrap(pcm: bytes, rate: int = RATE) -> bytes:

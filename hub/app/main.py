@@ -19,7 +19,7 @@ from explore import NAMES, Explorer
 from faces import FaceDB
 from protocol import FLAG_FACE, TYPE_AUDIO, TYPE_SENSOR, TYPE_VIDEO, decode, unpack_sensor
 from safety import classical_vote
-from voice import Voice, tone
+from voice import MIN_UTTERANCE_BYTES, Voice, _wav_wrap, tone
 
 STATE = {
     "sensors": 0,
@@ -39,6 +39,7 @@ STATE = {
     "last_transcript": "",
     "last_reply": "",
     "audio_rms": 0,
+    "noise_rms": 0,
 }
 _WINDOW = []
 LOCK = threading.Lock()
@@ -114,20 +115,43 @@ def _ingest_vct1(buf: bytes, src: str = "") -> None:
             _on_nav_frame(payload)
 
 
+def _enqueue_utterance(utt: bytes) -> None:
+    dropped = False
+    while True:
+        try:
+            UTTERANCES.put_nowait(utt)
+            return
+        except queue.Full:
+            try:
+                UTTERANCES.get_nowait()
+                dropped = True
+            except queue.Empty:
+                print("voice queue full; dropped newest", flush=True)
+                return
+    if dropped:
+        print("voice queue dropped oldest", flush=True)
+
+
 def _on_audio(pcm: bytes) -> None:
     utt = VOICE.push(pcm)
     with LOCK:
         STATE["audio_rms"] = getattr(VOICE, "last_rms", 0)
+        STATE["noise_rms"] = int(getattr(VOICE, "noise", 0))
     if not utt:
+        return
+    if len(utt) < MIN_UTTERANCE_BYTES:
+        print(f"voice skip short {len(utt)} bytes", flush=True)
         return
     with LOCK:
         STATE["thinking"] = True
     queue_cmd(CMD_FACEUI, b"thinking|")
-    print(f"voice utterance {len(utt)} bytes", flush=True)
+    print(f"voice utterance {len(utt)} bytes rms={VOICE.last_rms} noise={int(VOICE.noise)}", flush=True)
     try:
-        UTTERANCES.put_nowait(utt)
-    except queue.Full:
-        print("voice queue full; dropped utterance", flush=True)
+        os.makedirs("/app/data", exist_ok=True)
+        open("/app/data/last.wav", "wb").write(_wav_wrap(utt))
+    except OSError as exc:
+        print(f"voice wav save failed {exc}", flush=True)
+    _enqueue_utterance(utt)
 
 
 def voice_loop() -> None:

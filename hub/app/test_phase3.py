@@ -15,7 +15,7 @@ from explore import BACK_OFF, LOOK_DOWN, LOOK_UP, STOP, Explorer  # noqa: E402
 from faces import FaceDB, cosine, embed  # noqa: E402
 from protocol import TYPE_AUDIO, TYPE_VIDEO, decode, encode, Header  # noqa: E402
 from safety import classical_vote  # noqa: E402
-from voice import Voice, pcm16k, rms, tone  # noqa: E402
+from voice import CAL_FRAMES, MIN_UTTERANCE_BYTES, Voice, pcm16k, rms, tone  # noqa: E402
 
 
 class Protocol(unittest.TestCase):
@@ -98,6 +98,7 @@ class VoiceVAD(unittest.TestCase):
     def test_utterance_is_pcm_not_api(self):
         v = Voice()
         v.key = "should-not-be-used"
+        v.cal_frames = CAL_FRAMES
         loud = tone(440, 20)
         for _ in range(5):
             self.assertIsNone(v.push(loud))
@@ -109,6 +110,20 @@ class VoiceVAD(unittest.TestCase):
         self.assertIsInstance(got, bytes)
         self.assertGreater(len(got), 1000)
         self.assertTrue(v.thinking)
+
+
+    def test_noise_does_not_chase_onset(self):
+        v = Voice()
+        v.cal_frames = CAL_FRAMES
+        v.noise = 1000
+        loud = tone(440, 20)
+        for _ in range(4):
+            self.assertIsNone(v.push(loud))
+        self.assertLess(v.noise, 1500)
+        self.assertFalse(v.active)
+
+    def test_short_clip_is_below_min(self):
+        self.assertGreater(MIN_UTTERANCE_BYTES, 6400)
 
     def test_resample_24k_to_16k(self):
         pcm = tone(440, 300, rate=24000)
