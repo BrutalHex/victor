@@ -143,3 +143,77 @@ func TestVoiceDetectKeepsAllQuiet(t *testing.T) {
 		t.Fatal("empty")
 	}
 }
+
+func TestFastKeepsShoutOnOneMic(t *testing.T) {
+	p := NewProcessor(ModeFast)
+	n := 800
+	raw := make([]int16, n*Channels)
+	for i := 0; i < n; i++ {
+		shout := int16(14000 * math.Sin(2*math.Pi*900*float64(i)/RawRate))
+		fan := int16(2500 * math.Sin(2*math.Pi*180*float64(i)/RawRate))
+		// Voice only on front-left. The other three are the fan.
+		raw[i*Channels+0] = fan
+		raw[i*Channels+1] = shout
+		raw[i*Channels+2] = fan
+		raw[i*Channels+3] = fan
+	}
+	var out []int16
+	for off := 0; off < n; off += 80 {
+		out = append(out, p.Process(raw[off*Channels:(off+80)*Channels])...)
+	}
+	if len(out) < 400 {
+		t.Fatalf("short %d", len(out))
+	}
+	var voice, fan float64
+	var peak int16
+	for i, s := range out {
+		if s > peak {
+			peak = s
+		}
+		if s < -peak {
+			peak = -s
+		}
+		voice += float64(s) * math.Sin(2*math.Pi*900*float64(i)/Rate)
+		fan += float64(s) * math.Sin(2*math.Pi*180*float64(i)/Rate)
+	}
+	if math.Abs(voice) < math.Abs(fan)*2 {
+		t.Fatalf("shout lost voice=%f fan=%f", voice, fan)
+	}
+	if peak > 29000 {
+		t.Fatalf("clipped %d", peak)
+	}
+}
+
+func TestRumbleIsNotBoostedToRail(t *testing.T) {
+	p := NewProcessor(ModeFast)
+	n := 1600
+	raw := make([]int16, n*Channels)
+	for i := 0; i < n; i++ {
+		fan := int16(1800 * math.Sin(2*math.Pi*190*float64(i)/RawRate))
+		for c := 0; c < Channels; c++ {
+			raw[i*Channels+c] = fan
+		}
+	}
+	var out []int16
+	for off := 0; off < n; off += 80 {
+		out = append(out, p.Process(raw[off*Channels:(off+80)*Channels])...)
+	}
+	if len(out) < 400 {
+		t.Fatalf("short %d", len(out))
+	}
+	var peak int16
+	var acc float64
+	for _, s := range out {
+		if s > peak {
+			peak = s
+		}
+		if s < -peak {
+			peak = -s
+		}
+		acc += float64(s) * float64(s)
+	}
+	rms := math.Sqrt(acc / float64(len(out)))
+	if peak > 8000 || rms > 4000 {
+		t.Fatalf("rumble boosted peak=%d rms=%.0f", peak, rms)
+	}
+}

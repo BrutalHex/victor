@@ -10,8 +10,9 @@ import (
 // Stock vic-engine is gone once prove-phase1 owns the spine, so the three SDK
 // modes are applied here to the raw backpack array.
 //
-//	Fast:        one unprocessed mic (quietest after the high-pass)
-//	Directional: 12-look delay-and-sum, the clean path (default)
+//	Fast:        one mic, the one whose speech band beats the rumble (default)
+//	Directional: 12-look delay-and-sum, opt-in. A few-centimetre backpack
+//	             cannot null a 200 Hz room, and a wrong delay cancels the talker.
 //	VoiceDetect: multi-mic, no beam, for voice activity
 //
 // Raw spine rate is 15625 Hz (SDK MICROPHONE_SAMPLE_RATE). Output is 16000 Hz
@@ -22,8 +23,9 @@ import (
 const (
 	RawRate    = 15625
 	Directions = 12
-	hpHz       = 150.0
+	hpHz       = 80.0
 	targetRMS  = 1800.0
+	maxGain    = 3.0
 )
 
 // Mode is the SDK audio processing mode.
@@ -49,12 +51,12 @@ func (m Mode) String() string {
 // ModeFromEnv reads VICTOR_MIC_MODE (directional, fast, voice).
 func ModeFromEnv() Mode {
 	switch strings.ToLower(strings.TrimSpace(os.Getenv("VICTOR_MIC_MODE"))) {
-	case "fast", "audio_fast_mode":
-		return ModeFast
+	case "directional", "audio_directional_mode":
+		return ModeDirectional
 	case "voice", "voicedetect", "audio_voice_detect_mode":
 		return ModeVoiceDetect
 	default:
-		return ModeDirectional
+		return ModeFast
 	}
 }
 
@@ -73,17 +75,19 @@ var micPos = [Channels][2]float64{
 
 // Processor turns interleaved spine PCM into 16 kHz mono.
 type Processor struct {
-	mu     sync.Mutex
-	mode   Mode
-	order  [Channels]int
-	hp     [Channels]biquad
-	noise  [Channels]float64
-	dir    int
-	gain   float64
-	ns     wiener
-	res    resampler
-	aec    echo
-	primed bool
+	mu      sync.Mutex
+	mode    Mode
+	order   [Channels]int
+	hp      [Channels]biquad
+	noise   [Channels]float64
+	dir     int
+	holdMic int
+	holdN   int
+	gain    float64
+	ns      wiener
+	res     resampler
+	aec     echo
+	primed  bool
 }
 
 func NewProcessor(mode Mode) *Processor {
@@ -160,7 +164,7 @@ func (p *Processor) Process(interleaved []int16) []int16 {
 	var beam []float64
 	switch p.mode {
 	case ModeFast:
-		beam = append([]float64(nil), ch[quietest(p.noise)]...)
+		beam = append([]float64(nil), ch[p.pickMic(ch)]...)
 	case ModeVoiceDetect:
 		beam = mixVoice(ch, p.noise)
 	default:
@@ -193,6 +197,61 @@ func parseOrder(s string) [Channels]int {
 		got[i] = id
 	}
 	return got
+}
+
+// pickMic keeps a single backpack channel. Summing the four without a
+// measured geometry cancels a shout (the clips had no speech band) and the
+// quietest channel is often the one facing the table. Score is pre-emphasised
+// energy over the low-band leak, and the choice is sticky so blocks do not click.
+func (p *Processor) pickMic(ch [Channels][]float64) int {
+	var rum [Channels]float64
+	score := [Channels]float64{}
+	for c := 0; c < Channels; c++ {
+		sp, ru := bandScore(ch[c])
+		rum[c] = ru
+		score[c] = sp / (ru + 1)
+	}
+	// Drop on the low band only. A shout is the loudest channel overall, and
+	// the old total-energy mask was throwing that mic away as "grind".
+	drop := grindMask(rum)
+	best, bestScore := 0, -1.0
+	for c := 0; c < Channels; c++ {
+		if drop[c] {
+			continue
+		}
+		if score[c] > bestScore {
+			bestScore = score[c]
+			best = c
+		}
+	}
+	if p.holdN > 0 && !drop[p.holdMic] {
+		if bestScore < score[p.holdMic]*1.8 {
+			p.holdN--
+			return p.holdMic
+		}
+	}
+	p.holdMic = best
+	p.holdN = 40
+	return best
+}
+
+func speechRatio(x []float64) float64 {
+	sp, ru := bandScore(x)
+	return sp / (ru + 1)
+}
+
+// bandScore splits a block into a pre-emphasised speech score and a ~200 Hz leak.
+func bandScore(x []float64) (speech, rumble float64) {
+	var prev, low float64
+	const a = 0.08
+	for _, s := range x {
+		low += a * (s - low)
+		pe := s - 0.97*prev
+		prev = s
+		speech += pe * pe
+		rumble += low * low
+	}
+	return speech, rumble
 }
 
 func quietest(noise [Channels]float64) int {
@@ -404,32 +463,43 @@ func (p *Processor) agc(x []float64) []int16 {
 	if len(x) == 0 {
 		return nil
 	}
+	sp, ru := bandScore(x)
 	var acc float64
 	for _, v := range x {
 		acc += v * v
 	}
 	rms := math.Sqrt(acc / float64(len(x)))
-	if rms > 80 {
+	// A 12x chase is what pinned the fan band to 32767. Boost only when the
+	// speech score leads, and never by more than 3. Rumble decays the gain.
+	if rms > 40 && sp > ru*1.4 {
 		want := targetRMS / rms
 		if want > p.gain {
-			p.gain = 0.90*p.gain + 0.10*want
+			p.gain = 0.92*p.gain + 0.08*want
 		} else {
 			p.gain = 0.98*p.gain + 0.02*want
 		}
+	} else if ru > sp*1.4 {
+		p.gain = 0.85*p.gain + 0.15*0.45
 	}
-	if p.gain < 0.4 {
-		p.gain = 0.4
+	if p.gain < 0.35 {
+		p.gain = 0.35
 	}
-	if p.gain > 12 {
-		p.gain = 12
+	if p.gain > maxGain {
+		p.gain = maxGain
 	}
 	out := make([]int16, len(x))
 	for i, v := range x {
 		s := v * p.gain
-		if s > 32767 {
-			s = 32767
-		} else if s < -32768 {
-			s = -32768
+		// Soft knee. A hard rail is what the transcriber heard as a thump.
+		if s > 20000 {
+			s = 20000 + (s-20000)*0.15
+		} else if s < -20000 {
+			s = -20000 + (s+20000)*0.15
+		}
+		if s > 28000 {
+			s = 28000
+		} else if s < -28000 {
+			s = -28000
 		}
 		out[i] = int16(s)
 	}
@@ -658,7 +728,14 @@ func (e *echo) cancel(x []float64) []float64 {
 		e.mic = e.mic[len(e.mic)-4000:]
 	}
 	if e.lag == 0 {
-		e.lag = e.findLag()
+		lag, corr := e.findLag()
+		// A mis-timed reference subtracts the talker. Skip unless the playback
+		// actually correlates with this block.
+		if corr < 0.2 {
+			e.hold = 0
+			return x
+		}
+		e.lag = lag
 	}
 	if len(e.w) != 160 {
 		e.w = make([]float64, 160)
@@ -695,29 +772,40 @@ func (e *echo) cancel(x []float64) []float64 {
 	return out
 }
 
-func (e *echo) findLag() int {
+func (e *echo) findLag() (int, float64) {
 	if len(e.mic) < 160 || len(e.ref) < 160 {
-		return 80
+		return 80, 0
 	}
 	mic := e.mic[len(e.mic)-160:]
+	var micE float64
+	for _, v := range mic {
+		micE += v * v
+	}
 	best, score := 40, -1.0
 	max := 1600
 	if max > len(e.ref)-160 {
 		max = len(e.ref) - 160
 	}
+	var refE float64
 	for lag := 0; lag <= max; lag += 40 {
 		base := len(e.ref) - 160 - lag
 		if base < 0 {
 			break
 		}
-		var acc float64
+		var acc, re float64
 		for i := 0; i < 160; i++ {
-			acc += mic[i] * e.ref[base+i]
+			r := e.ref[base+i]
+			acc += mic[i] * r
+			re += r * r
 		}
 		if acc > score {
 			score = acc
 			best = lag
+			refE = re
 		}
 	}
-	return best
+	if micE < 1 || refE < 1 || score < 0 {
+		return best, 0
+	}
+	return best, score / math.Sqrt(micE*refE)
 }

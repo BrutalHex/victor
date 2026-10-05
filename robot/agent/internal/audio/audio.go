@@ -34,9 +34,10 @@ func Energies(interleaved []int16) [Channels]int64 {
 	return e
 }
 
-// MixMono keeps the quietest backpack channel. Fast mode still uses this.
-// Directional mode is the default; averaging the grind channels
-// (Vector-W1V9: ch0 ~3e10, ch2 ~2e11) is worse than a steered beam.
+// MixMono keeps the quietest backpack channel. It is the fallback when the
+// processor is nil. The live path picks one speech mic in Processor (fast,
+// the default). Averaging the grind channels (Vector-W1V9: ch0 ~3e10, ch2
+// ~2e11) mixes the tracks into the voice.
 func MixMono(interleaved []int16) []int16 {
 	if len(interleaved) < Channels {
 		return nil
