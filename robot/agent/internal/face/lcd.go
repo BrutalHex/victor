@@ -55,10 +55,16 @@ func Blit(frame []byte) {
 	setBacklight(10)
 	if err := writeSPI(frame); err != nil {
 		fmt.Fprintf(os.Stderr, "face spi: %v\n", err)
+		return
+	}
+	if !faceLogged {
+		fmt.Fprintf(os.Stderr, "face spi %s bytes %d\n", spiDev, len(frame))
+		faceLogged = true
 	}
 }
 
-// Boot draws a fresh frame. This robot has no /dev/fb0.
+var faceLogged bool
+
 func Boot() {
 	EOK()
 }
@@ -73,6 +79,18 @@ func setBacklight(level int) {
 	s := strconv.Itoa(level) + "\n"
 	_ = os.WriteFile("/sys/class/leds/face-backlight-left/brightness", []byte(s), 0644)
 	_ = os.WriteFile("/sys/class/leds/face-backlight-right/brightness", []byte(s), 0644)
+}
+
+// spiIOCTransfer matches the 3.18 spidev struct (no word_delay field).
+type spiIOCTransfer struct {
+	tx          uint64
+	rx          uint64
+	length      uint32
+	speedHz     uint32
+	delayUsecs  uint16
+	bitsPerWord uint8
+	csChange    uint8
+	pad         uint32
 }
 
 func writeSPI(frame []byte) error {
@@ -102,40 +120,29 @@ func writeSPI(frame []byte) error {
 	if err := gpioOut(gpioDC, 1); err != nil {
 		return err
 	}
-	// Anki screen.rgb565_bytepair is little-endian on the wire. Our buffer is big-endian.
 	wire := make([]byte, len(frame))
 	for i := 0; i+1 < len(frame); i += 2 {
 		wire[i] = frame[i+1]
 		wire[i+1] = frame[i]
 	}
-	for off := 0; off < len(wire); {
-		n := spiChunk
-		if n > len(wire)-off {
-			n = len(wire) - off
-		}
-		if _, err := f.Write(wire[off : off+n]); err != nil {
-			return err
-		}
-		off += n
-	}
-	return nil
+	return spiWrite(f, wire)
 }
 
 func spiSetup(f *os.File) error {
 	mode := uint8(0)
 	bits := uint8(8)
 	speed := uint32(8000000)
-	if err := ioctl(f, 0x40016b01, uintptr(unsafe.Pointer(&mode))); err != nil { // SPI_IOC_WR_MODE
+	if err := ioctl(f, 0x40016b01, uintptr(unsafe.Pointer(&mode))); err != nil {
 		return err
 	}
-	if err := ioctl(f, 0x40016b03, uintptr(unsafe.Pointer(&bits))); err != nil { // SPI_IOC_WR_BITS_PER_WORD
+	if err := ioctl(f, 0x40016b03, uintptr(unsafe.Pointer(&bits))); err != nil {
 		return err
 	}
-	return ioctl(f, 0x40046b04, uintptr(unsafe.Pointer(&speed))) // SPI_IOC_WR_MAX_SPEED_HZ
+	return ioctl(f, 0x40046b04, uintptr(unsafe.Pointer(&speed)))
 }
 
 func panelInit(f *os.File) error {
-	if err := spiCmdFD(f, 0x01); err != nil { // SWRESET
+	if err := spiCmdFD(f, 0x01); err != nil {
 		return err
 	}
 	time.Sleep(50 * time.Millisecond)
@@ -143,7 +150,7 @@ func panelInit(f *os.File) error {
 		return err
 	}
 	time.Sleep(120 * time.Millisecond)
-	if err := spiCmdFD(f, cmdCOLMOD, 0x05); err != nil { // RGB565
+	if err := spiCmdFD(f, cmdCOLMOD, 0x05); err != nil {
 		return err
 	}
 	if err := spiCmdFD(f, cmdMADCTL, 0x00); err != nil {
@@ -160,7 +167,7 @@ func spiCmdFD(f *os.File, cmd byte, data ...byte) error {
 	if err := gpioOut(gpioDC, 0); err != nil {
 		return err
 	}
-	if _, err := f.Write([]byte{cmd}); err != nil {
+	if err := spiWrite(f, []byte{cmd}); err != nil {
 		return err
 	}
 	if len(data) == 0 {
@@ -169,8 +176,18 @@ func spiCmdFD(f *os.File, cmd byte, data ...byte) error {
 	if err := gpioOut(gpioDC, 1); err != nil {
 		return err
 	}
-	_, err := f.Write(data)
-	return err
+	return spiWrite(f, data)
+}
+
+func spiWrite(f *os.File, buf []byte) error {
+	// SPI_IOC_MESSAGE(1) on a 32-byte transfer. write() succeeds without applying mode.
+	xfer := spiIOCTransfer{
+		tx:          uint64(uintptr(unsafe.Pointer(&buf[0]))),
+		length:      uint32(len(buf)),
+		speedHz:     8000000,
+		bitsPerWord: 8,
+	}
+	return ioctl(f, 0x40206b00, uintptr(unsafe.Pointer(&xfer)))
 }
 
 func ioctl(f *os.File, req uintptr, arg uintptr) error {
