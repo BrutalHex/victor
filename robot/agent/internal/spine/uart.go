@@ -14,18 +14,22 @@ import (
 
 const DefaultDevice = "/dev/ttyHS0"
 
+// modeEvery is how often to repeat the run-mode frame. The body drops the
+// 640-byte mic block if it only saw the empty mode payload sent at open.
 type Body struct {
-	mu      sync.Mutex
-	f       *os.File
-	buf     []byte
-	seq     uint32
-	last    Frame
-	ok      bool
-	liftMin int32
-	liftMax int32
-	leds    [12]byte
-	drive   [4]int16
-	mic     []int16
+	mu        sync.Mutex
+	f         *os.File
+	buf       []byte
+	seq       uint32
+	last      Frame
+	ok        bool
+	liftMin   int32
+	liftMax   int32
+	leds      [12]byte
+	drive     [4]int16
+	mic       []int16
+	modeTicks int
+	shortLogs int
 }
 
 func Open(dev string) (*Body, error) {
@@ -41,7 +45,10 @@ func Open(dev string) (*Body, error) {
 		return nil, err
 	}
 	b := &Body{f: f, buf: make([]byte, 0, 8192), liftMin: 0, liftMax: 1}
-	_ = b.send(Encode(TypeMode, nil))
+	if err := b.send(EncodeMode(ModeRun)); err != nil {
+		_ = f.Close()
+		return nil, err
+	}
 	_ = b.send(Encode(TypeVersion, nil))
 	return b, nil
 }
@@ -87,8 +94,18 @@ func (b *Body) Pump() error {
 	leds := b.leds
 	seq := b.seq
 	b.seq++
+	b.modeTicks++
+	resend := b.modeTicks >= 50 // ~1s at the 20ms control period
+	if resend {
+		b.modeTicks = 0
+	}
 	b.mu.Unlock()
 
+	if resend {
+		if err := b.send(EncodeMode(ModeRun)); err != nil {
+			return err
+		}
+	}
 	drive := b.Drive()
 	if err := b.send(EncodeCtrl(seq, drive, leds)); err != nil {
 		return err
@@ -121,6 +138,10 @@ func (b *Body) Pump() error {
 				if len(b.mic) > 16000 {
 					b.mic = b.mic[len(b.mic)-8000:]
 				}
+				b.shortLogs = 0
+			} else if b.shortLogs < 4 {
+				b.shortLogs++
+				fmt.Fprintf(os.Stderr, "spine data %d bytes, no mic block\n", len(fr.Payload))
 			}
 			if b.liftMin == 0 && b.liftMax == 1 {
 				b.liftMin = f.Motors[2].Pos
