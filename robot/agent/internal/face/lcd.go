@@ -21,20 +21,55 @@ const (
 	spiChunk = 4096
 )
 
+var panelReady bool
+
 func Show(text string, fg uint16) {
 	Blit(EyesCaption(text, fg))
+}
+
+// Init wakes the face panel. A robot reset leaves the controller asleep, so a
+// later fb write can succeed and still show nothing.
+func Init() {
+	setBacklight(10)
+	_ = spiCmd(0x01) // SWRESET
+	time.Sleep(50 * time.Millisecond)
+	_ = spiCmd(cmdSLPOUT)
+	time.Sleep(120 * time.Millisecond)
+	_ = spiCmd(cmdCOLMOD, 0x05) // RGB565
+	_ = spiCmd(cmdMADCTL, 0xC0)
+	_ = spiCmd(cmdDISPON)
+	time.Sleep(20 * time.Millisecond)
+	panelReady = true
+}
+
+func ensurePanel() {
+	if panelReady {
+		return
+	}
+	Init()
 }
 
 func Blit(frame []byte) {
 	if len(frame) != Bytes {
 		return
 	}
+	_ = os.MkdirAll("/data/victor", 0755)
 	_ = os.WriteFile("/data/victor/face.rgb565", frame, 0644)
+	ensurePanel()
 	setBacklight(10)
-	if err := writeFB(frame); err == nil {
+	_ = writeSPI(frame)
+	_ = writeFB(frame)
+}
+
+// Boot re-inits the panel and restores the last frame across agent restarts.
+func Boot() {
+	Init()
+	b, err := os.ReadFile("/data/victor/face.rgb565")
+	if err == nil && len(b) == Bytes {
+		Blit(b)
 		return
 	}
-	_ = writeSPI(frame)
+	EOK()
 }
 
 func setBacklight(level int) {

@@ -219,7 +219,7 @@ func runDaemon() int {
 	go watchdog(ssh, hub, body, ui)
 	go cameraLoop(hub, lnk)
 	go cmdLoop(lnk, ui)
-	face.EOK()
+	face.Boot()
 	var lastFaceAt time.Time
 
 	tick := time.NewTicker(*rate)
@@ -339,8 +339,10 @@ func runDaemon() int {
 						_ = os.WriteFile("/data/victor/mics.txt", []byte(fmt.Sprintf("%d,%d,%d,%d\n", e[0], e[1], e[2], e[3])), 0644)
 						lastMicLog = time.Now()
 					}
-					for _, pkt := range pk.Push(audio.MixMono(mic)) {
-						lnk.QueueMedia(hub.SendAudio(pkt))
+					if !ui.thinking() {
+						for _, pkt := range pk.Push(audio.MixMono(mic)) {
+							lnk.QueueMedia(hub.SendAudio(pkt))
+						}
 					}
 				}
 			}
@@ -524,6 +526,15 @@ type uiState struct {
 	until      time.Time
 	thinkStart time.Time
 	lastDrawn  string
+}
+
+func (u *uiState) thinking() bool {
+	if u == nil {
+		return false
+	}
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	return u.mode == "thinking"
 }
 
 func (u *uiState) set(mode, caption string, d time.Duration) {
