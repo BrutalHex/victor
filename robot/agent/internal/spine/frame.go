@@ -15,6 +15,10 @@ const (
 	TypeShutdown = 0x6473     // 'sd'
 	CtrlSize     = 64
 	DataRXSize   = 768
+	// ModeRun is the Vector 2 syscon run mode. The body attaches the
+	// 640-byte mic block (768-byte dataframe) only while this is set.
+	// An empty mode payload leaves the short sensor frame.
+	ModeRun uint32 = 1
 )
 
 func Encode(frameType uint16, payload []byte) []byte {
@@ -39,6 +43,13 @@ func EncodeCtrl(seq uint32, motors [4]int16, leds [12]byte) []byte {
 	}
 	copy(ctrl[off:], leds[:])
 	return Encode(TypeData, ctrl[:])
+}
+
+// EncodeMode is the 'md' frame. flags is little-endian; ModeRun keeps mics on.
+func EncodeMode(flags uint32) []byte {
+	var p [4]byte
+	binary.LittleEndian.PutUint32(p[:], flags)
+	return Encode(TypeMode, p[:])
 }
 
 type WireFrame struct {
