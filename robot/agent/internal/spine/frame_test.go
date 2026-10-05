@@ -25,6 +25,18 @@ func TestEncodeRoundTripCRC(t *testing.T) {
 	}
 }
 
+func TestEncodeModeRun(t *testing.T) {
+	buf := EncodeMode(ModeRun)
+	binary.LittleEndian.PutUint32(buf[0:4], HeaderRX)
+	_, frames := Split(buf)
+	if len(frames) != 1 || frames[0].Type != TypeMode || len(frames[0].Payload) != 4 {
+		t.Fatalf("mode frame %+v", frames)
+	}
+	if binary.LittleEndian.Uint32(frames[0].Payload) != ModeRun {
+		t.Fatalf("flags %x", frames[0].Payload)
+	}
+}
+
 func TestParsePackedFields(t *testing.T) {
 	b := make([]byte, 768)
 	binary.LittleEndian.PutUint32(b[0:4], 42)
