@@ -1,4 +1,4 @@
-// Package face renders Vector 2.0 (160×80 RGB565) eyes and captions.
+// Package face renders Vector 1.0 Santek (184×96 RGB565) eyes and captions.
 package face
 
 import (
@@ -6,11 +6,11 @@ import (
 	"strings"
 )
 
-// Vector 2.0 (Midas) face LCD is 160×80. Vector 1.0 Santek was 184×96.
-// Writing the 1.0 size onto a 2.0 panel wraps as stripes.
+// Vector-W1V9 is a 1.0. Santek face LCD is 184×96. Vector 2.0 Midas is 160×80.
+// Writing the 2.0 size onto this panel wraps as stripes.
 const (
-	Width  = 160
-	Height = 80
+	Width  = 184
+	Height = 96
 	Bytes  = Width * Height * 2
 )
 

@@ -89,13 +89,13 @@ func renderEyes(lookX, lookY, blink, dim float64) []byte {
 	if open < 0.10 {
 		open = 0.10
 	}
-	// Vector 2.0 160×80: two large stadiums, close-set, vertically centered.
-	hx, hy := 27.0, 19.0*open
+	// Vector 1.0 Santek 184×96: two stadiums, close-set, vertically centered.
+	hx, hy := 31.0, 23.0*open
 	cr := math.Min(hx, hy) * 0.92
 	shiftX := lookX * 10
 	shiftY := lookY * 6
-	drawGlowingEye(buf, 46+shiftX, 40+shiftY, hx, hy, cr, dim)
-	drawGlowingEye(buf, 114+shiftX, 40+shiftY, hx, hy, cr, dim)
+	drawGlowingEye(buf, 53+shiftX, 48+shiftY, hx, hy, cr, dim)
+	drawGlowingEye(buf, 131+shiftX, 48+shiftY, hx, hy, cr, dim)
 	return buf
 }
 
