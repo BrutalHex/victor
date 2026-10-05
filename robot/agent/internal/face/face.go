@@ -1,4 +1,4 @@
-// Package face renders Vector 2.0 (160×80 RGB565) eyes and captions.
+// Package face renders the Anki Vector face LCD: 184×96 RGB565.
 package face
 
 import (
@@ -6,11 +6,11 @@ import (
 	"strings"
 )
 
-// prove-phase3.sh requires face.rgb565 == 25600 bytes (160×80×2).
-// Vector 2.0 Midas is 160×80. Vector 1.0 Santek was 184×96.
+// Anki vector-python-sdk screen.py: 184×96 RGB565, 35328 bytes.
+// The replacement panel is ST0103A2W-WSNLW-F, 1.03 in, 184×96.
 const (
-	Width  = 160
-	Height = 80
+	Width  = 184
+	Height = 96
 	Bytes  = Width * Height * 2
 )
 
