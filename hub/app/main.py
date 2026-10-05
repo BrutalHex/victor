@@ -116,7 +116,6 @@ def _ingest_vct1(buf: bytes, src: str = "") -> None:
 
 
 def _enqueue_utterance(utt: bytes) -> None:
-    dropped = False
     while True:
         try:
             UTTERANCES.put_nowait(utt)
@@ -124,12 +123,10 @@ def _enqueue_utterance(utt: bytes) -> None:
         except queue.Full:
             try:
                 UTTERANCES.get_nowait()
-                dropped = True
+                print("voice queue dropped oldest", flush=True)
             except queue.Empty:
                 print("voice queue full; dropped newest", flush=True)
                 return
-    if dropped:
-        print("voice queue dropped oldest", flush=True)
 
 
 def _on_audio(pcm: bytes) -> None:
