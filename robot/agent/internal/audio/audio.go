@@ -35,29 +35,23 @@ func Energies(interleaved []int16) [Channels]int64 {
 	return e
 }
 
-// MixMono drops the loudest backpack channel (motor/fan grind) and averages the other three.
+// MixMono keeps the quietest backpack channel. Averaging the others still
+// mixes in the grind (Vector-W1V9: ch0 ~3e10, ch2 ~2e11).
 func MixMono(interleaved []int16) []int16 {
 	if len(interleaved) < Channels {
 		return nil
 	}
 	n := len(interleaved) / Channels
 	e := Energies(interleaved)
-	drop := 0
+	keep := 0
 	for c := 1; c < Channels; c++ {
-		if e[c] > e[drop] {
-			drop = c
+		if e[c] < e[keep] {
+			keep = c
 		}
 	}
 	out := make([]int16, n)
 	for i := 0; i < n; i++ {
-		var sum int32
-		for c := 0; c < Channels; c++ {
-			if c == drop {
-				continue
-			}
-			sum += int32(interleaved[i*Channels+c])
-		}
-		out[i] = int16(sum / 3)
+		out[i] = interleaved[i*Channels+keep]
 	}
 	return out
 }
