@@ -11,17 +11,17 @@ import (
 )
 
 const (
-	spiDev   = "/dev/spidev0.0"
-	fbDev    = "/dev/fb0"
-	gpioDC   = 110
-	cmdCASET = 0x2A
-	cmdRASET = 0x2B
-	cmdRAMWR = 0x2C
+	spiDev    = "/dev/spidev0.0"
+	fbDev     = "/dev/fb0"
+	gpioDC    = 110
+	cmdCASET  = 0x2A
+	cmdRASET  = 0x2B
+	cmdRAMWR  = 0x2C
 	cmdSLPOUT = 0x11
 	cmdDISPON = 0x29
 	cmdCOLMOD = 0x3A
 	cmdMADCTL = 0x36
-	spiChunk = 4096
+	spiChunk  = 4096
 )
 
 var panelReady bool
@@ -31,11 +31,26 @@ func Show(text string, fg uint16) {
 }
 
 // Init wakes the face panel. A robot reset leaves the controller asleep, so a
-// later fb write can succeed and still show nothing.
+// later pixel write can succeed and still show nothing.
 func Init() {
-	// Do not SWRESET or rewrite MADCTL. That scrambles a panel the kernel
-	// already programmed, and the eyes come out as a sheared shape.
 	setBacklight(10)
+	if panelReady {
+		return
+	}
+	f, err := os.OpenFile(spiDev, os.O_RDWR, 0)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "face spi: %v\n", err)
+		return
+	}
+	defer f.Close()
+	if err := spiSetup(f); err != nil {
+		fmt.Fprintf(os.Stderr, "face spi: %v\n", err)
+		return
+	}
+	if err := panelWake(f); err != nil {
+		fmt.Fprintf(os.Stderr, "face spi: %v\n", err)
+		return
+	}
 	panelReady = true
 }
 
@@ -66,6 +81,7 @@ func Blit(frame []byte) {
 var faceLogged bool
 
 func Boot() {
+	Init()
 	EOK()
 }
 
@@ -103,7 +119,7 @@ func writeSPI(frame []byte) error {
 		return err
 	}
 	if !panelReady {
-		if err := panelInit(f); err != nil {
+		if err := panelWake(f); err != nil {
 			return err
 		}
 		panelReady = true
@@ -141,23 +157,21 @@ func spiSetup(f *os.File) error {
 	return ioctl(f, 0x40046b04, uintptr(unsafe.Pointer(&speed)))
 }
 
-func panelInit(f *os.File) error {
-	if err := spiCmdFD(f, 0x01); err != nil {
-		return err
-	}
-	time.Sleep(50 * time.Millisecond)
-	if err := spiCmdFD(f, cmdSLPOUT); err != nil {
-		return err
-	}
-	time.Sleep(120 * time.Millisecond)
-	if err := spiCmdFD(f, cmdCOLMOD, 0x05); err != nil {
-		return err
-	}
-	if err := spiCmdFD(f, cmdMADCTL, 0x00); err != nil {
-		return err
-	}
-	if err := spiCmdFD(f, cmdDISPON); err != nil {
-		return err
+// panelWakeCmds leaves geometry alone. This kernel has CONFIG_FB disabled, so
+// there is no /dev/fb0, but the bootloader already programmed the controller.
+// SWRESET (0x01), COLMOD, or MADCTL shears the 160×80 image.
+func panelWakeCmds() []byte {
+	return []byte{cmdSLPOUT, cmdDISPON}
+}
+
+func panelWake(f *os.File) error {
+	for _, cmd := range panelWakeCmds() {
+		if err := spiCmdFD(f, cmd); err != nil {
+			return err
+		}
+		if cmd == cmdSLPOUT {
+			time.Sleep(120 * time.Millisecond)
+		}
 	}
 	time.Sleep(20 * time.Millisecond)
 	return nil
