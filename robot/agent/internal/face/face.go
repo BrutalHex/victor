@@ -1,4 +1,4 @@
-// Package face renders Vector 2.0 (160×80 RGB565) eyes and captions.
+// Package face renders the Anki Vector face LCD: 184×96 RGB565.
 package face
 
 import (
@@ -6,11 +6,11 @@ import (
 	"strings"
 )
 
-// prove-phase3.sh requires face.rgb565 == 25600 bytes (160×80×2).
-// Vector 2.0 Midas is 160×80. Vector 1.0 Santek was 184×96.
+// Anki vector-python-sdk screen.py: 184×96 RGB565, 35328 bytes.
+// The replacement panel is ST0103A2W-WSNLW-F, 1.03 in, 184×96.
 const (
-	Width  = 160
-	Height = 80
+	Width  = 184
+	Height = 96
 	Bytes  = Width * Height * 2
 )
 
@@ -33,23 +33,9 @@ func Frame(text string, fg uint16) []byte {
 	return buf
 }
 
-// ThinkingFrame is eyes plus a scan bar. phase is 0..1 of bar width.
+// ThinkingFrame is the DDL default pose with a squint, not a UI bar.
 func ThinkingFrame(phase float64) []byte {
-	buf := make([]byte, Bytes)
-	blitText(buf, "...", Cyan, -18)
-	if phase < 0.08 {
-		phase = 0.08
-	}
-	if phase > 1 {
-		phase = 1
-	}
-	w := int(phase * float64(Width))
-	for y := Height - 8; y < Height-3; y++ {
-		for x := 0; x < w; x++ {
-			put(buf, x, y, Cyan)
-		}
-	}
-	return buf
+	return EyesThinking(phase)
 }
 
 func blitText(buf []byte, text string, fg uint16, yShift int) {
