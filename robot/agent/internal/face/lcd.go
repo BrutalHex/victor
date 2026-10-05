@@ -136,9 +136,23 @@ func writeSPI(frame []byte) error {
 	if err := gpioOut(gpioDC, 1); err != nil {
 		return err
 	}
-	// Buffer is already RGB565 from put(). Swapping pairs made the Vector 2
-	// panel scan as stripes. Send the stored order.
-	return spiWrite(f, frame)
+	// digital-dream-labs/vector faceDisplayImpl.h builds the frame with
+	// cv::COLOR_RGB2BGR565. Endian stays as put() stored it. Only R and B swap.
+	wire := bgr565(frame)
+	return spiWrite(f, wire)
+}
+
+
+func bgr565(frame []byte) []byte {
+	out := make([]byte, len(frame))
+	for i := 0; i+1 < len(frame); i += 2 {
+		c := binary.BigEndian.Uint16(frame[i:])
+		r := (c >> 11) & 0x1f
+		g := (c >> 5) & 0x3f
+		b := c & 0x1f
+		binary.BigEndian.PutUint16(out[i:], (b<<11)|(g<<5)|r)
+	}
+	return out
 }
 
 func spiSetup(f *os.File) error {
