@@ -10,9 +10,11 @@ import (
 // Stock vic-engine is gone once prove-phase1 owns the spine, so the three SDK
 // modes are applied here to the raw backpack array.
 //
-//	Fast:        one mic, the one whose speech band beats the rumble (default)
-//	Directional: 12-look delay-and-sum, opt-in. A few-centimetre backpack
-//	             cannot null a 200 Hz room, and a wrong delay cancels the talker.
+//	Fast:        one raw mic, high-pass and resample only (default). This is
+//	             the SDK AUDIO_FAST_MODE. Wiener, AGC and the beam were
+//	             removing the talker: a laptop in the same room kept the
+//	             sentence, the robot clip did not.
+//	Directional: 12-look delay-and-sum, opt-in via VICTOR_MIC_MODE.
 //	VoiceDetect: multi-mic, no beam, for voice activity
 //
 // Raw spine rate is 15625 Hz (SDK MICROPHONE_SAMPLE_RATE). Output is 16000 Hz
@@ -170,10 +172,29 @@ func (p *Processor) Process(interleaved []int16) []int16 {
 	default:
 		beam, p.dir = steer(ch, p.noise)
 	}
+	// Fast is the laptop path: one channel, no beam, no Wiener, no gain chase.
+	// Those three are what turned a quiet room into a clipped 200 Hz band and
+	// left the shout out of the file.
+	if p.mode == ModeFast {
+		return toInt16(p.res.push(beam))
+	}
 	clean := p.ns.apply(beam)
 	up := p.res.push(clean)
 	up = p.aec.cancel(up)
 	return p.agc(up)
+}
+
+func toInt16(x []float64) []int16 {
+	out := make([]int16, len(x))
+	for i, v := range x {
+		if v > 32767 {
+			v = 32767
+		} else if v < -32768 {
+			v = -32768
+		}
+		out[i] = int16(v)
+	}
+	return out
 }
 
 func parseOrder(s string) [Channels]int {
@@ -199,40 +220,74 @@ func parseOrder(s string) [Channels]int {
 	return got
 }
 
-// pickMic keeps a single backpack channel. Summing the four without a
-// measured geometry cancels a shout (the clips had no speech band) and the
-// quietest channel is often the one facing the table. Score is pre-emphasised
-// energy over the low-band leak, and the choice is sticky so blocks do not click.
-func (p *Processor) pickMic(ch [Channels][]float64) int {
-	var rum [Channels]float64
-	score := [Channels]float64{}
-	for c := 0; c < Channels; c++ {
-		sp, ru := bandScore(ch[c])
-		rum[c] = ru
-		score[c] = sp / (ru + 1)
+// Channel is the backpack mic fast mode is sending, 0..3.
+func (p *Processor) Channel() int {
+	if p == nil {
+		return 0
 	}
-	// Drop on the low band only. A shout is the loudest channel overall, and
-	// the old total-energy mask was throwing that mic away as "grind".
-	drop := grindMask(rum)
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.holdMic
+}
+
+// pickMic keeps one raw channel. VICTOR_MIC_CHANNEL forces it. Otherwise the
+// score is energy above ~300 Hz, which is where the laptop recording of this
+// room actually sits (300-800 Hz), not a pre-emphasis ratio that called a
+// shout rumble and dropped it. Sticky so the channel does not click.
+func (p *Processor) pickMic(ch [Channels][]float64) int {
+	if c, ok := forcedChannel(); ok {
+		p.holdMic = c
+		p.holdN = 40
+		return c
+	}
+	score := [Channels]float64{}
 	best, bestScore := 0, -1.0
 	for c := 0; c < Channels; c++ {
-		if drop[c] {
-			continue
-		}
+		score[c] = midBand(ch[c])
 		if score[c] > bestScore {
 			bestScore = score[c]
 			best = c
 		}
 	}
-	if p.holdN > 0 && !drop[p.holdMic] {
-		if bestScore < score[p.holdMic]*1.8 {
-			p.holdN--
-			return p.holdMic
-		}
+	if p.holdN > 0 && bestScore < score[p.holdMic]*1.8 {
+		p.holdN--
+		return p.holdMic
 	}
 	p.holdMic = best
 	p.holdN = 40
 	return best
+}
+
+func forcedChannel() (int, bool) {
+	s := strings.TrimSpace(os.Getenv("VICTOR_MIC_CHANNEL"))
+	if s == "" {
+		return 0, false
+	}
+	switch s {
+	case "0":
+		return 0, true
+	case "1":
+		return 1, true
+	case "2":
+		return 2, true
+	case "3":
+		return 3, true
+	default:
+		return 0, false
+	}
+}
+
+// midBand is energy after a ~300 Hz leak is removed. A 180 Hz fan stays in
+// the leak. A voice in this room does not.
+func midBand(x []float64) float64 {
+	var low, acc float64
+	const a = 0.12
+	for _, s := range x {
+		low += a * (s - low)
+		d := s - low
+		acc += d * d
+	}
+	return acc
 }
 
 func speechRatio(x []float64) float64 {
