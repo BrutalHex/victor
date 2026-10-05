@@ -233,6 +233,7 @@ func runDaemon() int {
 	var lastReason veto.Reason
 	wroteCal := cal.Ready()
 	pk := &audio.Packetizer{}
+	var lastMicLog time.Time
 
 	for {
 		select {
@@ -333,6 +334,11 @@ func runDaemon() int {
 			if body != nil {
 				body.SetDrive(pwm)
 				if mic := body.DrainMic(); len(mic) > 0 {
+					if time.Since(lastMicLog) >= time.Second {
+						e := audio.Energies(mic)
+						_ = os.WriteFile("/data/victor/mics.txt", []byte(fmt.Sprintf("%d,%d,%d,%d\n", e[0], e[1], e[2], e[3])), 0644)
+						lastMicLog = time.Now()
+					}
 					for _, pkt := range pk.Push(audio.MixMono(mic)) {
 						lnk.QueueMedia(hub.SendAudio(pkt))
 					}
