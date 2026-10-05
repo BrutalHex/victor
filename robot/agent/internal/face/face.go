@@ -1,4 +1,4 @@
-// Package face renders the Anki Vector face LCD: 184×96 RGB565.
+// Package face renders the Vector 2.0 Midas face LCD: 160×80 RGB565.
 package face
 
 import (
@@ -6,11 +6,11 @@ import (
 	"strings"
 )
 
-// Anki vector-python-sdk screen.py: 184×96 RGB565, 35328 bytes.
-// The replacement panel is ST0103A2W-WSNLW-F, 1.03 in, 184×96.
+// Vector 2.0 Midas is 160×80. Vector 1.0 Santek is 184×96 (Anki screen.py).
+// This robot is a Vector 2. A 184-wide row wraps on its panel.
 const (
-	Width  = 184
-	Height = 96
+	Width  = 160
+	Height = 80
 	Bytes  = Width * Height * 2
 )
 

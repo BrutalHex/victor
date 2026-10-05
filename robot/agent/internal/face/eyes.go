@@ -31,9 +31,9 @@ const (
 	// EyeCenterX/Y from the pack are added on top.
 	eyeBaseHalfX = 18.0
 	eyeBaseHalfY = 20.0
-	eyeNomLeft   = 46.0
-	eyeNomRight  = 138.0
-	eyeNomY      = 48.0
+	eyeNomLeft   = 40.0
+	eyeNomRight  = 120.0
+	eyeNomY      = 40.0
 )
 
 func EyesFrame(lookX, lookY, blink float64) []byte {

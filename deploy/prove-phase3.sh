@@ -116,15 +116,15 @@ for i in $(seq 1 20); do
   sleep 0.2
   SZ=$(robot_ssh 'wc -c < /data/victor/face.rgb565' | tr -d '[:space:]')
   AFTER=$(robot_ssh 'md5sum /data/victor/face.rgb565 2>/dev/null | awk "{print \$1}"' || true)
-  if [[ "$SZ" == "35328" && -n "$AFTER" && "$AFTER" != "$BEFORE" ]]; then
+  if [[ "$SZ" == "25600" && -n "$AFTER" && "$AFTER" != "$BEFORE" ]]; then
     changed=1
     break
   fi
 done
 echo "face.rgb565 bytes=$SZ md5 $BEFORE -> $AFTER"
-[[ "$SZ" == "35328" ]] || fail "face.rgb565 size $SZ"
+[[ "$SZ" == "25600" ]] || fail "face.rgb565 size $SZ"
 [[ "$changed" == 1 ]] || fail "thinking bar did not change LCD"
-pass "thinking bar blit 184x96"
+pass "thinking bar blit 160x80"
 
 echo "== no OpenAI key on robot =="
 robot_ssh '/data/victor/victor-agent status' | grep -q 'openai_key_on_robot=false' || fail "openai key on robot"
