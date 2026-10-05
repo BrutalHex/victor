@@ -2,14 +2,14 @@ package audio
 
 import "testing"
 
-func TestMixMonoDropsLoudest(t *testing.T) {
+func TestMixMonoKeepsQuietest(t *testing.T) {
 	in := []int16{100, 200, 300, 400, 10, 20, 30, 40}
 	got := MixMono(in)
 	if len(got) != 2 {
 		t.Fatalf("len %d", len(got))
 	}
-	// Channel 3 is the grind (400, 40). Average of the other three.
-	if got[0] != 200 || got[1] != 20 {
+	// Channel 0 is quietest (100, 10). The loud channels are grind.
+	if got[0] != 100 || got[1] != 10 {
 		t.Fatalf("%v", got)
 	}
 	e := Energies(in)
