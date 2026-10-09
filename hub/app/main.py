@@ -223,6 +223,9 @@ def voice_loop() -> None:
             STATE["voice_busy"] = False
             STATE["last_transcript"] = text
             STATE["last_reply"] = reply
+            STATE["last_searched"] = bool(getattr(VOICE, "last_searched", False))
+            STATE["last_via"] = getattr(VOICE, "last_via", "")
+            STATE["last_chat_ms"] = getattr(VOICE, "last_chat_ms", 0)
         if audio:
             queue_cmd(CMD_SPEAK, audio)
         queue_cmd(CMD_FACEUI, b"idle|")

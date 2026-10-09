@@ -161,5 +161,108 @@ class Dedupe(unittest.TestCase):
         # agent restart: counter starts again
         self.assertTrue(d.first(1))
 
+
+class DateAndSearch(unittest.TestCase):
+    def setUp(self):
+        self._env = {k: os.environ.get(k) for k in ("HUB_TZ", "HUB_CITY", "HUB_COUNTRY", "HUB_WEB_SEARCH")}
+
+    def tearDown(self):
+        for k, v in self._env.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+
+    def test_date_context_local_zone(self):
+        import datetime as dt
+        from voice import now_context, system_prompt
+        os.environ["HUB_TZ"] = "Europe/Berlin"
+        os.environ.pop("HUB_CITY", None)
+        os.environ.pop("HUB_COUNTRY", None)
+        utc = dt.datetime(2026, 10, 9, 22, 30, tzinfo=dt.timezone.utc)  # 00:30 Saturday in Berlin
+        ctx = now_context(utc)
+        self.assertIn("Saturday, 10 October 2026, 00:30", ctx)
+        self.assertIn("UTC+02:00", ctx)
+        self.assertIn("2026-10-10", ctx)
+        winter = now_context(dt.datetime(2026, 12, 24, 12, 0, tzinfo=dt.timezone.utc))
+        self.assertIn("UTC+01:00", winter)
+        self.assertIn("Thursday, 24 December 2026, 13:00", winter)
+        os.environ["HUB_CITY"] = "Berlin"
+        self.assertIn("The robot is in Berlin.", system_prompt(utc))
+
+    def test_bad_zone_falls_back_to_utc(self):
+        import datetime as dt
+        from voice import now_context
+        os.environ["HUB_TZ"] = "Mars/Olympus"
+        self.assertIn("(UTC, UTC+00:00)", now_context(dt.datetime(2026, 1, 1, tzinfo=dt.timezone.utc)))
+
+    def test_speakable_strips_citations(self):
+        from voice import speakable
+        raw = (
+            "**Berlin** is 14°C and cloudy right now "
+            "([wetter.com](https://www.wetter.com/berlin?utm_source=openai)). "
+            "See [DWD](https://dwd.de) or https://example.com/x for more 【3†source】 [1]."
+        )
+        out = speakable(raw)
+        self.assertEqual(out, "Berlin is 14°C and cloudy right now. See DWD or for more.")
+        for bad in ("http", "www", "**", "【", "[1]", "("):
+            self.assertNotIn(bad, out)
+
+    def test_responses_body_parsing(self):
+        from voice import _responses_text
+        body = {"output": [
+            {"type": "web_search_call", "status": "completed"},
+            {"type": "message", "content": [{"type": "output_text", "text": "It is sunny.", "annotations": []}]},
+        ]}
+        self.assertEqual(_responses_text(body), ("It is sunny.", True))
+        self.assertEqual(_responses_text({"output": []}), ("", False))
+
+    def test_search_failure_falls_back_to_chat(self):
+        import urllib.error
+        v = Voice()
+        v.key = "test"
+        v.web_search = True
+        calls = []
+
+        def fake_post(url, payload, timeout):
+            calls.append(url)
+            if url.endswith("/responses"):
+                raise urllib.error.URLError("timed out")
+            self.assertIn("Local clock:", payload["messages"][0]["content"])
+            return {"choices": [{"message": {"content": "Today is Friday [1]."}}]}
+
+        v._post = fake_post
+        self.assertEqual(v.chat("what day is it"), "Today is Friday.")
+        self.assertEqual(calls[0][-10:], "/responses")
+        self.assertTrue(calls[1].endswith("/chat/completions"))
+        self.assertEqual(v.last_via, "chat")
+        self.assertFalse(v.last_searched)
+
+    def test_search_reply_used_and_flagged(self):
+        v = Voice()
+        v.key = "test"
+        v.web_search = True
+
+        def fake_post(url, payload, timeout):
+            self.assertTrue(url.endswith("/responses"))
+            self.assertEqual(payload["tools"][0]["type"], "web_search")
+            self.assertIn("Local clock:", payload["instructions"])
+            return {"output": [
+                {"type": "web_search_call"},
+                {"type": "message", "content": [{"type": "output_text", "text": "Rain in Berlin ([x](https://x.de))."}]},
+            ]}
+
+        v._post = fake_post
+        self.assertEqual(v.chat("weather in Berlin"), "Rain in Berlin.")
+        self.assertTrue(v.last_searched)
+        self.assertEqual(v.last_via, "responses+web_search")
+
+    def test_search_off_uses_chat_only(self):
+        v = Voice()
+        v.key = "test"
+        v.web_search = False
+        v._post = lambda url, payload, timeout: {"choices": [{"message": {"content": "Hi."}}]}
+        self.assertEqual(v.chat("hi"), "Hi.")
+
 if __name__ == "__main__":
     unittest.main()

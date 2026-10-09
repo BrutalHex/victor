@@ -16,14 +16,18 @@ voice through.
 
 from __future__ import annotations
 
+import datetime as _dt
 import io
 import json
 import math
 import os
+import re
 import struct
+import time
 import urllib.error
 import urllib.request
 import wave
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 RATE = 16000
 TTS_RATE = 24000  # OpenAI response_format=pcm
@@ -131,6 +135,93 @@ def _http_error(where: str, exc: BaseException) -> None:
     print(f"voice {where} error {exc} {body}", flush=True)
 
 
+SYSTEM_PROMPT = (
+    "You are Vector, a small desk robot that answers out loud. "
+    "Reply in one or two short spoken sentences, under 30 words. "
+    "Plain text only: no markdown, no lists, no URLs, no citations or source names in brackets. "
+    "For today's date, the weekday or the time, use the local clock below; never say you cannot know it. "
+    "For anything current (weather, news, scores, prices, opening hours, recent events) use web search "
+    "when it is available, then answer with the key fact."
+)
+
+
+def hub_tz() -> tuple[_dt.tzinfo, str]:
+    name = (os.environ.get("HUB_TZ") or "Europe/Berlin").strip()
+    try:
+        return ZoneInfo(name), name
+    except (ZoneInfoNotFoundError, ValueError):
+        print(f"voice HUB_TZ {name!r} unknown; using UTC", flush=True)
+        return _dt.timezone.utc, "UTC"
+
+
+def now_context(now: _dt.datetime | None = None) -> str:
+    """Local clock for the model, computed per turn. now is aware or UTC-naive."""
+    tz, name = hub_tz()
+    if now is None:
+        now = _dt.datetime.now(_dt.timezone.utc)
+    elif now.tzinfo is None:
+        now = now.replace(tzinfo=_dt.timezone.utc)
+    local = now.astimezone(tz)
+    off = local.strftime("%z")
+    off = f"UTC{off[:3]}:{off[3:]}" if off else "UTC"
+    text = (
+        f"Local clock: {local.strftime('%A')}, {local.day} {local.strftime('%B %Y')}, "
+        f"{local.strftime('%H:%M')} ({name}, {off}). ISO date {local.date().isoformat()}."
+    )
+    city = os.environ.get("HUB_CITY", "").strip()
+    country = os.environ.get("HUB_COUNTRY", "").strip()
+    if city or country:
+        text += " The robot is in " + ", ".join(x for x in (city, country) if x) + "."
+    return text
+
+
+def system_prompt(now: _dt.datetime | None = None) -> str:
+    return SYSTEM_PROMPT + "\n" + now_context(now)
+
+
+_MD_LINK = re.compile(r"\[([^\]]*)\]\((?:https?://|www\.)[^)]*\)")
+_PAREN_SRC = re.compile(r"\(\s*(?:\[[^\]]*\]\([^)]*\)[\s,;]*)+\)")
+_URL = re.compile(r"(?:https?://|www\.)\S+")
+_BRACKET_CITE = re.compile(r"【[^】]*】|\[\d+(?:,\s*\d+)*\]")
+_EMPTY_PAREN = re.compile(r"\(\s*[,;]?\s*\)")
+
+
+def speakable(text: str) -> str:
+    """Strip citations, URLs and markdown so TTS reads only the answer."""
+    if not text:
+        return ""
+    t = _PAREN_SRC.sub("", text)
+    t = _MD_LINK.sub(r"\1", t)
+    t = _BRACKET_CITE.sub("", t)
+    t = _URL.sub("", t)
+    t = re.sub(r"\*\*|__|`|^#+\s*|^\s*[-*•]\s+", "", t, flags=re.M)
+    t = _EMPTY_PAREN.sub("", t)
+    t = re.sub(r"\s+([.,;:!?])", r"\1", t)
+    t = re.sub(r"\s+", " ", t).strip()
+    return t
+
+
+def _env_on(name: str, default: str = "1") -> bool:
+    return os.environ.get(name, default).strip().lower() not in ("0", "false", "no", "off", "")
+
+
+def _responses_text(data: dict) -> tuple[str, bool]:
+    """Pull output text and whether a web_search_call ran from a Responses API body."""
+    searched = False
+    parts: list[str] = []
+    for item in data.get("output") or []:
+        kind = item.get("type")
+        if kind == "web_search_call":
+            searched = True
+        elif kind == "message":
+            for c in item.get("content") or []:
+                if c.get("type") == "output_text" and c.get("text"):
+                    parts.append(c["text"])
+    if not parts and isinstance(data.get("output_text"), str):
+        parts.append(data["output_text"])
+    return " ".join(parts).strip(), searched
+
+
 class Voice:
     def __init__(self) -> None:
         self.buf = bytearray()
@@ -145,6 +236,13 @@ class Voice:
         self.stt_model = os.environ.get("OPENAI_TRANSCRIBE_MODEL", "gpt-4o-mini-transcribe")
         self.tts_model = os.environ.get("OPENAI_TTS_MODEL", "gpt-4o-mini-tts")
         self.voice = os.environ.get("OPENAI_VOICE", "alloy")
+        # Live web via the Responses API web_search tool (gpt-4o-mini supports it).
+        self.web_search = _env_on("HUB_WEB_SEARCH", "1")
+        self.search_model = os.environ.get("HUB_SEARCH_MODEL", "") or self.model
+        self.search_timeout = float(os.environ.get("HUB_SEARCH_TIMEOUT", "15"))
+        self.last_searched = False
+        self.last_via = ""
+        self.last_chat_ms = 0
         self.last_rms = 0
         self.noise = 200.0
         self.cal_frames = 0
@@ -229,31 +327,72 @@ class Voice:
             return ""
 
     def chat(self, text: str) -> str:
+        """One spoken reply. Web search (Responses API) first, plain chat as fallback."""
         if not self.key or not text:
             return ""
-        payload = json.dumps(
-            {
-                "model": self.model,
-                "messages": [
-                    {
-                        "role": "system",
-                        "content": "You are Vector, a small desk robot. Replies under 12 words. No markdown.",
-                    },
-                    {"role": "user", "content": text},
-                ],
-            }
-        ).encode()
+        t0 = time.monotonic()
+        self.last_searched = False
+        self.last_via = ""
+        reply = ""
+        if self.web_search:
+            reply, self.last_searched = self._chat_web(text)
+            if reply:
+                self.last_via = "responses+web_search"
+        if not reply:
+            reply = self._chat_plain(text)
+            if reply:
+                self.last_via = "chat"
+        self.last_chat_ms = int((time.monotonic() - t0) * 1000)
+        reply = speakable(reply)
+        print(f"voice chat via={self.last_via or 'none'} searched={self.last_searched} ms={self.last_chat_ms}", flush=True)
+        return reply
+
+    def _post(self, url: str, payload: dict, timeout: float) -> dict:
         req = urllib.request.Request(
-            "https://api.openai.com/v1/chat/completions",
-            data=payload,
+            url,
+            data=json.dumps(payload).encode(),
             headers={"Authorization": f"Bearer {self.key}", "Content-Type": "application/json"},
             method="POST",
         )
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return json.loads(resp.read().decode())
+
+    def _chat_web(self, text: str) -> tuple[str, bool]:
+        tz_name = hub_tz()[1]
+        tool: dict = {"type": "web_search", "search_context_size": "low"}
+        loc = {"type": "approximate", "timezone": tz_name}
+        if os.environ.get("HUB_CITY", "").strip():
+            loc["city"] = os.environ["HUB_CITY"].strip()
+        if os.environ.get("HUB_COUNTRY", "").strip():
+            loc["country"] = os.environ["HUB_COUNTRY"].strip()
+        tool["user_location"] = loc
+        payload = {
+            "model": self.search_model,
+            "instructions": system_prompt(),
+            "input": text,
+            "tools": [tool],
+            "tool_choice": "auto",
+            "max_output_tokens": 300,
+        }
         try:
-            with urllib.request.urlopen(req, timeout=20) as resp:
-                data = json.loads(resp.read().decode())
+            data = self._post("https://api.openai.com/v1/responses", payload, self.search_timeout)
+            return _responses_text(data)
+        except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, OSError, KeyError, TypeError) as exc:
+            _http_error("web_search", exc)
+            return "", False
+
+    def _chat_plain(self, text: str) -> str:
+        payload = {
+            "model": self.model,
+            "messages": [
+                {"role": "system", "content": system_prompt()},
+                {"role": "user", "content": text},
+            ],
+        }
+        try:
+            data = self._post("https://api.openai.com/v1/chat/completions", payload, 20)
             return data["choices"][0]["message"]["content"].strip()
-        except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, OSError, KeyError, IndexError) as exc:
+        except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, OSError, KeyError, IndexError, TypeError) as exc:
             _http_error("chat", exc)
             return ""
 

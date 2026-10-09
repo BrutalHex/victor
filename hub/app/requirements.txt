@@ -4,3 +4,4 @@ numpy>=1.26
 onnxruntime>=1.17
 Pillow>=10.0
 onnx>=1.16
+tzdata>=2024.1  # zoneinfo for HUB_TZ in python:slim
