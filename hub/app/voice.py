@@ -241,6 +241,24 @@ def speakable(text: str) -> str:
     return t
 
 
+VECTOR_STYLE = (
+    "You are Vector, a small cheerful desk robot. Speak clearly in a bright, friendly, "
+    "slightly clipped and evenly paced voice with a hint of robotic precision; curious and "
+    "upbeat, never breathy or whispery. Medium-slow pace."
+)
+
+
+def vector_voice(raw24k: bytes) -> bytes:
+    """OpenAI 24 kHz PCM -> Vector-style 16 kHz PCM. Falls back to a plain
+    resample if numpy/scipy are missing (HUB_VOICE_FX only needs them)."""
+    try:
+        import voicefx
+    except ImportError:
+        return pcm16k(raw24k, TTS_RATE)
+    pcm = voicefx.pcm_vectorize(raw24k, TTS_RATE) if _env_on("HUB_VOICE_VECTOR", "1") else raw24k
+    return voicefx.resample(pcm, TTS_RATE, RATE)
+
+
 REPLY_MAX_CHARS = int(os.environ.get("HUB_REPLY_MAX_CHARS", "300"))
 MAX_SPEAK_S = 55  # the robot link drops commands over 2 MiB (~65 s of 16 kHz PCM)
 
@@ -302,7 +320,13 @@ class Voice:
         self.api = Api(self.key)
         self.last_stt: dict = {}
         self.tts_model = os.environ.get("OPENAI_TTS_MODEL", "gpt-4o-mini-tts")
-        self.voice = os.environ.get("OPENAI_VOICE", "alloy")
+        # Vector imitation: OpenAI voice + voicefx chain (pitch/formant up,
+        # comb, small-speaker EQ). HUB_VOICE picks the OpenAI voice (the old
+        # OPENAI_VOICE is ignored so an existing .env can't undo the default).
+        self.voice = os.environ.get("HUB_VOICE", "").strip() or "echo"
+        self.tts_instructions = os.environ.get("HUB_VOICE_INSTRUCTIONS", VECTOR_STYLE)
+        self.last_tts_raw = b""
+        self.last_fx_ms = 0
         # Live web via the Responses API web_search tool (gpt-4o-mini supports it).
         self.web_search = _env_on("HUB_WEB_SEARCH", "1")
         self.search_model = os.environ.get("HUB_SEARCH_MODEL", "") or self.model
@@ -468,15 +492,20 @@ class Voice:
             return b""
         if not self.key:
             return tone()
-        payload = json.dumps(
-            {"model": self.tts_model, "voice": self.voice, "input": text, "response_format": "pcm"}
-        ).encode()
+        body = {"model": self.tts_model, "voice": self.voice, "input": text, "response_format": "pcm"}
+        if self.tts_instructions and self.tts_model.startswith("gpt-4o"):
+            body["instructions"] = self.tts_instructions
         try:
-            pcm = pcm16k(self.api.post("/v1/audio/speech", payload, "application/json", 30), TTS_RATE)
-            return pcm[: MAX_SPEAK_S * RATE * 2]
+            raw = self.api.post("/v1/audio/speech", json.dumps(body).encode(), "application/json", 30)
         except (urllib.error.URLError, TimeoutError, OSError) as exc:
             _http_error("tts", exc)
             return b""
+        self.last_tts_raw = raw
+        t = time.time()
+        pcm = vector_voice(raw)
+        self.last_fx_ms = int((time.time() - t) * 1000)
+        print(f"tts fx ms={self.last_fx_ms} in_s={len(raw) / (2 * TTS_RATE):.2f} out_s={len(pcm) / (2 * RATE):.2f}", flush=True)
+        return pcm[: MAX_SPEAK_S * RATE * 2]
 
 
 def _wav_wrap(pcm: bytes, rate: int = RATE) -> bytes:

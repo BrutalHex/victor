@@ -485,5 +485,71 @@ class SttAndReply(unittest.TestCase):
             apimod.http.client.HTTPSConnection = saved
 
 
+try:
+    import numpy as _np  # noqa: F401
+    import scipy  # noqa: F401
+    _HAVE_FX = True
+except ImportError:
+    _HAVE_FX = False
+
+
+@unittest.skipUnless(_HAVE_FX, "numpy/scipy not installed (they are in the hub image)")
+class VectorVoice(unittest.TestCase):
+    def harmonic(self, f0=120.0, secs=2.0, sr=24000):
+        import numpy as np
+        t = np.arange(int(sr * secs)) / sr
+        x = sum(np.sin(2 * np.pi * f0 * k * t) / k for k in range(1, 15))
+        return 0.9 * x / np.max(np.abs(x))
+
+    def cfg(self, **kw):
+        import voicefx
+        c = voicefx.settings()
+        c.update(pitch=4.0, tempo=0.94, fx=True, ring_mix=0.0)
+        c.update(kw)
+        return c
+
+    def test_pitch_raised_by_semitones(self):
+        import voicefx
+        x = self.harmonic(120)
+        for st in (3.0, 4.0, 6.0):
+            y = voicefx.vectorize(x, 24000, self.cfg(pitch=st))
+            want = 120 * 2 ** (st / 12)
+            got = voicefx.f0_median(y, 24000)
+            self.assertAlmostEqual(got, want, delta=want * 0.03, msg=f"{st} st: {got:.1f} Hz vs {want:.1f}")
+
+    def test_length_follows_tempo_and_no_clipping(self):
+        import numpy as np
+        import voicefx
+        x = self.harmonic(120, 3.0)
+        for tempo in (0.94, 1.0, 1.1):
+            y = voicefx.vectorize(x, 24000, self.cfg(tempo=tempo))
+            self.assertAlmostEqual(len(y) / len(x), 1 / tempo, delta=0.03)
+            self.assertLessEqual(float(np.max(np.abs(y))), 0.891)
+        pcm = voicefx.pcm_vectorize((x * 32767).astype("<i2").tobytes())
+        s = np.frombuffer(pcm, dtype="<i2")
+        self.assertLess(int(np.max(np.abs(s))), 32767)
+
+    def test_fx_off_still_shifts_and_resample_rate(self):
+        import voicefx
+        x = self.harmonic(150, 1.0)
+        y = voicefx.vectorize(x, 24000, self.cfg(fx=False, pitch=0.0, tempo=1.0))
+        self.assertAlmostEqual(voicefx.f0_median(y, 24000), 150, delta=3)
+        pcm = (x * 20000).astype("<i2").tobytes()
+        out = voicefx.resample(pcm, 24000, 16000)
+        self.assertEqual(len(out) // 2, len(pcm) // 2 * 2 // 3)
+
+    def test_tts_returns_16k_capped(self):
+        import voice
+        v = voice.Voice()
+        v.key = "k"
+        x = self.harmonic(120, 1.5)
+        raw = (x * 20000).astype("<i2").tobytes()
+        v.api.post = lambda path, body, ctype, timeout: raw
+        pcm = v.tts("Hello there.")
+        secs = len(pcm) / 2 / voice.RATE
+        self.assertAlmostEqual(secs, 1.5 / 0.94, delta=0.1)
+        self.assertLessEqual(len(pcm), voice.MAX_SPEAK_S * voice.RATE * 2)
+
+
 if __name__ == "__main__":
     unittest.main()
