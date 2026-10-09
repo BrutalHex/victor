@@ -20,6 +20,10 @@ chk "no HCI device up" "! ls /sys/class/bluetooth/hci* >/dev/null 2>&1 || ! grep
 S=$(tr " " "\n" </proc/cmdline | sed -n "s/^androidboot.slot_suffix=_//p")
 chk "A/B slot $S marked successful" "/bin/bootctl-anki $S status $S | grep -q \"successful: 1\""
 chk "victor-agent active" "systemctl is-active -q victor-agent.service"
+chk "vic-anim stopped (agent owns the face)" "! systemctl is-active -q vic-anim.service"
+chk "face panel initialised by agent" "grep -q ready=true /data/victor/face.txt"
+chk "face backlight on" "[ \$(cat /sys/class/leds/face-backlight-left/brightness) -gt 0 ]"
+chk "mic gain levelled" "grep -q gain= /data/victor/mics.txt"
 chk "/data mounted exec" "! grep -E \" /data \" /proc/mounts | grep -q noexec"
 chk "hub hostname configured" "grep -q HUB_HOST= /data/victor/hub.env"
 chk "no OpenAI key on robot" "! grep -rqs -e OPENAI_API_KEY=. -e sk-proj- /data/victor /etc"

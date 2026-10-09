@@ -259,9 +259,17 @@ func Blit(frame []byte) {
 	if len(frame) != Bytes {
 		return
 	}
-	_ = os.MkdirAll("/data/victor", 0755)
-	_ = os.WriteFile("/data/victor/face.rgb565", frame, 0644)
-	setBacklight(10)
+	// The copy on /data is for debugging; once a second, not every frame
+	// (25 KB × 6-12 fps of eMMC writes).
+	if time.Since(lastCopy) >= time.Second {
+		_ = os.MkdirAll("/data/victor", 0755)
+		_ = os.WriteFile("/data/victor/face.rgb565", frame, 0644)
+		lastCopy = time.Now()
+	}
+	if time.Since(lastBacklight) >= 5*time.Second {
+		setBacklight(10)
+		lastBacklight = time.Now()
+	}
 	if err := writeSPI(frame); err != nil {
 		fmt.Fprintf(os.Stderr, "face spi: %v\n", err)
 		return
@@ -273,8 +281,10 @@ func Blit(frame []byte) {
 }
 
 var (
-	faceLogged bool
-	framesSent uint64
+	faceLogged    bool
+	framesSent    uint64
+	lastCopy      time.Time
+	lastBacklight time.Time
 )
 
 // Boot is the daemon's panel bring-up. vic-anim owns the panel on a stock
