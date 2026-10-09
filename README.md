@@ -60,10 +60,9 @@ ssh -i keys/ssh_root_key \
 Build the OTA and flash it (BLE, once, robot on charger in recovery) — full steps in [deploy/OTA.md](deploy/OTA.md):
 
 ```bash
-make ota-check
-make ota OTA_ARGS="--from-robot"          # or --boot boot.img --sysfs victor-image.ext4
-./deploy/first-flash --pin … --ssid … --password … --ota-file dist/victor.ota
-./deploy/verify-first-boot.sh
+make ota-deps      # once
+make release       # build victor.ota + rollback.ota from the robot, flash via recovery, verify
+make help          # all targets
 ```
 
 First boot leaves SSH on so `ble-bootstrap` can finish. After that, CHARGE-LATCH owns port 22.

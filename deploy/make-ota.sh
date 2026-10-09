@@ -460,6 +460,11 @@ want_file /etc/victor-release 644
 want_link "${ETCSYS}/${SSH_WANTS}/${SSH_UNIT}" "${UNITDIR}/${SSH_UNIT}"
 [[ "$(dfs_link "${ETCSYS}/${SSH_UNIT}")" == "/dev/null" ]] && vfail "${SSH_UNIT} is masked"
 for u in "${BLE_UNITS[@]}"; do want_link "${ETCSYS}/${u}" /dev/null; done
+# Image recognition runs on the hub; the robot must keep its camera stack.
+CAMERA_UNITS="$(dfs "ls -p ${UNITDIR}" | awk -F/ '$6 ~ /camera/ {print $6}')"
+for u in $CAMERA_UNITS; do
+  [[ "$(dfs_link "${ETCSYS}/${u}")" != "/dev/null" ]] || vfail "camera unit $u is masked"
+done
 [[ -z "$(dfs_type "${ETCSYS}/victor-agent.service")" ]] || vfail "stale ${ETCSYS}/victor-agent.service still present"
 cmp -s "$AGENT_BIN" <(dfs "cat /usr/bin/victor-agent") || vfail "victor-agent content mismatch"
 cmp -s "${OV}/authorized_keys" <(dfs "cat /usr/share/victor/authorized_keys") || vfail "authorized_keys mismatch"
@@ -485,7 +490,7 @@ if LC_ALL=C grep -aqE 'OPENAI_API_KEY=[A-Za-z0-9_-]{8,}|sk-proj-[A-Za-z0-9_-]{20
   die "an OpenAI-looking key is inside the system image. OpenAI stays on the hub."
 fi
 if [[ "$RAW" == 0 ]]; then
-  log "verified: agent, units, SSH (${SSH_UNIT}) on, BLE masked, pubkey, no OpenAI key"
+  log "verified: agent, units, SSH (${SSH_UNIT}) on, BLE masked, camera units untouched (${CAMERA_UNITS:-none found}), pubkey, no OpenAI key"
 fi
 
 # ---------------------------------------------------------------- pack
@@ -542,9 +547,8 @@ sha256sum "$OUT" | awk '{print $1}' > "${OUT}.sha256"
 log "wrote $OUT ($(wc -c < "$OUT") bytes, sha256 $(cat "${OUT}.sha256"))"
 cat <<NEXT
 
-Next (robot on the charger, in recovery; see deploy/OTA.md):
-  ./deploy/first-flash --pin <PIN> --ssid <2.4GHz SSID> --password <wifi pass> --ota-file $OUT
-or serve it yourself and pass the URL (HTTP, not HTTPS):
+Next (see deploy/OTA.md):
+  make flash                 # needs dist/rollback.ota too (make ota-rollback); asks before flashing
+or serve it yourself (HTTP, not HTTPS) and run ota-start from recovery:
   ./deploy/serve-ota.sh $OUT
-  ./deploy/first-flash --pin <PIN> --ssid <SSID> --password <pass> --url http://<this-host-lan-ip>:8088/$(basename "$OUT")
 NEXT
