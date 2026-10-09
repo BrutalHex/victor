@@ -255,7 +255,7 @@ class DateAndSearch(unittest.TestCase):
         v._post = fake_post
         self.assertEqual(v.chat("weather in Berlin"), "Rain in Berlin.")
         self.assertTrue(v.last_searched)
-        self.assertEqual(v.last_via, "responses+web_search")
+        self.assertEqual(v.last_via, "responses")
 
     def test_search_off_uses_chat_only(self):
         v = Voice()

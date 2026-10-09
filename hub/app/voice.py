@@ -337,7 +337,7 @@ class Voice:
         if self.web_search:
             reply, self.last_searched = self._chat_web(text)
             if reply:
-                self.last_via = "responses+web_search"
+                self.last_via = "responses"
         if not reply:
             reply = self._chat_plain(text)
             if reply:
