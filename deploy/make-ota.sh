@@ -426,6 +426,39 @@ for u in "${BLE_UNITS[@]}"; do
   link "${ETCSYS}/${u}" /dev/null
 done
 
+# Units that hard-require a BLE unit would fail once BLE is masked. On Vector
+# that is boot-successful.service (Requires=ankibluetoothd), which runs
+# `bootctl-anki <slot> mark_successful`; without it the new slot is never
+# marked successful and the bootloader eventually falls back to the old slot.
+# Re-point such units at SSH + victor-agent instead (copy in /etc wins).
+BLE_RE='(ankibluetoothd|btproperty|vic-switchboard|bluetooth)\.service'
+DEP_DIR="${STAGE}/units"
+mkdir -p "${DEP_DIR}/etc" "${DEP_DIR}/lib"
+debugfs -R "rdump ${ETCSYS} ${DEP_DIR}/etc" "$IMG" >/dev/null 2>&1 || true
+debugfs -R "rdump ${UNITDIR} ${DEP_DIR}/lib" "$IMG" >/dev/null 2>&1 || true
+EB="${DEP_DIR}/etc/$(basename "$ETCSYS")"
+LB="${DEP_DIR}/lib/$(basename "$UNITDIR")"
+REWIRED=()
+while IFS= read -r u; do
+  [[ -n "$u" ]] || continue
+  case " ${BLE_UNITS[*]} " in *" $u "*) continue ;; esac
+  src="${EB}/${u}"
+  [[ -f "$src" ]] || src="${LB}/${u}"
+  [[ -f "$src" ]] || continue
+  grep -qE "^(Requires|BindsTo|Requisite)=.*${BLE_RE}" "$src" || continue
+  sed -E -e "/^(Requires|BindsTo|Requisite|After|Wants)=/{s/[[:space:]]*${BLE_RE}//g; /^[A-Za-z]+=[[:space:]]*$/d;}" \
+    -e '/^\[Unit\]/a After=sshd.socket victor-agent.service' "$src" > "${OV}/rewired-${u}"
+  put "${OV}/rewired-${u}" "${ETCSYS}/${u}" 644
+  # enablement copies that are regular files would keep the old dependency
+  while IFS= read -r w; do
+    link "${ETCSYS}/${w#./}" "${ETCSYS}/${u}"
+  done < <(cd "$EB" 2>/dev/null && find . -path "*.wants/${u}" -type f)
+  REWIRED+=("$u")
+done < <(grep -lE "^(Requires|BindsTo|Requisite)=.*${BLE_RE}" "$EB"/*.service "$LB"/*.service 2>/dev/null | xargs -r -n1 basename | sort -u)
+if (( ${#REWIRED[@]} )); then
+  log "re-pointed units that required BLE: ${REWIRED[*]}"
+fi
+
 # free space check (rough: sum of files + 1 MiB)
 NEED=$(( $(cat "$AGENT_BIN" "${OV}"/* 2>/dev/null | wc -c) + 1048576 ))
 read -r FREE_BLOCKS BLOCK_SIZE < <(dumpe2fs -h "$IMG" 2>/dev/null | awk -F: '/^Free blocks/{f=$2} /^Block size/{b=$2} END{gsub(/ /,"",f); gsub(/ /,"",b); print f, b}')
@@ -465,6 +498,10 @@ for u in "${BLE_UNITS[@]}"; do want_link "${ETCSYS}/${u}" /dev/null; done
 CAMERA_UNITS="$(dfs "ls -p ${UNITDIR}" | awk -F/ '$6 ~ /camera/ {print $6}')"
 for u in $CAMERA_UNITS; do
   [[ "$(dfs_link "${ETCSYS}/${u}")" != "/dev/null" ]] || vfail "camera unit $u is masked"
+done
+for u in "${REWIRED[@]}"; do
+  dfs "cat ${ETCSYS}/${u}" | grep -qE "^(Requires|BindsTo|Requisite)=.*${BLE_RE}" && vfail "$u still requires a masked BLE unit"
+  dfs "cat ${ETCSYS}/${u}" | grep -q '^After=sshd.socket victor-agent.service' || vfail "$u not re-pointed"
 done
 [[ -z "$(dfs_type "${ETCSYS}/victor-agent.service")" ]] || vfail "stale ${ETCSYS}/victor-agent.service still present"
 cmp -s "$AGENT_BIN" <(dfs "cat /usr/bin/victor-agent") || vfail "victor-agent content mismatch"

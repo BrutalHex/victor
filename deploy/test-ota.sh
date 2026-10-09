@@ -32,6 +32,10 @@ done
 # stale override left by deploy/sync-agent.sh on the running robot
 printf '[Service]\nExecStart=/data/victor/victor-agent run\n' > "$T/root/etc/systemd/system/victor-agent.service"
 ln -s /lib/systemd/system/ankibluetoothd.service "$T/root/etc/systemd/system/multi-user.target.wants/ankibluetoothd.service"
+# Vector: boot-successful marks the A/B slot good but Requires=ankibluetoothd
+printf '[Unit]\nDescription=Marks boot as successful\nAfter=ankibluetoothd.service\nRequires=ankibluetoothd.service\n[Service]\nType=oneshot\nExecStart=/etc/initscripts/boot-successful\n' \
+  > "$T/root/etc/systemd/system/boot-successful.service"
+cp "$T/root/etc/systemd/system/boot-successful.service" "$T/root/etc/systemd/system/multi-user.target.wants/boot-successful.service"
 mkfs.ext4 -q -F -E root_owner=0:0 -L system -d "$T/root" "$T/sysfs.img" 64M
 SYS_IN_SHA="$(sha256sum "$T/sysfs.img" | awk '{print $1}')"
 { printf 'ANDROID!'; head -c 262136 /dev/urandom; } > "$T/boot.img"
@@ -131,6 +135,14 @@ done
 d 'cat /usr/bin/victor-ble-mask' | grep -q 'rfkill block bluetooth' || fail "rfkill"
 d 'cat /usr/bin/victor-firstboot' | grep -q 'ble.disabled' || fail "ble.disabled"
 pass "BLE masked (ankibluetoothd, vic-switchboard, btproperty, bluetooth), rfkill + ble.disabled"
+
+BS="$(d 'cat /etc/systemd/system/boot-successful.service')"
+grep -q ankibluetoothd <<<"$BS" && fail "boot-successful still depends on ankibluetoothd"
+grep -qx 'After=sshd.socket victor-agent.service' <<<"$BS" || fail "boot-successful not re-pointed"
+grep -q 'ExecStart=/etc/initscripts/boot-successful' <<<"$BS" || fail "boot-successful body lost"
+[[ "$(linkof /etc/systemd/system/multi-user.target.wants/boot-successful.service)" == /etc/systemd/system/boot-successful.service ]] \
+  || fail "boot-successful wants copy not replaced by a symlink"
+pass "boot-successful (A/B mark_successful) no longer requires the masked ankibluetoothd"
 
 # image recognition: camera stack untouched, agent streams VCT1 VIDEO to the hub
 [[ -n "$(st /lib/systemd/system/mm-anki-camera.service)" ]] || fail "camera unit removed"
