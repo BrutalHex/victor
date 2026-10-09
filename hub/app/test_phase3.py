@@ -906,6 +906,11 @@ class StockIntents(unittest.TestCase):
         ("اسم من آنا است", "intent_names_username_extend", "fa"),
         ("Hello", "intent_greeting_hello", "en"),
         ("How old are you?", "intent_character_age", "en"),
+        ("Okay Victor, look at me now.", "intent_imperative_lookatme", "en"),
+        ("Turn left, please, Vector.", "intent_imperative_turnleft", "en"),
+        ("Vektor, schau mich an.", "intent_imperative_lookatme", "de"),
+        ("ویکتور بیا اینجا", "intent_imperative_come", "fa"),
+        ("And dance for me.", "intent_imperative_dance", "en"),
     ]
     CHAT = ["What's my name?", "اسم من چیه؟", "Wie heiße ich?", "What's the weather like today?",
             "Tell me a joke", "hello how are you doing today", "Can you tell me about the time of the Romans?",

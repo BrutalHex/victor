@@ -20,13 +20,15 @@ from dataclasses import dataclass, field
 _FA_MAP = str.maketrans({"ي": "ی", "ك": "ک", "\u200c": " ", "ۀ": "ه", "ة": "ه", "أ": "ا", "إ": "ا", "آ": "ا"})
 _FA_DIGITS = str.maketrans("۰۱۲۳۴۵۶۷۸۹٠١٢٣٤٥٦٧٨٩", "01234567890123456789")
 _LEAD = re.compile(
-    r"^(?:(?:hey|hi|ok|okay|hallo|he|ey)\s+)?(?:vector|victor|wektor|ویکتور|وکتور)\b[\s,]*"
+    r"^(?:(?:hey|hi|ok|okay|hallo|he|ey)\s+)?(?:vector|victor|vektor|viktor|wektor|ویکتور|وکتور)\b[\s,]*"
 )
 _POLITE = re.compile(
     r"\b(?:please|pls|bitte|mal|doch|can you|could you|would you|will you|kannst du|könntest du|"
     r"لطفا|لطفاً|میشه|می شه|میتونی|می تونی)\b"
 )
-_TAIL = re.compile(r"[\s,]*(?:vector|victor|ویکتور|وکتور)$")
+_TAIL = re.compile(r"[\s,]*(?:vector|victor|vektor|viktor|ویکتور|وکتور)$")
+_FILLER_LEAD = re.compile(r"^(?:(?:ok|okay|so|now|um|uh|and|also|hey|alright|all right|also|jetzt|und|also|خب|حالا|و)\s+)+")
+_FILLER_TAIL = re.compile(r"(?:\s+(?:now|again|for me|right now|real quick|jetzt|nochmal|mal|الان|دوباره))+$")
 
 
 def normalise(text: str) -> str:
@@ -37,7 +39,13 @@ def normalise(text: str) -> str:
     t = _LEAD.sub("", t)
     t = _TAIL.sub("", t)
     t = _POLITE.sub(" ", t)
-    return re.sub(r"\s+", " ", t).strip()
+    t = re.sub(r"\s+", " ", t).strip()
+    t = _FILLER_LEAD.sub("", t)
+    t = _LEAD.sub("", t)  # "okay vector, ..."
+    t = _TAIL.sub("", t)
+    if t not in ("time",):
+        t = _FILLER_TAIL.sub("", t)
+    return t.strip()
 
 
 # ---------------------------------------------------------------- intents

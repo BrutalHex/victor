@@ -327,8 +327,17 @@ func runDaemon() int {
 			default:
 			}
 			if runner.Active() {
-				abort := reason == veto.Battery || reason == veto.Fall || reason == veto.Pickup || reason == veto.Cliff || reason == veto.HeartbeatMiss
-				ain := action.In{Now: time.Now(), OnCharger: vin.OnCharger, Abort: abort}
+				// Hard vetoes stop an action at once. A heartbeat gap only counts
+				// once the hub is really gone (>1 s): WiFi jitter past the 250 ms
+				// skill threshold aborted look_at_me on the first live test.
+				abortWhy := ""
+				switch {
+				case reason == veto.Battery || reason == veto.Fall || reason == veto.Pickup || reason == veto.Cliff:
+					abortWhy = reason.String()
+				case reason == veto.HeartbeatMiss && (!vin.HasHeartbeat || vin.HeartbeatAge > time.Second):
+					abortWhy = "heartbeat"
+				}
+				ain := action.In{Now: time.Now(), OnCharger: vin.OnCharger, Abort: abortWhy != ""}
 				if have {
 					ain.EncL, ain.EncR, ain.EncLift = fr.Motors[0].Pos, fr.Motors[1].Pos, fr.Motors[2].Pos
 				}
@@ -338,6 +347,12 @@ func runDaemon() int {
 					ui.set("anim", out.Clip, face.ClipLen(out.Clip))
 				}
 				if out.Done != "" {
+					if strings.HasPrefix(out.Done, "aborted") {
+						if abortWhy != "" {
+							out.Done += " (" + abortWhy + ")"
+						}
+						ui.set("anim", "cant_help", face.ClipLen("cant_help")) // visible "I couldn't"
+					}
 					fmt.Printf("action %s done: %s\n", runner.Name(), out.Done)
 					status.Put("/data/victor/action.txt", runner.Name()+" "+out.Done+"\n")
 				}

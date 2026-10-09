@@ -306,6 +306,8 @@ def reply_turn(pcm: bytes) -> tuple[str, str, bytes]:
             reply = run_intent(intent)
             VOICE.last_via = "intent"
         else:
+            if text:
+                print(f"intent none -> chat text={text!r} norm={intents_mod.normalise(text)!r}", flush=True)
             reply = VOICE.chat(text) if text else ""
     finally:
         TURN_PERSON["ctx"] = ""
