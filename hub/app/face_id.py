@@ -168,6 +168,9 @@ class FaceID:
         self.errors = 0
         self.last_call_t = 0.0
         self.result = {"person": False, "name": None, "confidence": 0.0, "t": 0.0, "ms": 0, "error": ""}
+        self.retries = int(_env_float("HUB_FACE_RETRIES", 2))  # extra tries on 429/5xx (shared free endpoint)
+        self.retry_s = _env_float("HUB_FACE_RETRY_S", 1.5)
+        self.sleep = time.sleep
         self.post = self._post  # tests replace this
         self.on_result = None  # callable(result) after each successful call
 
@@ -248,7 +251,17 @@ class FaceID:
         res = {"person": False, "name": None, "confidence": 0.0, "error": "", "raw": ""}
         try:
             payload = build_payload(self.model, shrink(frame, 640), [(n, shrink(j, 384)) for n, j in refs])
-            data = self.post(payload)
+            data = None
+            for attempt in range(self.retries + 1):
+                try:
+                    data = self.post(payload)
+                    break
+                except urllib.error.HTTPError as exc:
+                    if exc.code not in (429, 500, 502, 503, 504) or attempt >= self.retries:
+                        raise
+                    if time.time() - t0 + self.retry_s * (attempt + 1) > self.timeout:
+                        raise
+                    self.sleep(self.retry_s * (attempt + 1))
             text = response_text(data)
             res["raw"] = text[:300]
             res.update(parse_result(text, [n for n, _ in refs]))

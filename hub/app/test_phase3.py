@@ -674,12 +674,37 @@ class FaceToName(unittest.TestCase):
 
         def boom(payload):
             raise urllib.error.HTTPError("u", 429, "Too Many Requests", {}, None)
+        f.sleep = lambda s: None
         f.post = boom
         f.on_frame(b"\xff\xd8x")
         res = f.recognize_now()
         self.assertIn("429", res["error"])
         self.assertEqual(f.present()["present_name"], "Ann")
         self.assertEqual(f.present()["errors"], 1)
+
+    def test_retry_on_busy_endpoint(self):
+        import urllib.error
+        from face_id import FaceID
+        f = FaceID(self.db())
+        f.key = "k"
+        f.sleep = lambda s: None
+        n = {"c": 0}
+
+        def flaky(payload):
+            n["c"] += 1
+            if n["c"] < 3:
+                raise urllib.error.HTTPError("u", 503, "busy", {}, None)
+            return {"choices": [{"message": {"content": '{"person": true, "name": "Ann", "confidence": 0.9}'}}]}
+        f.post = flaky
+        res = f.recognize(b"\xff\xd8x", [("Ann", b"\xff\xd8a")])
+        self.assertEqual(n["c"], 3)
+        self.assertEqual(res["name"], "Ann")
+        self.assertEqual(res["error"], "")
+
+        def bad(payload):
+            raise urllib.error.HTTPError("u", 401, "auth", {}, None)
+        f.post = bad
+        self.assertIn("401", f.recognize(b"\xff\xd8x", [])["error"])
 
     def test_no_calls_without_enrollment_or_key(self):
         from face_id import FaceID
