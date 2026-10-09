@@ -23,8 +23,8 @@ var (
 )
 
 const (
-	headPower   = int16(9830) // 0.3 power
-	headTol     = 8
+	headPower   = int16(8192) // 0.25 power
+	headTol     = 15
 	moveTimeout = 700 * time.Millisecond
 	minGap      = 5 * time.Second
 	maxGap      = 12 * time.Second
@@ -128,8 +128,8 @@ func (l *Life) Tick(in In) Out {
 			out.Event = "glance"
 		default:
 			d := int32(25 + l.rng.Intn(55))
-			if l.rng.Intn(2) == 0 {
-				d = -d
+			if in.Head > -60 && l.rng.Intn(2) == 0 {
+				d = -d // the head sags under gravity; below -60 only go up
 			}
 			t := in.Head + d
 			if t > HeadTop || t < HeadBottom {

@@ -368,6 +368,7 @@ func runDaemon() int {
 				o := life.Tick(idle.In{Now: time.Now(), Head: fr.Motors[3].Pos, HaveHead: true, Sound: soundHit, SoundDir: proc.Direction()})
 				if o.Head != 0 {
 					pwm[3] = o.Head
+					ui.muteFor(300 * time.Millisecond) // head gear noise must not open a hub voice turn
 				}
 				ui.setGaze(o.LookX, o.LookY)
 				if o.Event != "" {
