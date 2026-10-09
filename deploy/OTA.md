@@ -5,6 +5,37 @@ Spec: [GROK_INSTRUCTIONS.md](../GROK_INSTRUCTIONS.md). The `.ota` writes only th
 SBL, ABOOT and recoveryfs are never touched, so recovery (and its BLE) stays as
 the unbrick path.
 
+## Quick start (two commands)
+
+```bash
+make ota-deps          # once: apt/dnf install (asks for sudo) + preflight
+make release           # preflight -> dump robot + build dist/victor.ota + dist/rollback.ota
+                       # -> recovery flash (asks you to type FLASH) -> verify
+```
+
+`make release` reads `.env` for `HUB_IP`, `VECTOR_BLE_PIN`, `WIFI_SSID`, `WIFI_PASSWORD`
+(copy `.env.example`). Override anything on the command line, e.g.
+`make release HUB_IP=192.168.0.50 PIN=123456 SSID=home`. If `HUB_IP` is not set
+anywhere, the LAN IP of the default route is used. The Wi-Fi password is never
+printed and is passed to `ble-bootstrap` through the environment, not argv.
+`PASSWORD=...` on the command line works but lands in your shell history; prefer `.env`.
+
+| Target | Does |
+|---|---|
+| `make ota-deps` | install e2fsprogs, openssl, gzip, tar, make, Go, openssh-client, python3, libsodium-dev, iproute2; check Go >= 1.22; run `ota-check` |
+| `make ota-check` | preflight only |
+| `make ota-robot [HUB_IP=..]` | dump the active slot + `ota.pas` from the robot, build `dist/victor.ota`, then `ota-rollback` |
+| `make ota-rollback` | `dist/rollback.ota` from the untouched dump in `ota-work/` (first one also kept as `dist/rollback-first.ota`, never overwritten) |
+| `make ota OTA_ARGS=".."` | packer with your own args (e.g. bitbake `--boot/--sysfs`) |
+| `make ota-serve` | plain HTTP on :8088 for a manual `ota-start` |
+| `make flash [PIN=..] [SSID=..] [PASSWORD=..]` | refuses unless `dist/victor.ota` and `dist/rollback.ota` exist, prints the recovery button steps, asks you to type `FLASH` (`YES=1` skips), runs `first-flash` |
+| `make verify` | `deploy/verify-first-boot.sh` |
+| `make release` / `make ota-all` | `ota-check`, `ota-robot`, `flash`, `verify` in order |
+| `make ota-test` | offline packer test, no robot |
+| `make help` | list targets |
+
+The sections below are what those targets do, step by step.
+
 ## What the image contains on first boot
 
 `deploy/make-ota.sh` copies your system image and overlays it (debugfs: no root,
@@ -19,6 +50,7 @@ no loop mount), then verifies the result before packing:
 | Hub hostname | `/data/victor/hub.env` seeded with `HUB_HOST=robot.mohammadabbasi.com`; `--hub-ip IP` also writes the managed `/etc/hosts` block. Existing `hub.env` is kept |
 | `/data` rw,exec | `/etc/fstab` `/data` line rewritten to `rw,exec`; firstboot also remounts |
 | No OpenAI key | Build fails if your `.env` `OPENAI_API_KEY` (or any `OPENAI_API_KEY=value` / `sk-proj-` key) is anywhere in the system image; firstboot strips `OPENAI*` lines from `hub.env` |
+| Image recognition (robot side) | `victor-agent` streams camera JPEGs as VCT1 VIDEO to `HUB_HOST` (nav 320x180 ~10 Hz, face 640x360 ~5 Hz). Camera units in the image are never masked; the packer fails if one is |
 | Traceability | `/etc/victor-release` (version, git commit, build time, SSH unit) |
 
 **Do not ship WireOS as the product.** `--from-robot` repackages whatever system
@@ -108,6 +140,19 @@ Repeat to turn SSH back on.
 - SSH locked out but robot boots: CHARGE-LATCH on the charger, or wait for the
   watchdog (24 h off + hub silent 10 min + on charger -> `SSH AUTO`).
 - Give the body back to stock Anki: `./deploy/restore-anki.sh` (the flag stays removed across reboots).
+
+## Image recognition
+
+Recognition runs **on the hub only**; the robot ships frames. There is no other
+vision API and no cloud key on the robot.
+
+| Piece | Where | State |
+|---|---|---|
+| Camera capture | robot, `victor-agent` `internal/camera` | Reads `/data/victor/camera.jpg` (test inject) or a JPEG snapshot from `/dev/video0`. The real Qualcomm camera path (V4L2 streaming / vendor camera daemon) is still a TODO, so on the real robot VIDEO may stay empty until that is written. `make verify` warns if no frame was grabbed |
+| VCT1 VIDEO | robot -> hub UDP 7500 (+ TCP 7443 link) | shipped in the agent; endpoint from `hub.env` / `robot.mohammadabbasi.com` |
+| Faces | hub `faces.py`, SQLite, `GET/POST/DELETE :8080/faces` | simple 64-d grayscale-grid embedding + cosine >= 0.92 on the whole face frame; no face detector yet |
+| Edge model | hub `edge.py`, ONNX Runtime CPU, `hub/models/*.onnx` | `tiny_edge.onnx` placeholder generated at container start; drop a real NVIDIA TAO ONNX (<= 15 MB) in `hub/models/`. Votes `stop`/`back_off` only; IR cliffs on the robot win |
+| OpenAI | hub only (voice) | never on the robot |
 
 ## Offline test (no robot)
 

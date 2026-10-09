@@ -26,7 +26,7 @@ root:x:0:0:root:/home/root:/bin/sh
 P
 printf '/dev/root / ext4 ro 0 1\n/dev/disk/by-partlabel/userdata /data ext4 rw,noexec,nosuid 0 2\n' > "$T/root/etc/fstab"
 printf '127.0.0.1\tlocalhost\n' > "$T/root/etc/hosts"
-for u in sshd.socket ankibluetoothd.service vic-switchboard.service btproperty.service; do
+for u in sshd.socket ankibluetoothd.service vic-switchboard.service btproperty.service mm-anki-camera.service; do
   printf '[Unit]\nDescription=%s\n' "$u" > "$T/root/lib/systemd/system/$u"
 done
 # stale override left by deploy/sync-agent.sh on the running robot
@@ -130,6 +130,15 @@ d 'cat /usr/bin/victor-ble-mask' | grep -q 'rfkill block bluetooth' || fail "rfk
 d 'cat /usr/bin/victor-firstboot' | grep -q 'ble.disabled' || fail "ble.disabled"
 pass "BLE masked (ankibluetoothd, vic-switchboard, btproperty, bluetooth), rfkill + ble.disabled"
 
+# image recognition: camera stack untouched, agent streams VCT1 VIDEO to the hub
+[[ -n "$(st /lib/systemd/system/mm-anki-camera.service)" ]] || fail "camera unit removed"
+[[ "$(linkof /etc/systemd/system/mm-anki-camera.service)" != /dev/null ]] || fail "camera unit masked"
+grep -q 'camera units untouched (mm-anki-camera.service)' "$T/build.log" || fail "packer did not check camera units"
+LC_ALL=C grep -aq '/dev/video0' <(d 'cat /usr/bin/victor-agent') || fail "agent lacks V4L2 camera path"
+LC_ALL=C grep -aq 'internal/camera' <(d 'cat /usr/bin/victor-agent') || fail "agent lacks camera package"
+d 'cat /usr/share/victor/hub.env.default' | grep -qx 'HUB_GRPC_PORT=7443' || fail "hub media port"
+pass "image recognition (robot side): camera unit kept, agent has camera + VCT1 VIDEO, hub endpoint set"
+
 K="$(cat "$T/id.pub")"
 [[ "$(d 'cat /usr/share/victor/authorized_keys')" == "$K" ]] || fail "share authorized_keys"
 isfile /home/root/.ssh/authorized_keys 600
@@ -185,6 +194,17 @@ tar -xOf "$T/db.ota" apq8009-robot-sysfs.img.gz | openssl enc -d -aes-256-ctr -m
 [[ "$(debugfs -R 'stat /etc/systemd/system/multi-user.target.wants/dropbear.service' "$T/db.img" 2>/dev/null | sed -n 's/^Fast link dest: "\(.*\)"$/\1/p')" == /lib/systemd/system/dropbear.service ]] \
   || fail "dropbear.service not enabled"
 pass "dropbear image: dropbear.service enabled on :22"
+
+# --- negative: a masked camera unit (would break hub image recognition) is refused
+ln -sf /dev/null "$T/root2/etc/systemd/system/mm-anki-camera.service"
+mkfs.ext4 -q -F -E root_owner=0:0 -d "$T/root2" "$T/sysfs6.img" 64M
+if OPENAI_API_KEY="" "${ROOT}/deploy/make-ota.sh" --boot "$T/boot.img" --sysfs "$T/sysfs6.img" \
+     --pass "$T/ota.pas" --pubkey "$T/id.pub" --out "$T/bad.ota" --work "$T/work6" >"$T/neg6.log" 2>&1; then
+  fail "packer shipped a masked camera unit"
+fi
+grep -q 'camera unit mm-anki-camera.service is masked' "$T/neg6.log" || { cat "$T/neg6.log"; fail "wrong error for masked camera"; }
+rm -f "$T/root2/etc/systemd/system/mm-anki-camera.service"
+pass "masked camera unit refused"
 
 # --- --raw rollback pack: images byte-identical to the inputs
 "${ROOT}/deploy/make-ota.sh" --raw --boot "$T/boot.img" --sysfs "$T/sysfs.img" \
