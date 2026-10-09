@@ -1,7 +1,7 @@
 [Unit]
 Description=Disable BLE on the running victor image
 DefaultDependencies=no
-After=sysinit.target
+After=sysinit.target local-fs.target victor-firstboot.service
 Before=network.target
 
 [Service]
