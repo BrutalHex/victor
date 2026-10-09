@@ -17,7 +17,7 @@ from urllib.parse import parse_qs, urlparse
 from edge import Edge
 from explore import NAMES, Explorer
 from faces import FaceDB
-from face_id import FaceID, is_identity_question, person_context
+from face_id import NO_CONTEXT, FaceID, is_identity_question, person_context
 import voice as voice_mod
 from protocol import FLAG_FACE, TYPE_AUDIO, TYPE_SENSOR, TYPE_VIDEO, decode, unpack_sensor
 from safety import classical_vote
@@ -49,13 +49,11 @@ LOCK = threading.Lock()
 EXPLORER = Explorer()
 FACE_DB = FaceDB()  # HUB_FACE_DB or /app/data/faces.db (persistent volume)
 FACE_ID = FaceID(FACE_DB)
-FACE_GREET_S = float(os.environ.get("HUB_FACE_GREET_S", "600") or 600)
 VOICE = Voice()
 EDGE = Edge()
 PENDING: list[tuple[int, bytes]] = []
 UTTERANCES: queue.Queue[bytes] = queue.Queue(maxsize=2)
 LAST_JPEG = {"nav": b"", "face": b""}
-LAST_FACE_SPOKEN = {"name": "", "t": 0.0}
 # Mic test recorder (POST /record). While it runs the VAD/OpenAI turn is paused so
 # the file is the continuous robot stream, not VAD-gated pieces.
 REC = {"active": False, "buf": bytearray()}
@@ -198,7 +196,6 @@ def _on_audio(pcm: bytes) -> None:
         return
     if not begin_think("vad"):
         return
-    FACE_ID.kick()
     print(f"voice utterance {len(utt)} bytes rms={VOICE.last_rms} noise={int(VOICE.noise)}", flush=True)
     try:
         os.makedirs("/app/data", exist_ok=True)
@@ -285,15 +282,25 @@ def reply_turn(pcm: bytes) -> tuple[str, str, bytes]:
     """STT -> chat (web search) -> TTS, timed. Thinking stays on throughout."""
     t = time.time()
     text = VOICE.transcribe(pcm)
-    if text and FACE_ID.ready() and is_identity_question(text):
-        FACE_ID.wait_fresh(max_age=15, timeout=float(os.environ.get("HUB_FACE_WAIT_S", "4") or 4))
+    TURN_PERSON["ctx"] = ""
+    t_face = time.time()
+    if text and is_identity_question(text):
+        # The only place a camera frame goes to the AI during voice: one call, this turn only.
+        res = FACE_ID.identify()
+        TURN_PERSON["ctx"] = person_context(res, FACE_ID.min_conf)
+        if res.get("name") and float(res.get("confidence") or 0) >= FACE_ID.min_conf:
+            with LOCK:
+                STATE["face"] = {"name": res["name"], "score": round(float(res["confidence"]), 2)}
     t_stt = time.time()
-    reply = VOICE.chat(text) if text else ""
+    try:
+        reply = VOICE.chat(text) if text else ""
+    finally:
+        TURN_PERSON["ctx"] = ""
     t_chat = time.time()
     audio = VOICE.tts(reply) if reply else b""
     t_tts = time.time()
     print(
-        f"voice timing end={_ms()}  stt={int((t_stt - t) * 1000)}ms chat={int((t_chat - t_stt) * 1000)}ms "
+        f"voice timing end={_ms()}  stt={int((t_face - t) * 1000)}ms face={int((t_stt - t_face) * 1000)}ms chat={int((t_chat - t_stt) * 1000)}ms "
         f"tts={int((t_tts - t_chat) * 1000)}ms via={getattr(VOICE, 'last_via', '')}",
         flush=True,
     )
@@ -364,40 +371,19 @@ def _on_nav_frame(jpeg: bytes) -> None:
 
 
 def _on_face_frame(jpeg: bytes) -> None:
-    """Face-size frames feed the NVIDIA face-to-name matcher (background)."""
+    """Keep the newest face frame on the hub (local only). It goes to NVIDIA
+    only for an identity question or an explicit enroll."""
     FACE_ID.on_frame(jpeg)
 
 
+TURN_PERSON = {"ctx": ""}  # set by reply_turn for an identity question, cleared after the chat call
+
+
 def _person_context() -> str:
-    return person_context(FACE_ID.present(), FACE_ID.min_conf)
-
-
-def _on_face_result(res: dict) -> None:
-    """A confident match: show the name and greet, at most once per FACE_GREET_S."""
-    name = res.get("name")
-    if not name or float(res.get("confidence") or 0) < FACE_ID.min_conf:
-        return
-    with LOCK:
-        STATE["face"] = {"name": name, "score": round(float(res["confidence"]), 2)}
-    now = time.time()
-    if LAST_FACE_SPOKEN["name"] == name and now - LAST_FACE_SPOKEN["t"] < FACE_GREET_S:
-        return
-    with LOCK:
-        busy = bool(STATE.get("voice_busy"))
-    if busy:
-        return  # don't talk over a reply turn; try on the next result
-    LAST_FACE_SPOKEN["name"] = name
-    LAST_FACE_SPOKEN["t"] = now
-    show = f"name|{name}".encode()
-    if VOICE.key:
-        threading.Thread(target=speak_turn, args=(f"Hi, {name}!", "face", show), daemon=True).start()
-    else:
-        queue_cmd(CMD_FACEUI, show)
-        queue_cmd(CMD_SPEAK, tone(660, 250))
+    return TURN_PERSON["ctx"] or NO_CONTEXT
 
 
 voice_mod.PERSON_CONTEXT = _person_context
-FACE_ID.on_result = _on_face_result
 
 
 def handle_robot(conn: socket.socket) -> None:
@@ -631,7 +617,8 @@ def enroll(data: dict) -> tuple[dict, int]:
     stored, skipped, checks = [], 0, []
     for img in frames:
         if FACE_ID.ready():
-            res = FACE_ID.recognize(img, [])  # no gallery: just "is a face visible?"
+            res = FACE_ID.recognize(img, [])  # explicit enroll only: "is a face visible?"
+            FACE_ID.enroll_calls += 1
             checks.append({"person": res["person"], "face": res.get("face_visible", res["person"]),
                            "ms": res["ms"], "error": res["error"][:80]})
             if res["error"] or not res["person"] or not res.get("face_visible", res["person"]):
@@ -643,8 +630,6 @@ def enroll(data: dict) -> tuple[dict, int]:
     if not ok:
         out["error"] = "no person visible in the frames; stand 0.5-1 m in front of the robot, face it, and retry"
     print(f"face enroll name={name!r} stored={len(stored)} skipped={skipped}", flush=True)
-    if ok:
-        FACE_ID.kick()
     return out, 200 if ok else 422
 
 
@@ -693,7 +678,8 @@ UI_HTML = """<!doctype html><html><head><meta charset="utf-8"><title>victor hub 
 img.live{width:100%;max-width:640px;border:1px solid #888}.refs img{height:96px;margin:2px}
 .row{margin:.4rem 0}button{padding:.4rem .8rem}</style></head>
 <body><h1>victor hub - faces</h1>
-<p>Live robot camera (1 fps). Stand 0.5-1 m in front of Vector, face it, good light.</p>
+<p>Live robot camera (1 fps, local preview only). Stand 0.5-1 m in front of Vector, face it, good light.
+Photos go to the face-matching AI only when you click enroll or ask Vector "what's my name?".</p>
 <img class="live" id="live" alt="no camera frame yet">
 <form onsubmit="enroll(event)" class="row"><input name="name" placeholder="your name" required>
 <button>enroll (3 photos, ~5 s)</button></form>
@@ -702,8 +688,9 @@ img.live{width:100%;max-width:640px;border:1px solid #888}.refs img{height:96px;
 <script>
 function tick(){document.getElementById('live').src='/frame?kind=face&t='+Date.now();
  fetch('/status').then(r=>r.json()).then(j=>{const p=j.person||{};
-  document.getElementById('who').textContent='recognised: '+(p.present_name||'nobody')+
-   ' conf '+p.confidence+' age '+p.age_s+'s person='+p.present_person+(p.error?' error: '+p.error:'');});}
+  document.getElementById('who').textContent='last identity check: '+(p.present_name||'nobody')+
+   ' conf '+p.confidence+' age '+p.age_s+'s person='+p.present_person+' checks '+p.calls+
+   (p.skip?' ('+p.skip+')':'')+(p.error?' error: '+p.error:'');});}
 setInterval(tick,1000);tick();
 async function enroll(e){e.preventDefault();const name=e.target.name.value;
  document.getElementById('out').textContent='taking photos...';
@@ -734,7 +721,6 @@ def main() -> None:
     tcp_port = int(os.environ.get("HUB_SKILL_PORT", "7443"))
     http_port = int(os.environ.get("HUB_HTTP_PORT", "8080"))
     threading.Thread(target=voice_loop, daemon=True).start()
-    threading.Thread(target=FACE_ID.loop, daemon=True).start()
     if FACE_ID.ready():
         print(f"face id on: model={FACE_ID.model} key=${FACE_ID.key_var} (value not logged)", flush=True)
     else:

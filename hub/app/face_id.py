@@ -3,8 +3,10 @@
 Enrollment stores a few reference JPEGs per name in the faces SQLite DB
 (faces.FaceDB). Recognition sends the reference gallery plus the current camera
 frame and asks for strict JSON: {"person": bool, "name": <enrolled name|null>,
-"confidence": 0..1}. Calls run in a background thread (motion / presence /
-voice-turn kicks, rate limited); voice turns only read the cached result.
+"confidence": 0..1}. Nothing runs in the background: the camera frame only
+leaves the hub when a voice turn is an identity question ("what's my name",
+"wie heiße ich", "اسم من چیه", ...) or when the user clicks enroll; that turn
+makes exactly one call (identify) and the result goes into that turn's prompt.
 
 The NVIDIA key is read from the environment (HUB_FACE_API_KEY_VAR names the
 variable, default NVIDIA_API_KEY) and is never logged.
@@ -161,21 +163,16 @@ class FaceID:
         self.key_var = os.environ.get("HUB_FACE_API_KEY_VAR") or "NVIDIA_API_KEY"
         self.key = os.environ.get(self.key_var, "")
         self.timeout = _env_float("HUB_FACE_TIMEOUT", 25)
-        self.min_gap = _env_float("HUB_FACE_MIN_GAP_S", 4)       # never call faster than this
-        self.present_every = _env_float("HUB_FACE_PRESENT_S", 10)  # re-check while someone is there
-        self.idle_every = _env_float("HUB_FACE_IDLE_S", 60)       # background check with no motion
+        self.frame_max_age = _env_float("HUB_FACE_FRAME_MAX_AGE_S", 5)  # older frame = can't see
         self.min_conf = _env_float("HUB_FACE_MIN_CONF", 0.7)
         self.max_refs = int(_env_float("HUB_FACE_MAX_REFS", 6))
         self.enabled = os.environ.get("HUB_FACE_ID", "1").strip().lower() not in ("0", "false", "off", "no")
         self.lock = threading.Lock()
-        self.wake = threading.Event()
         self.frame = b""
         self.frame_t = 0.0
-        self.thumb: list[int] | None = None
-        self.motion_t = 0.0
-        self.kick_t = 0.0
         self.busy = False
-        self.calls = 0
+        self.calls = 0  # identity-question calls
+        self.enroll_calls = 0  # explicit enroll checks (POST /faces)
         self.errors = 0
         self.last_call_t = 0.0
         self.result = {"person": False, "name": None, "confidence": 0.0, "t": 0.0, "ms": 0, "error": ""}
@@ -183,68 +180,22 @@ class FaceID:
         self.retry_s = _env_float("HUB_FACE_RETRY_S", 1.5)
         self.sleep = time.sleep
         self.post = self._post  # tests replace this
-        self.on_result = None  # callable(result) after each successful call
 
     # ----- inputs -------------------------------------------------------
     def ready(self) -> bool:
         return self.enabled and bool(self.key) and self.db is not None
 
     def on_frame(self, jpeg: bytes) -> None:
-        moved = self._motion(jpeg)
+        """Remember the newest face frame (local only; nothing is sent)."""
         with self.lock:
             self.frame, self.frame_t = jpeg, time.time()
-            if moved:
-                self.motion_t = self.frame_t
-        if moved:
-            self.wake.set()
 
-    def kick(self) -> None:
-        """Voice turn starting: refresh soon if the cached result is old."""
+    def latest(self, now: float | None = None) -> bytes:
+        now = time.time() if now is None else now
         with self.lock:
-            self.kick_t = time.time()
-        self.wake.set()
-
-    def _motion(self, jpeg: bytes) -> bool:
-        try:
-            from PIL import Image  # type: ignore
-
-            im = Image.open(io.BytesIO(jpeg)).convert("L").resize((16, 12))
-            thumb = list(im.getdata())
-        except Exception:
-            return False
-        prev, self.thumb = self.thumb, thumb
-        if prev is None:
-            return True
-        diff = sum(abs(a - b) for a, b in zip(prev, thumb)) / len(thumb)
-        return diff > 6.0
-
-    # ----- scheduling ---------------------------------------------------
-    def due(self, now: float) -> bool:
-        with self.lock:
-            if not self.frame or now - self.frame_t > 5:
-                return False
-            if now - self.last_call_t < self.min_gap:
-                return False
-            r = self.result
-            age = now - (r.get("t") or 0)
-            if self.kick_t > self.last_call_t and age > 8:
-                return True
-            if self.motion_t > self.last_call_t:
-                return True
-            if r.get("person") and age >= self.present_every:
-                return True
-            return age >= self.idle_every
-
-    def loop(self) -> None:
-        while True:
-            self.wake.wait(1.0)
-            self.wake.clear()
-            if not self.ready():
-                continue
-            if not self.db.refs(1):
-                continue  # nobody enrolled: no calls
-            if self.due(time.time()):
-                self.recognize_now()
+            if self.frame and now - self.frame_t <= self.frame_max_age:
+                return self.frame
+        return b""
 
     # ----- the call -----------------------------------------------------
     def _post(self, payload: dict) -> dict:
@@ -288,56 +239,48 @@ class FaceID:
         res["ms"] = int((time.time() - t0) * 1000)
         return res
 
-    def recognize_now(self) -> dict:
-        with self.lock:
-            if self.busy:
-                return dict(self.result)
-            self.busy = True
-            frame = self.frame
-            self.last_call_t = time.time()
-        try:
-            refs = self.db.refs(self.max_refs)
-            res = self.recognize(frame, refs)
-            res["t"] = time.time()
-            with self.lock:
-                self.calls += 1
-                if res["error"]:
-                    self.errors += 1
-                    self.result["error"] = res["error"]
-                else:
-                    self.result = res
-            if not res["error"] and self.on_result:
-                try:
-                    self.on_result(res)
-                except Exception as exc:  # noqa: BLE001
-                    print(f"face id on_result failed {exc!r}", flush=True)
-            print(
-                f"face id person={res['person']} name={res['name']!r} conf={res['confidence']:.2f} "
-                f"ms={res['ms']} refs={len(refs)} err={res['error'][:120]!r}",
-                flush=True,
-            )
+    def identify(self) -> dict:
+        """Identity question: one NVIDIA call on the freshest face frame.
+        No call without key, enrollment or a fresh frame; the reason is in "skip"."""
+        res = {"person": False, "face_visible": False, "name": None, "confidence": 0.0,
+               "error": "", "raw": "", "ms": 0, "skip": "", "t": time.time()}
+        if not self.ready():
+            res["skip"] = "off"
             return res
-        finally:
+        refs = self.db.refs(self.max_refs)
+        frame = self.latest()
+        if not refs:
+            res["skip"] = "nobody enrolled"
+        elif not frame:
+            res["skip"] = "no fresh camera frame"
+        else:
             with self.lock:
-                self.busy = False
-
-    def wait_fresh(self, max_age: float, timeout: float) -> None:
-        """Voice turn about identity: wait briefly for an in-flight or new result."""
-        end = time.time() + timeout
-        while time.time() < end:
-            with self.lock:
-                age = time.time() - (self.result.get("t") or 0)
-                busy = self.busy
-            if age <= max_age and not busy:
-                return
-            time.sleep(0.1)
+                self.busy = True
+            try:
+                res.update(self.recognize(frame, refs))
+                res["t"] = time.time()
+            finally:
+                with self.lock:
+                    self.busy = False
+                    self.calls += 1
+                    if res["error"]:
+                        self.errors += 1
+        with self.lock:
+            self.result = dict(res)
+        print(
+            f"face id (identity question) person={res['person']} name={res['name']!r} "
+            f"conf={res['confidence']:.2f} ms={res['ms']} refs={len(refs)} skip={res['skip']!r} "
+            f"err={res['error'][:120]!r}",
+            flush=True,
+        )
+        return res
 
     # ----- outputs ------------------------------------------------------
     def present(self, now: float | None = None) -> dict:
         now = time.time() if now is None else now
         with self.lock:
             r = dict(self.result)
-            calls, errors = self.calls, self.errors
+            calls, errors, enroll_calls = self.calls, self.errors, self.enroll_calls
         t = r.get("t") or 0
         return {
             "present_name": r.get("name"),
@@ -346,9 +289,12 @@ class FaceID:
             "age_s": round(now - t, 1) if t else None,
             "ms": r.get("ms", 0),
             "calls": calls,
+            "enroll_calls": enroll_calls,
             "errors": errors,
             "error": r.get("error", ""),
+            "skip": r.get("skip", ""),
             "enabled": self.ready(),
+            "trigger": "identity questions and enroll only",
             "model": self.model,
         }
 
@@ -371,29 +317,46 @@ def is_identity_question(text: str) -> bool:
     return bool(_IDENTITY_RE.search(text or ""))
 
 
-def person_context(p: dict, min_conf: float = 0.7, fresh_s: float = 30.0) -> str:
-    """System-prompt section about who is in front of the robot."""
-    name = clean_name(p.get("present_name") or "")
-    age = p.get("age_s")
-    fresh = age is not None and age <= fresh_s
+NO_CONTEXT = (
+    "Camera: you have no identity information for this turn. Never guess or invent a person's name; "
+    "if someone asks who they are, say you can check when they ask \"what's my name?\"."
+)
+
+
+def person_context(res: dict, min_conf: float = 0.7) -> str:
+    """System-prompt section for an identity question, from this turn's identify() result."""
+    name = clean_name(res.get("name") or res.get("present_name") or "")
     rule = (
-        f"For questions like {IDENTITY_EXAMPLES} (in English, German or Persian), answer in the user's language. "
-        "Never guess or invent a name, and never use a name that is not given here."
+        f"This is an identity question like {IDENTITY_EXAMPLES}; answer in the user's language "
+        "(English, German or Persian). Never guess or invent a name, and never use a name that is not given here."
     )
-    if name and fresh and float(p.get("confidence") or 0) >= min_conf:
+    if name and not res.get("error") and float(res.get("confidence") or 0) >= min_conf:
         return (
-            f"Camera: the person in front of you is {name} (recognised {age:.0f} s ago). "
-            f"If they ask their name or who they are, tell them they are {name}. "
-            f"You may address them as {name}, but don't overuse it. " + rule
+            f"Camera (checked just now): the person in front of you is {name}. "
+            f"Tell them they are {name}. " + rule
         )
-    if fresh and p.get("present_person"):
+    if res.get("error"):
         return (
-            "Camera: you can see a person but you do not recognise them. If they ask their name or who they "
-            "are, say honestly that you don't recognise them yet and offer to learn their face: they can "
-            "enroll on the hub's faces page. " + rule
+            "Camera: the face check failed just now (service busy or unreachable). Say honestly that you "
+            "couldn't check right now and ask them to try again in a moment. " + rule
+        )
+    if res.get("skip") == "nobody enrolled":
+        return (
+            "Camera: nobody has been enrolled yet, so you cannot recognise anyone. Say so honestly and offer "
+            "to learn their face: they can enroll on the hub's face page. " + rule
+        )
+    if res.get("skip"):
+        return (
+            "Camera: you cannot see anyone right now. Say honestly that you can't see or recognise them at the "
+            "moment and offer to learn their face (enrollment on the hub's face page). " + rule
+        )
+    if res.get("person_visible", res.get("person")) or res.get("present_person"):
+        return (
+            "Camera: you can see a person but you do not recognise them (or their face is not clearly visible). "
+            "Say honestly that you don't recognise them yet; they can face the robot and ask again, or enroll on "
+            "the hub's face page. " + rule
         )
     return (
-        "Camera: you cannot see or recognise anyone right now. If asked their name or who they are, say "
-        "honestly that you can't see or recognise them at the moment and offer to learn their face "
-        "(enrollment on the hub's faces page). " + rule
+        "Camera: you cannot see anyone right now. Say honestly that you can't see or recognise them at the "
+        "moment and offer to learn their face (enrollment on the hub's face page). " + rule
     )

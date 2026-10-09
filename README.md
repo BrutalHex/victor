@@ -77,7 +77,7 @@ To enroll:
 
 1. Stand 0.5–1 m in front of Vector, facing him, with light on your face (not behind you). Check the preview until your face is clear, not a silhouette.
 2. Type your name, click **enroll**, and hold still about 5 s while it takes 3 photos. If it reports skipped frames, adjust the light or position and retry.
-3. Wait about 10 s, then ask "What's my name?" / "Wie heiße ich?" / "اسم من چیه؟".
+3. Ask "What's my name?" / "Wie heiße ich?" / "اسم من چیه؟" while facing Vector.
 
 Same thing from a shell:
 
@@ -87,4 +87,4 @@ curl localhost:8080/faces                                                      #
 curl -XDELETE 'localhost:8080/faces?id=<id>'                                    # remove
 ```
 
-Matching runs on the hub through NVIDIA (`HUB_FACE_MODEL`, key in `NVIDIA_API_KEY` in `.env`); the result is in `/status` under `person`. Vector only says a name when it recognised an enrolled face with confidence ≥ `HUB_FACE_MIN_CONF` (0.7); otherwise it says it doesn't recognise you. No keys go on the robot. Set `HUB_FACE_ID=0` and run `make hub` to turn it off.
+Matching runs on the hub through NVIDIA (`HUB_FACE_MODEL`, key in `NVIDIA_API_KEY` in `.env`), and only on demand: nothing is sent in the background. A camera frame leaves the hub only when (a) you click **enroll** (each photo is checked for a visible face) or (b) a voice turn is an identity question ("what's my name / who am I / do you know me", "wie heiße ich / wer bin ich / kennst du mich", "اسم من چیه / من کی هستم / منو میشناسی"). Then the hub takes the newest face frame (≤ `HUB_FACE_FRAME_MAX_AGE_S`, 5 s), makes one call (retries on a busy endpoint, `HUB_FACE_TIMEOUT` 25 s) while Vector shows the thinking face, and puts the result into that turn's prompt only. There are no periodic checks and no automatic greeting. OpenAI never receives camera images (STT gets audio, chat gets text). The camera preview on `/ui` stays on the hub. The last check is in `/status` under `person` (`calls` = identity checks, `enroll_calls` = enroll checks). Vector only says a name when it recognised an enrolled face with confidence ≥ `HUB_FACE_MIN_CONF` (0.7); otherwise it says it doesn't recognise you or can't see you. No keys go on the robot. Set `HUB_FACE_ID=0` and run `make hub` to turn it off.
