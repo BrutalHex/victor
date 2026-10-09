@@ -23,10 +23,12 @@ import (
 	"github.com/BrutalHex/victor/robot/agent/internal/hosts"
 	"github.com/BrutalHex/victor/robot/agent/internal/latch"
 	"github.com/BrutalHex/victor/robot/agent/internal/link"
+	"github.com/BrutalHex/victor/robot/agent/internal/rotlog"
 	"github.com/BrutalHex/victor/robot/agent/internal/simulate"
 	"github.com/BrutalHex/victor/robot/agent/internal/skill"
 	"github.com/BrutalHex/victor/robot/agent/internal/spine"
 	"github.com/BrutalHex/victor/robot/agent/internal/sshctl"
+	"github.com/BrutalHex/victor/robot/agent/internal/statusfile"
 	"github.com/BrutalHex/victor/robot/agent/internal/telem"
 	"github.com/BrutalHex/victor/robot/agent/internal/vct1"
 	"github.com/BrutalHex/victor/robot/agent/internal/veto"
@@ -66,6 +68,11 @@ func main() {
 				os.Exit(1)
 			}
 			fmt.Println("anki-robot.target started")
+			return
+		case "face-info":
+			// Read-only: what this binary would drive (no panel access).
+			nIn, nLoop := face.SearchingFrames()
+			fmt.Printf("spi=%s think=ddl-searching:%d+%d asset=%s telem_max=%d\n", face.Device(), nIn, nLoop, face.AssetTag, rotlog.DefaultMax)
 			return
 		case "calibrate":
 			_ = os.Remove(cliffcal.Path)
@@ -214,6 +221,8 @@ func runDaemon() int {
 	go cmdLoop(lnk, ui, proc)
 	face.Boot()
 	var lastFaceAt time.Time
+	// Status files: rewritten on change at most 2/s (was ~300 writes/s).
+	status := statusfile.New()
 	tick := time.NewTicker(*rate)
 	defer tick.Stop()
 	sig := make(chan os.Signal, 1)
@@ -329,15 +338,15 @@ func runDaemon() int {
 				renderFace(ui, reason)
 				lastFaceAt = time.Now()
 			}
-			_ = os.WriteFile("/data/victor/veto.txt", []byte(reason.String()+"\n"), 0644)
+			status.Put("/data/victor/veto.txt", reason.String()+"\n")
 			ageMs := int64(0)
 			if vin.HasHeartbeat {
 				ageMs = vin.HeartbeatAge.Milliseconds()
 			}
-			_ = os.WriteFile("/data/victor/hb_age_ms.txt", []byte(fmt.Sprintf("%d\n", ageMs)), 0644)
-			_ = os.WriteFile("/data/victor/skill.txt", []byte(kind.String()+"\n"), 0644)
-			_ = os.WriteFile("/data/victor/motors.txt", []byte(fmt.Sprintf("%d,%d,%d,%d\n", pwm[0], pwm[1], pwm[2], pwm[3])), 0644)
-			_ = os.WriteFile("/data/victor/drive.txt", []byte(fmt.Sprintf("allow=%v explore=%v veto=%s charger=%v skill=%s pwm=%d,%d,%d,%d batt_raw=%d chg_raw=%d\n", allow, skill.ExploreEnabled(), reason, vin.OnCharger, kind, pwm[0], pwm[1], pwm[2], pwm[3], fr.BattVoltage, fr.ChargerVoltage)), 0644)
+			status.Put("/data/victor/hb_age_ms.txt", fmt.Sprintf("%d\n", ageMs))
+			status.Put("/data/victor/skill.txt", kind.String()+"\n")
+			status.Put("/data/victor/motors.txt", fmt.Sprintf("%d,%d,%d,%d\n", pwm[0], pwm[1], pwm[2], pwm[3]))
+			status.Put("/data/victor/drive.txt", fmt.Sprintf("allow=%v explore=%v veto=%s charger=%v skill=%s pwm=%d,%d,%d,%d batt_raw=%d chg_raw=%d\n", allow, skill.ExploreEnabled(), reason, vin.OnCharger, kind, pwm[0], pwm[1], pwm[2], pwm[3], fr.BattVoltage, fr.ChargerVoltage))
 			if _, err := os.Stat("/data/victor/hub.down"); err == nil {
 				lnk.Close()
 			} else {
@@ -348,7 +357,7 @@ func runDaemon() int {
 			}
 			lnk.QueueMedia(hub.SendSensor(s))
 			if gotSpine {
-				_ = os.WriteFile("/data/victor/spine.ok", []byte("1\n"), 0644)
+				status.Put("/data/victor/spine.ok", "1\n")
 			}
 		}
 	}

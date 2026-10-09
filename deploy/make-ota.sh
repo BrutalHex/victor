@@ -227,6 +227,10 @@ fi
 [[ -s "$AGENT_BIN" ]] || die "agent binary $AGENT_BIN missing"
 # ELF e_machine 0x28 = ARM
 [[ "$(od -An -tx1 -j18 -N2 "$AGENT_BIN" | tr -d ' \n')" == "2800" ]] || die "$AGENT_BIN is not an ARM ELF"
+# The image must carry the face defaults make verify checks (panel SPI and the
+# DDL thinking animation are compiled in).
+grep -aq /dev/spidev1.0 "$AGENT_BIN" || die "$AGENT_BIN does not drive the face on /dev/spidev1.0"
+grep -aq victor-face-asset:ddl-knowledgegraph-searching "$AGENT_BIN" || die "$AGENT_BIN lacks the DDL thinking animation"
 fi
 
 # ---------------------------------------------------------------- sysfs copy

@@ -21,8 +21,26 @@ S=$(tr " " "\n" </proc/cmdline | sed -n "s/^androidboot.slot_suffix=_//p")
 chk "A/B slot $S marked successful" "/bin/bootctl-anki $S status $S | grep -q \"successful: 1\""
 chk "victor-agent active" "systemctl is-active -q victor-agent.service"
 chk "vic-anim stopped (agent owns the face)" "! systemctl is-active -q vic-anim.service"
-chk "face panel initialised by agent" "grep -q ready=true /data/victor/face.txt"
+# Face: settings must survive an agent restart and a reboot.
+FS=$(systemctl show -p Environment victor-agent.service | sed "s/^Environment=//" | tr " " "\n" | sed -n "s/^VICTOR_FACE_SPI=//p")
+FS=${FS:-/dev/spidev1.0}
+chk "face.txt ready=true" "grep -q ready=true /data/victor/face.txt"
+chk "face SPI is $FS (panel; spidev0.0 is the IMU)" "grep -q \"spi=$FS \" /data/victor/face.txt"
+chk "face panel midas init, hw 0x20" "grep -q \"init=midas hw=0x20 \" /data/victor/face.txt"
+chk "midas init logged this boot" "journalctl -b -u victor-agent --no-pager | grep -q \"midas init on $FS\""
+chk "DDL thinking animation loaded (8+36 frames)" "grep -q think=ddl-searching:8+36 /data/victor/face.txt"
 chk "face backlight on" "[ \$(cat /sys/class/leds/face-backlight-left/brightness) -gt 0 ]"
+chk "vic-bootAnim stopped" "! systemctl is-active -q vic-bootAnim.service"
+chk "no spi0.0 unsupported mode bits since boot" "! dmesg | grep -q \"spi0.0: setup: unsupported mode bits\""
+chk "agent drop-in on disk (/etc, survives reboot)" "grep -q \"ExecStart=/data/victor/victor-agent run\" /etc/systemd/system/victor-agent.service.d/10-sync.conf"
+chk "running agent is /data/victor/victor-agent" "systemctl show -p ExecStart victor-agent.service | grep -q /data/victor/victor-agent"
+chk "/data agent: spidev1.0 + DDL asset" "/data/victor/victor-agent face-info | grep -q \"spi=/dev/spidev1.0 think=ddl-searching:8+36\""
+warn0() { if eval "$2" >/dev/null 2>&1; then echo "PASS: $1"; else echo "WARN: $1"; fi; }
+warn0 "image /usr/bin/victor-agent has the same face defaults (else: next make ota)" "/usr/bin/victor-agent face-info 2>/dev/null | grep -q \"spi=/dev/spidev1.0 think=ddl-searching:8+36\""
+# telemetry.log: hard 1 MiB cap (current + .1)
+T=$(( $(cat /data/victor/telemetry.log 2>/dev/null | wc -c) + $(cat /data/victor/telemetry.log.1 2>/dev/null | wc -c) ))
+chk "telemetry.log + .1 = $T bytes <= 1 MiB" "[ $T -le 1048576 ]"
+chk "telemetry still being written" "[ -s /data/victor/telemetry.log ] || [ -s /data/victor/telemetry.log.1 ]"
 chk "mic gain levelled" "grep -q gain= /data/victor/mics.txt"
 chk "/data mounted exec" "! grep -E \" /data \" /proc/mounts | grep -q noexec"
 chk "hub hostname configured" "grep -q HUB_HOST= /data/victor/hub.env"

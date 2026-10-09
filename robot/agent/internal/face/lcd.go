@@ -115,6 +115,7 @@ func FullInit() error {
 	}
 	panelReady = true
 	lastWake = time.Now()
+	initKind = "midas"
 	fmt.Fprintf(os.Stderr, "face panel reset + midas init on %s (hw 0x%x)\n", spiDev, hwVersion())
 	return nil
 }
@@ -211,12 +212,20 @@ func spiXfer(f *os.File, tx, rx []byte) error {
 	return ioctl(f, 0x40206b00, uintptr(unsafe.Pointer(&x)))
 }
 
+// initKind is "midas" after the full reset + init script, "wake" otherwise.
+var initKind = "wake"
+
 // writeStatus records what the agent knows about the panel for verify scripts.
 func writeStatus(why string) {
-	full, three, err := PowerMode()
+	full, _, err := PowerMode()
 	bl, _ := os.ReadFile("/sys/class/leds/face-backlight-left/brightness")
-	line := fmt.Sprintf("%s ready=%v rddpm=0x%02x rddpm3w=0x%02x err=%v backlight=%s frames=%d at=%s\n",
-		why, panelReady, full, three, err, strings.TrimSpace(string(bl)), framesSent, time.Now().Format(time.RFC3339))
+	nIn, nLoop := SearchingFrames()
+	think := "eyes"
+	if nLoop > 0 {
+		think = fmt.Sprintf("ddl-searching:%d+%d", nIn, nLoop)
+	}
+	line := fmt.Sprintf("%s ready=%v spi=%s init=%s hw=0x%x think=%s rddpm=0x%02x err=%v backlight=%s frames=%d at=%s\n",
+		why, panelReady, spiDev, initKind, hwVersion(), think, full, err, strings.TrimSpace(string(bl)), framesSent, time.Now().Format(time.RFC3339))
 	_ = os.WriteFile("/data/victor/face.txt", []byte(line), 0644)
 }
 
@@ -548,6 +557,9 @@ func EOK() {
 func Thinking(elapsed time.Duration) {
 	Blit(ThinkingFrame(elapsed))
 }
+
+// Device is the face SPI node this binary drives.
+func Device() string { return spiDev }
 
 // FramesSent counts frames written to the panel (for fps checks).
 func FramesSent() uint64 { return framesSent }

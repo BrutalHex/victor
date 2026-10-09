@@ -19,6 +19,10 @@ import (
 //go:embed ddl/knowledgegraph_searching.gray.gz
 var searchingGz []byte
 
+// AssetTag is printed by `victor-agent face-info` and grepped by the OTA
+// packer to prove the image's agent carries the DDL thinking animation.
+const AssetTag = "victor-face-asset:ddl-knowledgegraph-searching"
+
 // SpriteFPS is the engine's sprite-sequence rate (ANIM_TIME_STEP 33 ms).
 const SpriteFPS = 30
 
