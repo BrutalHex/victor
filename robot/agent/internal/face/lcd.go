@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 	"unsafe"
@@ -490,11 +491,26 @@ func bumpSPIBuf() {
 
 // gpioReady caches pins already exported as outputs so a frame costs one
 // sysfs write per D/C toggle instead of three.
-var gpioReady = map[int]bool{}
+var (
+	gpioMu    sync.Mutex
+	gpioReady = map[int]bool{}
+)
+
+func gpioIsReady(pin int) bool {
+	gpioMu.Lock()
+	defer gpioMu.Unlock()
+	return gpioReady[pin]
+}
+
+func gpioSetReady(pin int, ok bool) {
+	gpioMu.Lock()
+	defer gpioMu.Unlock()
+	gpioReady[pin] = ok
+}
 
 func gpioOut(pin, value int) error {
 	base := "/sys/class/gpio/gpio" + strconv.Itoa(pin)
-	if !gpioReady[pin] {
+	if !gpioIsReady(pin) {
 		if _, err := os.Stat(base); err != nil {
 			_ = os.WriteFile("/sys/class/gpio/export", []byte(strconv.Itoa(pin)+"\n"), 0644)
 			time.Sleep(50 * time.Millisecond)
@@ -502,14 +518,14 @@ func gpioOut(pin, value int) error {
 		if err := os.WriteFile(base+"/direction", []byte("out\n"), 0644); err != nil {
 			return err
 		}
-		gpioReady[pin] = true
+		gpioSetReady(pin, true)
 	}
 	v := "0\n"
 	if value != 0 {
 		v = "1\n"
 	}
 	if err := os.WriteFile(base+"/value", []byte(v), 0644); err != nil {
-		gpioReady[pin] = false
+		gpioSetReady(pin, false)
 		return err
 	}
 	return nil
