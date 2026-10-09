@@ -348,7 +348,7 @@ class Voice:
         self.tts_instructions = os.environ.get("HUB_VOICE_INSTRUCTIONS", VECTOR_STYLE)
         self.last_tts_raw = b""
         self.last_fx_ms = 0
-        if _env_on("HUB_VOICE_VECTOR", "1"):
+        if True:  # resample uses scipy even with HUB_VOICE_VECTOR=0 (~1.7 s cold)
             import threading
             threading.Thread(target=lambda: print(f"tts fx warm ms={warm_fx():.0f}", flush=True), daemon=True).start()
         # Live web via the Responses API web_search tool (gpt-4o-mini supports it).
