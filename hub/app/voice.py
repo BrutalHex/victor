@@ -30,7 +30,10 @@ TTS_RATE = 24000  # OpenAI response_format=pcm
 VAD_RMS = int(os.environ.get("HUB_VAD_RMS", "120"))
 VAD_RATIO = float(os.environ.get("HUB_VAD_RATIO", "3.0"))
 START_FRAMES = 5
-END_FRAMES = 8
+# 700 ms of quiet closes a turn. 160 ms split "Hello Vector, what time is it?"
+# at the comma and sent only "Hello, Victor." to the model.
+END_FRAMES = int(os.environ.get("HUB_VAD_END_FRAMES", "35"))
+PREROLL_FRAMES = 10  # 200 ms kept from before the onset so the first word is whole
 CAL_FRAMES = 50  # 1s at 20 ms packets; learn the room before arming
 MIN_UTTERANCE_BYTES = int(RATE * 0.4) * 2
 MAX_SAMPLES = RATE * 6
@@ -145,6 +148,7 @@ class Voice:
         self.last_rms = 0
         self.noise = 200.0
         self.cal_frames = 0
+        self.preroll: list[bytes] = []
 
     def push(self, pcm: bytes) -> bytes | None:
         """Return captured PCM when an utterance closes. Does not call OpenAI."""
@@ -157,13 +161,18 @@ class Voice:
             self.noise = (0.90 * self.noise) + (0.10 * float(energy))
             return None
         thresh = max(VAD_RMS, self.noise * VAD_RATIO)
+        if not self.active:
+            self.preroll.append(pcm)
+            if len(self.preroll) > PREROLL_FRAMES:
+                self.preroll.pop(0)
         if energy >= thresh:
             self.voiced += 1
             self.silence = 0
             if not self.active and self.voiced >= START_FRAMES:
                 self.active = True
-                self.buf = bytearray()
-            if self.active:
+                self.buf = bytearray(b"".join(self.preroll))
+                self.preroll = []
+            elif self.active:
                 self.buf += pcm
         else:
             self.voiced = 0

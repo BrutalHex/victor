@@ -306,8 +306,12 @@ func runDaemon() int {
 						_ = os.WriteFile("/data/victor/mics.txt", []byte(fmt.Sprintf("%d,%d,%d,%d dir=%d mode=%s ch=%d gain=%.1f\n", e[0], e[1], e[2], e[3], proc.Direction(), proc.Mode(), proc.Channel(), proc.Gain())), 0644)
 						lastMicLog = time.Now()
 					}
-					if !ui.thinking() {
-						for _, pkt := range pk.Push(proc.Process(mic)) {
+					// Process always (keeps filters/levels continuous); send only
+					// while not thinking and not playing our own reply, or the
+					// speaker comes back as the next utterance.
+					clean := proc.Process(mic)
+					if !ui.thinking() && !ui.muted() {
+						for _, pkt := range pk.Push(clean) {
 							lnk.QueueMedia(hub.SendAudio(pkt))
 						}
 					}
@@ -498,6 +502,7 @@ type uiState struct {
 	caption    string
 	until      time.Time
 	thinkStart time.Time
+	muteUntil  time.Time
 	lastDrawn  string
 }
 
@@ -508,6 +513,25 @@ func (u *uiState) thinking() bool {
 	u.mu.Lock()
 	defer u.mu.Unlock()
 	return u.mode == "thinking"
+}
+
+// muteFor keeps the mic stream closed while the speaker plays.
+func (u *uiState) muteFor(d time.Duration) {
+	if u == nil {
+		return
+	}
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	u.muteUntil = time.Now().Add(d)
+}
+
+func (u *uiState) muted() bool {
+	if u == nil {
+		return false
+	}
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	return time.Now().Before(u.muteUntil)
 }
 
 func (u *uiState) set(mode, caption string, d time.Duration) {
@@ -603,7 +627,10 @@ func cmdLoop(lnk *link.Client, ui *uiState, proc *audio.Processor) {
 		switch cmd.Kind {
 		case link.CmdSpeak:
 			proc.NotePlayback(cmd.Payload)
+			playFor := time.Duration(len(cmd.Payload)/2) * time.Second / audio.Rate
+			ui.muteFor(playFor + 500*time.Millisecond)
 			_ = audio.Play(cmd.Payload)
+			ui.muteFor(400 * time.Millisecond)
 		case link.CmdDisplay:
 			if len(cmd.Payload) == face.Bytes {
 				_ = os.WriteFile("/data/victor/face.rgb565", cmd.Payload, 0644)

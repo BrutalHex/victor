@@ -15,7 +15,7 @@ from explore import BACK_OFF, LOOK_DOWN, LOOK_UP, STOP, Explorer  # noqa: E402
 from faces import FaceDB, cosine, embed  # noqa: E402
 from protocol import TYPE_AUDIO, TYPE_VIDEO, decode, encode, Header  # noqa: E402
 from safety import classical_vote  # noqa: E402
-from voice import CAL_FRAMES, MIN_UTTERANCE_BYTES, Voice, pcm16k, rms, tone  # noqa: E402
+from voice import CAL_FRAMES, END_FRAMES, MIN_UTTERANCE_BYTES, Voice, pcm16k, rms, tone  # noqa: E402
 
 
 class Protocol(unittest.TestCase):
@@ -104,11 +104,13 @@ class VoiceVAD(unittest.TestCase):
             self.assertIsNone(v.push(loud))
         self.assertTrue(v.active)
         quiet = b"\x00\x00" * 320
-        for _ in range(7):
+        for _ in range(END_FRAMES - 1):
             self.assertIsNone(v.push(quiet))
         got = v.push(quiet)
         self.assertIsInstance(got, bytes)
         self.assertGreater(len(got), 1000)
+        # pre-roll: the five onset packets are all in the clip
+        self.assertTrue(got.startswith(loud * 5))
         self.assertTrue(v.thinking)
 
 
