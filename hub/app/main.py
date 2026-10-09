@@ -309,7 +309,7 @@ def run_turn(pcm: bytes) -> None:
     try:
         text, reply, audio = reply_turn(pcm)
         if not audio:
-            why = "no-reply" if text else "no-transcript"
+            why = "no-reply" if text else ("dropped" if getattr(VOICE, "last_drop", "") else "no-transcript")
     except Exception as exc:  # noqa: BLE001 - never leave the face thinking
         why = f"error {type(exc).__name__}"
         print(f"voice turn failed {exc!r}", flush=True)
@@ -321,8 +321,10 @@ def run_turn(pcm: bytes) -> None:
             STATE["last_searched"] = bool(getattr(VOICE, "last_searched", False))
             STATE["last_via"] = getattr(VOICE, "last_via", "")
             STATE["last_chat_ms"] = getattr(VOICE, "last_chat_ms", 0)
+            STATE["last_lang"] = getattr(VOICE, "last_lang", "")
+            STATE["last_drop"] = getattr(VOICE, "last_drop", "")
         end_think(audio, why)
-    print(f"voice transcript={text!r} reply={reply!r} speak={len(audio)}", flush=True)
+    print(f"voice transcript={text!r} lang={getattr(VOICE, 'last_lang', '')} reply={reply!r} speak={len(audio)}", flush=True)
 
 
 def speak_turn(text: str, why: str, show: bytes = b"") -> int:
@@ -474,6 +476,13 @@ class Status(BaseHTTPRequestHandler):
             with LOCK:
                 body = dict(STATE)
                 body.pop("_edge_int", None)
+            body["voice"] = {
+                "tts_voice": VOICE.voice,
+                "tts_model": VOICE.tts_model,
+                "vector_fx": os.environ.get("HUB_VOICE_VECTOR", "1").strip().lower() not in ("0", "false", "no", "off", ""),
+                "langs": VOICE.langs,
+                "stt_language": VOICE.stt_language or "auto",
+            }
             self._json(body)
             return
         if path == "/faces":

@@ -485,6 +485,111 @@ class SttAndReply(unittest.TestCase):
             apimod.http.client.HTTPSConnection = saved
 
 
+class Languages(unittest.TestCase):
+    """Only English, German and Persian are spoken (HUB_LANGS)."""
+
+    def test_allowed_languages_accepted(self):
+        from lang import classify
+        L = ["en", "de", "fa"]
+        self.assertEqual(classify("What time is it in Berlin?", L)[0], "en")
+        self.assertEqual(classify("Hello Vector", L)[0], "en")
+        self.assertEqual(classify("Wie spät ist es in Berlin?", L)[0], "de")
+        self.assertEqual(classify("Wie ist das Wetter heute?", L)[0], "de")
+        self.assertEqual(classify("Grüß dich, schöne Größe!", L)[0], "de")
+        self.assertEqual(classify("ساعت چند است؟", L)[0], "fa")
+        self.assertEqual(classify("هوای برلین امروز چطوره؟", L)[0], "fa")
+        self.assertEqual(classify("می\u200cخواهم بدانم", L)[0], "fa")  # ZWNJ
+
+    def test_other_languages_rejected(self):
+        from lang import classify
+        L = ["en", "de", "fa"]
+        for text in ("今天天气怎么样？", "你好", "nevaşlarında lisanslara.", "Bugün hava nasıl, çok güzel değil mi?",
+                     "Какая сегодня погода?", "Привет", "ما هي الساعة الآن؟ كيف حالك يا صديقي", "こんにちは",
+                     "Qué hora es para los niños y las niñas?"):
+            self.assertEqual(classify(text, L)[0], "", text)
+
+    def test_hub_langs_env(self):
+        from lang import allowed
+        self.assertEqual(allowed("en,de,fa"), ["en", "de", "fa"])
+        self.assertEqual(allowed("de, xx"), ["de"])
+        self.assertEqual(allowed(""), ["en"])
+
+    def test_speakable_keeps_umlauts_and_persian(self):
+        from voice import speakable, short_reply
+        de = "Es ist 17:50 Uhr in Berlin, schönes Wetter, 18 Grad – Größe Straße. ([wetter.de](https://wetter.de))"
+        out = speakable(de)
+        for w in ("schönes", "Größe", "Straße", "Grad"):
+            self.assertIn(w, out)
+        self.assertNotIn("http", out)
+        fa = "ساعت پنج و پنجاه دقیقه است. هوا خوب است؟ می\u200cخواهی بدانی؟ [1]"
+        out = speakable(fa)
+        self.assertIn("ساعت پنج و پنجاه دقیقه است.", out)
+        self.assertIn("می\u200cخواهی", out)
+        self.assertNotIn("[1]", out)
+        self.assertTrue(short_reply("جمله اول؟ " + "جمله دوم طولانی است. " * 30, 40).startswith("جمله اول؟"))
+
+    def test_reply_language_instruction(self):
+        import voice
+        p = voice.system_prompt()
+        self.assertIn("same language the user spoke", p)
+        for name in ("English", "German", "Persian"):
+            self.assertIn(name, p)
+        self.assertIn("Never reply in any other language", p)
+
+    def stt_voice(self, answers, noise=0.0):
+        import voice
+        v = voice.Voice()
+        v.key, v.stt_language, v.langs, v.noise = "k", "", ["en", "de", "fa"], noise
+        calls = []
+
+        def fake(pcm, clip, language):
+            calls.append(language)
+            return answers[len(calls) - 1] if len(calls) <= len(answers) else ""
+        v._stt = fake
+        return v, calls
+
+    def test_transcribe_accepts_drops_and_retries(self):
+        from voice import tone
+        loud = tone(300, 1500)
+        v, calls = self.stt_voice(["Wie spät ist es?"])
+        self.assertEqual(v.transcribe(loud), "Wie spät ist es?")
+        self.assertEqual((v.last_lang, calls), ("de", [""]))
+        v, calls = self.stt_voice(["你好你好", "Hello there Vector"])
+        self.assertEqual(v.transcribe(loud), "Hello there Vector")  # one forced retry
+        self.assertEqual(calls, ["", "en"])
+        v, calls = self.stt_voice(["ما هي الساعة الآن", "ساعت چند است"])
+        self.assertEqual(v.transcribe(loud), "ساعت چند است")
+        self.assertEqual(calls, ["", "fa"])
+        v, calls = self.stt_voice(["Какая погода", "Какая погода"])
+        self.assertEqual(v.transcribe(loud), "")
+        self.assertTrue(v.last_drop.startswith("lang"))
+        v, calls = self.stt_voice(["nevaşlarında lisanslara."], noise=5000.0)
+        self.assertEqual(v.transcribe(loud), "")  # quieter than the floor: no STT at all
+        self.assertEqual(calls, [])
+        self.assertTrue(v.last_drop.startswith("quiet"))
+
+    def test_dropped_turn_clears_thinking_without_reply(self):
+        import main
+        from voice import tone
+        main.pop_cmds()
+        saved = (main.VOICE._stt, main.VOICE.chat, main.VOICE.key, main.VOICE.noise)
+        chats = []
+        main.VOICE._stt = lambda pcm, clip, language: "今天天气怎么样"
+        main.VOICE.chat = lambda t: chats.append(t) or "reply"
+        main.VOICE.key, main.VOICE.noise = "k", 0.0
+        try:
+            self.assertTrue(main.begin_think("vad"))
+            main.run_turn(tone(300, 1500))
+            cmds = main.pop_cmds()
+            self.assertEqual(cmds[-1], (main.CMD_FACEUI, b"idle|"))
+            self.assertNotIn(main.CMD_SPEAK, [k for k, _ in cmds])
+            self.assertEqual(chats, [])
+            self.assertFalse(main.STATE["thinking"])
+            self.assertTrue(main.STATE["last_drop"])
+        finally:
+            main.VOICE._stt, main.VOICE.chat, main.VOICE.key, main.VOICE.noise = saved
+
+
 try:
     import numpy as _np  # noqa: F401
     import scipy  # noqa: F401

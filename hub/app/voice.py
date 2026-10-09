@@ -30,6 +30,7 @@ import wave
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from api import Api, ApiError
+import lang as langmod
 
 RATE = 16000
 TTS_RATE = 24000  # OpenAI response_format=pcm
@@ -216,7 +217,7 @@ def now_context(now: _dt.datetime | None = None) -> str:
 
 
 def system_prompt(now: _dt.datetime | None = None) -> str:
-    return SYSTEM_PROMPT + "\n" + now_context(now)
+    return SYSTEM_PROMPT + " " + langmod.reply_rule(langmod.allowed()) + "\n" + now_context(now)
 
 
 _MD_LINK = re.compile(r"\[([^\]]*)\]\((?:https?://|www\.)[^)]*\)")
@@ -244,7 +245,8 @@ def speakable(text: str) -> str:
 VECTOR_STYLE = (
     "You are Vector, a small cheerful desk robot. Speak clearly in a bright, friendly, "
     "slightly clipped and evenly paced voice with a hint of robotic precision; curious and "
-    "upbeat, never breathy or whispery. Medium-slow pace."
+    "upbeat, never breathy or whispery. Medium-slow pace. Speak the text in its own language "
+    "(English, German or Persian) with native pronunciation."
 )
 
 
@@ -282,7 +284,7 @@ def short_reply(text: str, limit: int = 0) -> str:
     if len(text) <= limit:
         return text
     out = ""
-    for sent in re.split(r"(?<=[.!?])\s+", text):
+    for sent in re.split(r"(?<=[.!?؟۔])\s+", text):
         if out and len(out) + 1 + len(sent) > limit:
             break
         out = f"{out} {sent}".strip()
@@ -326,8 +328,15 @@ class Voice:
         self.key = os.environ.get("OPENAI_API_KEY", "")
         self.model = os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
         self.stt_model = os.environ.get("OPENAI_TRANSCRIBE_MODEL", "gpt-4o-mini-transcribe")
-        # Pinned language: no Chinese/Welsh guesses on short noisy clips. "" = auto.
-        self.stt_language = os.environ.get("HUB_STT_LANGUAGE", "en").strip()
+        # Spoken languages (HUB_LANGS, default en,de,fa). STT auto-detects with a
+        # prompt naming them; the transcript is then checked (lang.classify) and
+        # anything else is retried once or dropped. HUB_STT_LANGUAGE pins one.
+        self.langs = langmod.allowed()
+        self.stt_language = os.environ.get("HUB_STT_LANGUAGE", "").strip()
+        self.lang_retry = _env_on("HUB_LANG_RETRY", "1")
+        self.drop_ratio = float(os.environ.get("HUB_DROP_RMS_RATIO", "1.2"))
+        self.last_lang = ""
+        self.last_drop = ""
         self.stt_trim = _env_on("HUB_STT_TRIM", "1")
         self.api = Api(self.key)
         self.last_stt: dict = {}
@@ -403,15 +412,48 @@ class Voice:
         return pcm
 
     def transcribe(self, pcm: bytes) -> str:
+        """STT limited to HUB_LANGS. Returns "" for a dropped turn (noise or a
+        language we never speak); last_lang / last_drop say what happened."""
+        self.last_lang, self.last_drop = "", ""
         if not self.key:
             print("voice transcribe skipped; no key", flush=True)
             return ""
-        t0 = time.time()
         clip = trim_silence(pcm) if self.stt_trim else pcm
-        body, ctype = multipart(
-            {"model": self.stt_model, "language": self.stt_language, "response_format": "json"},
-            _wav_wrap(clip),
-        )
+        level, floor = rms(clip), float(getattr(self, "noise", 0.0))
+        secs = len(clip) / (2 * RATE)
+        if floor > 0 and level < self.drop_ratio * floor:
+            self.last_drop = f"quiet rms={level} floor={floor:.0f}"
+            print(f"voice drop {self.last_drop}", flush=True)
+            return ""
+        text = self._stt(pcm, clip, self.stt_language)
+        if not text:
+            return ""
+        lang, why = langmod.classify(text, self.langs)
+        if not lang:
+            loud = floor <= 0 or level >= 2 * floor
+            if self.lang_retry and not self.stt_language and loud and secs >= 1.0 and len(text.strip()) >= 4:
+                force = langmod.retry_language(why, self.langs)
+                print(f"voice lang reject {why} {text[:80]!r}; retry language={force}", flush=True)
+                text2 = self._stt(pcm, clip, force)
+                lang, why2 = langmod.classify(text2, self.langs) if text2 else ("", "empty")
+                if lang:
+                    text = text2
+                else:
+                    why = f"{why}/{why2}"
+            if not lang:
+                self.last_drop = f"lang {why} {text[:80]!r}"
+                print(f"voice drop {self.last_drop} rms={level} floor={floor:.0f} s={secs:.2f}", flush=True)
+                return ""
+        self.last_lang = lang
+        print(f"voice lang={lang} ({why})", flush=True)
+        return text
+
+    def _stt(self, pcm: bytes, clip: bytes, language: str) -> str:
+        t0 = time.time()
+        fields = {"model": self.stt_model, "language": language, "response_format": "json"}
+        if not language:
+            fields["prompt"] = langmod.stt_prompt(self.langs)
+        body, ctype = multipart(fields, _wav_wrap(clip))
         connects = self.api.connects
         try:
             raw = self.api.post("/v1/audio/transcriptions", body, ctype, 20).decode()
@@ -431,6 +473,7 @@ class Voice:
                 "bytes": len(body),
                 "new_tls": self.api.connects - connects,
                 "model": self.stt_model,
+                "language": language or "auto",
             }
             print("stt " + " ".join(f"{k}={v}" for k, v in self.last_stt.items()), flush=True)
 
