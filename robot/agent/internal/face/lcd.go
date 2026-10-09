@@ -488,20 +488,31 @@ func bumpSPIBuf() {
 	_ = os.WriteFile("/sys/module/spidev/parameters/bufsiz", []byte("65536\n"), 0644)
 }
 
+// gpioReady caches pins already exported as outputs so a frame costs one
+// sysfs write per D/C toggle instead of three.
+var gpioReady = map[int]bool{}
+
 func gpioOut(pin, value int) error {
 	base := "/sys/class/gpio/gpio" + strconv.Itoa(pin)
-	if _, err := os.Stat(base); err != nil {
-		_ = os.WriteFile("/sys/class/gpio/export", []byte(strconv.Itoa(pin)+"\n"), 0644)
-		time.Sleep(50 * time.Millisecond)
-	}
-	if err := os.WriteFile(base+"/direction", []byte("out\n"), 0644); err != nil {
-		return err
+	if !gpioReady[pin] {
+		if _, err := os.Stat(base); err != nil {
+			_ = os.WriteFile("/sys/class/gpio/export", []byte(strconv.Itoa(pin)+"\n"), 0644)
+			time.Sleep(50 * time.Millisecond)
+		}
+		if err := os.WriteFile(base+"/direction", []byte("out\n"), 0644); err != nil {
+			return err
+		}
+		gpioReady[pin] = true
 	}
 	v := "0\n"
 	if value != 0 {
 		v = "1\n"
 	}
-	return os.WriteFile(base+"/value", []byte(v), 0644)
+	if err := os.WriteFile(base+"/value", []byte(v), 0644); err != nil {
+		gpioReady[pin] = false
+		return err
+	}
+	return nil
 }
 
 func EOK() {
