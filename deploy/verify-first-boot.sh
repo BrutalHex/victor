@@ -34,9 +34,11 @@ chk "vic-bootAnim stopped" "! systemctl is-active -q vic-bootAnim.service"
 chk "no spi0.0 unsupported mode bits since boot" "! dmesg | grep -q \"spi0.0: setup: unsupported mode bits\""
 chk "agent drop-in on disk (/etc, survives reboot)" "grep -q \"ExecStart=/data/victor/victor-agent run\" /etc/systemd/system/victor-agent.service.d/10-sync.conf"
 chk "running agent is /data/victor/victor-agent" "systemctl show -p ExecStart victor-agent.service | grep -q /data/victor/victor-agent"
-chk "/data agent: spidev1.0 + DDL asset" "/data/victor/victor-agent face-info | grep -q \"spi=/dev/spidev1.0 think=ddl-searching:8+36\""
+# Inspect the binaries, never run them: an older agent treats an unknown
+# subcommand as "run" and would start a second daemon.
+chk "/data agent: spidev1.0 + DDL asset" "grep -aq /dev/spidev1.0 /data/victor/victor-agent && grep -aq victor-face-asset:ddl-knowledgegraph-searching /data/victor/victor-agent"
 warn0() { if eval "$2" >/dev/null 2>&1; then echo "PASS: $1"; else echo "WARN: $1"; fi; }
-warn0 "image /usr/bin/victor-agent has the same face defaults (else: next make ota)" "/usr/bin/victor-agent face-info 2>/dev/null | grep -q \"spi=/dev/spidev1.0 think=ddl-searching:8+36\""
+warn0 "image /usr/bin/victor-agent has the same face defaults (else: next make ota)" "grep -aq /dev/spidev1.0 /usr/bin/victor-agent && grep -aq victor-face-asset:ddl-knowledgegraph-searching /usr/bin/victor-agent"
 # telemetry.log: hard 1 MiB cap (current + .1)
 T=$(( $(cat /data/victor/telemetry.log 2>/dev/null | wc -c) + $(cat /data/victor/telemetry.log.1 2>/dev/null | wc -c) ))
 chk "telemetry.log + .1 = $T bytes <= 1 MiB" "[ $T -le 1048576 ]"
