@@ -16,6 +16,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"sync"
 	"sync/atomic"
@@ -86,6 +87,7 @@ func encodeMsg(id uint32, payload []byte) []byte {
 func (a *Anki) Run(stop <-chan struct{}) {
 	for {
 		err := a.session(stop)
+		log.Printf("camera session ended: %v", err)
 		a.mu.Lock()
 		a.closeLocked()
 		if err != nil {
@@ -211,6 +213,7 @@ func (a *Anki) session(stop <-chan struct{}) error {
 			a.mem = mem
 			a.lastID = 0
 			a.mu.Unlock()
+			log.Printf("camera buffer %d bytes magic=%q", size, string(mem[:4]))
 		case s2cStatus:
 			switch buf[16] {
 			case c2sRegister:
@@ -229,6 +232,7 @@ func (a *Anki) session(stop <-chan struct{}) error {
 				a.status = "running"
 				a.Err = ""
 				a.mu.Unlock()
+				log.Printf("camera running")
 			case c2sUnregister:
 				return errors.New("server unregistered us")
 			}
@@ -283,5 +287,8 @@ func (a *Anki) Latest() (*Frame, error) {
 	f.Data = append([]byte(nil), h[frameHdrLen:frameHdrLen+n]...)
 	a.lastID = f.ID
 	a.Frames++
+	if a.Frames == 1 {
+		log.Printf("camera first frame id=%d %dx%d stride=%d fmt=%d bpp=%d", f.ID, f.W, f.H, f.Stride, f.Format, h[24])
+	}
 	return f, nil
 }

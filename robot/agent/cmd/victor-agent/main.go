@@ -556,10 +556,14 @@ func cameraLoop(hub *telem.Hub, lnk *link.Client) {
 	n := 0
 	lastLog := time.Now()
 	for range t.C {
+		t0 := time.Now()
 		full, nav, err := camera.Snapshot()
-		if time.Since(lastLog) > time.Minute {
+		if full != nil && n < 3 {
+			fmt.Printf("camera snapshot %v\n", time.Since(t0))
+		}
+		if time.Since(lastLog) > 15*time.Second {
 			st, frames, cerr := camera.Daemon.Status()
-			fmt.Printf("camera %s frames=%d sent=%d err=%q\n", st, frames, n, cerr)
+			fmt.Printf("camera %s frames=%d sent=%d err=%q last=%v\n", st, frames, n, cerr, err)
 			lastLog = time.Now()
 		}
 		if err != nil || full == nil {
