@@ -192,12 +192,8 @@ def _on_audio(pcm: bytes) -> None:
     if not speech_like(utt):
         print(f"voice skip rumble {len(utt)} bytes rms={VOICE.last_rms} noise={int(VOICE.noise)}", flush=True)
         return
-    with LOCK:
-        if STATE.get("voice_busy"):
-            return
-        STATE["voice_busy"] = True
-        STATE["thinking"] = True
-    queue_cmd(CMD_FACEUI, b"thinking|")
+    if not begin_think("vad"):
+        return
     print(f"voice utterance {len(utt)} bytes rms={VOICE.last_rms} noise={int(VOICE.noise)}", flush=True)
     try:
         os.makedirs("/app/data", exist_ok=True)
@@ -207,29 +203,144 @@ def _on_audio(pcm: bytes) -> None:
     _enqueue_utterance(utt)
 
 
+THINK_REFRESH_S = float(os.environ.get("HUB_THINK_REFRESH", "4"))
+THINK_MAX_S = float(os.environ.get("HUB_THINK_MAX", "120"))
+THINK = {"t0": 0.0, "sent": 0.0, "why": ""}
+
+
+def _ms() -> str:
+    """UTC with ms; the agent logs the same format so the two line up."""
+    t = time.time()
+    return time.strftime("%H:%M:%S", time.gmtime(t)) + f".{int(t * 1000) % 1000:03d}Z"
+
+
+def begin_think(why: str) -> bool:
+    """Start one reply turn: busy (mic closed), thinking face on the robot.
+
+    False if a turn is already running. Every True must be paired with
+    end_think (voice_loop / speak_turn do it in finally)."""
+    now = time.time()
+    with LOCK:
+        if STATE.get("voice_busy"):
+            return False
+        STATE["voice_busy"] = True
+        STATE["thinking"] = True
+        THINK.update(t0=now, sent=now, why=why)
+        PENDING.append((CMD_FACEUI, b"thinking|"))
+    print(f"think on {_ms()} why={why}", flush=True)
+    return True
+
+
+def end_think(audio: bytes = b"", why: str = "done", show: bytes = b"") -> None:
+    """Finish the turn. The speech goes out before idle in the same batch, so
+    the robot drops the thinking face exactly when playback starts; with no
+    audio (error, empty transcript) idle clears it at once. No keepalive can
+    slip in after this: thinking is cleared under the same lock."""
+    with LOCK:
+        held = time.time() - THINK["t0"] if THINK["t0"] else 0.0
+        STATE["thinking"] = False
+        STATE["voice_busy"] = False
+        THINK.update(t0=0.0, sent=0.0, why="")
+        if show:  # e.g. name|Ann: replaces thinking, shown while it speaks
+            PENDING.append((CMD_FACEUI, show))
+        if audio:
+            PENDING.append((CMD_SPEAK, audio))
+        if not show:
+            PENDING.append((CMD_FACEUI, b"idle|"))
+    print(f"think off {_ms()} why={why} held={held:.1f}s speak={len(audio)}", flush=True)
+
+
+def think_keepalive(now: float | None = None) -> bool:
+    """Re-send thinking every THINK_REFRESH_S while a turn runs. The agent
+    drops a thinking face that is not refreshed (hub restart, lost idle), so
+    a slow TTS stays covered and nothing can stay stuck. After THINK_MAX_S the
+    turn is considered hung: stop refreshing and let the robot clear."""
+    now = time.time() if now is None else now
+    with LOCK:
+        if not STATE.get("thinking") or not THINK["t0"]:
+            return False
+        if now - THINK["t0"] > THINK_MAX_S:
+            return False
+        if now - THINK["sent"] < THINK_REFRESH_S:
+            return False
+        if any(k == CMD_FACEUI and p == b"thinking|" for k, p in PENDING):
+            return False  # robot offline; one queued refresh is enough
+        THINK["sent"] = now
+        PENDING.append((CMD_FACEUI, b"thinking|"))
+    return True
+
+
+def think_loop() -> None:
+    while True:
+        time.sleep(0.5)
+        think_keepalive()
+
+
+def reply_turn(pcm: bytes) -> tuple[str, str, bytes]:
+    """STT -> chat (web search) -> TTS, timed. Thinking stays on throughout."""
+    t = time.time()
+    text = VOICE.transcribe(pcm)
+    t_stt = time.time()
+    reply = VOICE.chat(text) if text else ""
+    t_chat = time.time()
+    audio = VOICE.tts(reply) if reply else b""
+    t_tts = time.time()
+    print(
+        f"voice timing end={_ms()}  stt={int((t_stt - t) * 1000)}ms chat={int((t_chat - t_stt) * 1000)}ms "
+        f"tts={int((t_tts - t_chat) * 1000)}ms via={getattr(VOICE, 'last_via', '')}",
+        flush=True,
+    )
+    return text, reply, audio
+
+
 def voice_loop() -> None:
     """One OpenAI turn at a time. Mic stays closed until the reply is queued."""
     while True:
-        pcm = UTTERANCES.get()
-        queue_cmd(CMD_FACEUI, b"thinking|")
-        text = VOICE.transcribe(pcm)
-        reply = VOICE.chat(text) if text else ""
-        audio = VOICE.tts(reply) if reply else b""
-        VOICE.last_text = text
-        VOICE.last_reply = reply
+        run_turn(UTTERANCES.get())
+
+
+def run_turn(pcm: bytes) -> None:
+    """One reply turn; thinking is always cleared, even if a call raises."""
+    with LOCK:
+        running = bool(STATE.get("thinking"))
+    if not running:  # turn was not opened by _on_audio (tests, /record)
+        begin_think("queue")
+    text, reply, audio, why = "", "", b"", "done"
+    try:
+        text, reply, audio = reply_turn(pcm)
+        if not audio:
+            why = "no-reply" if text else "no-transcript"
+    except Exception as exc:  # noqa: BLE001 - never leave the face thinking
+        why = f"error {type(exc).__name__}"
+        print(f"voice turn failed {exc!r}", flush=True)
+    finally:
         VOICE.thinking = False
         with LOCK:
-            STATE["thinking"] = False
-            STATE["voice_busy"] = False
             STATE["last_transcript"] = text
             STATE["last_reply"] = reply
             STATE["last_searched"] = bool(getattr(VOICE, "last_searched", False))
             STATE["last_via"] = getattr(VOICE, "last_via", "")
             STATE["last_chat_ms"] = getattr(VOICE, "last_chat_ms", 0)
-        if audio:
-            queue_cmd(CMD_SPEAK, audio)
-        queue_cmd(CMD_FACEUI, b"idle|")
-        print(f"voice transcript={text!r} reply={reply!r} speak={len(audio)}", flush=True)
+        end_think(audio, why)
+    print(f"voice transcript={text!r} reply={reply!r} speak={len(audio)}", flush=True)
+
+
+def speak_turn(text: str, why: str, show: bytes = b"") -> int:
+    """TTS outside a voice turn (/say, face greeting) under the same thinking
+    face. If a voice turn is running it owns the face; just queue the audio."""
+    own = begin_think(why)
+    pcm = b""
+    try:
+        pcm = VOICE.tts(text) if text else tone()
+    except Exception as exc:  # noqa: BLE001
+        print(f"speak {why} failed {exc!r}", flush=True)
+        pcm = b""
+    finally:
+        if own:
+            end_think(pcm, why, show)
+        elif pcm:
+            queue_cmd(CMD_SPEAK, pcm)
+    return len(pcm)
 
 
 def _on_nav_frame(jpeg: bytes) -> None:
@@ -254,10 +365,17 @@ def _on_face_frame(jpeg: bytes) -> None:
         return
     LAST_FACE_SPOKEN["name"] = name
     LAST_FACE_SPOKEN["t"] = now
-    queue_cmd(CMD_FACEUI, f"name|{name}".encode())
-    spoken = VOICE.tts(name) if VOICE.key else tone(660, 250)
-    if spoken:
-        queue_cmd(CMD_SPEAK, spoken)
+    with LOCK:
+        busy = bool(STATE.get("voice_busy"))
+    if busy:
+        return  # don't talk over a reply turn
+    show = f"name|{name}".encode()
+    if VOICE.key:
+        # Thinking while the name is synthesised, then name + speech.
+        threading.Thread(target=speak_turn, args=(name, "face", show), daemon=True).start()
+    else:
+        queue_cmd(CMD_FACEUI, show)
+        queue_cmd(CMD_SPEAK, tone(660, 250))
 
 
 def handle_robot(conn: socket.socket) -> None:
@@ -408,23 +526,19 @@ class Status(BaseHTTPRequestHandler):
             return
         if path == "/think":
             on = bool(data.get("on", True))
-            with LOCK:
-                STATE["thinking"] = on
-            queue_cmd(CMD_FACEUI, b"thinking|" if on else b"idle|")
-            self._json({"thinking": on})
+            if on:
+                ok = begin_think("http")
+            else:
+                end_think(why="http")
+                ok = True
+            self._json({"thinking": on, "ok": ok})
             return
         if path == "/say":
             text = str(data.get("text") or "")
+            n = speak_turn(text, "say")
             with LOCK:
-                STATE["thinking"] = True
-            queue_cmd(CMD_FACEUI, b"thinking|")
-            pcm = VOICE.tts(text) if text else tone()
-            queue_cmd(CMD_SPEAK, pcm)
-            queue_cmd(CMD_FACEUI, b"idle|")
-            with LOCK:
-                STATE["thinking"] = False
                 STATE["last_reply"] = text
-            self._json({"ok": True, "bytes": len(pcm)})
+            self._json({"ok": n > 0, "bytes": n})
             return
         self.send_error(404)
 
@@ -500,6 +614,7 @@ def main() -> None:
     tcp_port = int(os.environ.get("HUB_SKILL_PORT", "7443"))
     http_port = int(os.environ.get("HUB_HTTP_PORT", "8080"))
     threading.Thread(target=voice_loop, daemon=True).start()
+    threading.Thread(target=think_loop, daemon=True).start()
     threading.Thread(target=udp_loop, args=(host, udp_sensor), daemon=True).start()
     threading.Thread(target=udp_loop, args=(host, udp_audio), daemon=True).start()
     threading.Thread(target=udp_loop, args=(host, udp_video), daemon=True).start()

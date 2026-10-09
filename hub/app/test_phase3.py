@@ -264,5 +264,154 @@ class DateAndSearch(unittest.TestCase):
         v._post = lambda url, payload, timeout: {"choices": [{"message": {"content": "Hi."}}]}
         self.assertEqual(v.chat("hi"), "Hi.")
 
+class ThinkingTurn(unittest.TestCase):
+    """Thinking covers VAD end -> STT -> chat/search -> TTS, then speech goes
+    out before idle in one batch; every error path still clears it."""
+
+    def setUp(self):
+        import main
+        self.m = main
+        main.pop_cmds()
+        with main.LOCK:
+            main.STATE["thinking"] = False
+            main.STATE["voice_busy"] = False
+            main.THINK.update(t0=0.0, sent=0.0, why="")
+        self.saved = (main.VOICE.transcribe, main.VOICE.chat, main.VOICE.tts)
+        self.seen = []
+
+    def tearDown(self):
+        m = self.m
+        m.VOICE.transcribe, m.VOICE.chat, m.VOICE.tts = self.saved
+        m.pop_cmds()
+
+    def faceui(self):
+        return [(k, p) for k, p in self.m.pop_cmds()]
+
+    def stub(self, text="hi", reply="hello", audio=b"\x01\x00" * 8, fail=None):
+        m = self.m
+
+        def busy(tag):
+            with m.LOCK:
+                self.seen.append((tag, m.STATE["thinking"], m.STATE["voice_busy"]))
+
+        def stt(pcm):
+            busy("stt")
+            if fail == "stt":
+                raise RuntimeError("boom")
+            return text
+
+        def chat(t):
+            busy("chat")
+            if fail == "chat":
+                raise ValueError("bad json")
+            return reply
+
+        def tts(r):
+            busy("tts")
+            if fail == "tts":
+                raise KeyError("x")
+            return audio
+
+        m.VOICE.transcribe, m.VOICE.chat, m.VOICE.tts = stt, chat, tts
+
+    def test_on_during_every_call_speak_before_idle(self):
+        m = self.m
+        self.stub()
+        self.assertTrue(m.begin_think("vad"))
+        m.run_turn(b"\x00" * 100)
+        self.assertEqual(self.seen, [("stt", True, True), ("chat", True, True), ("tts", True, True)])
+        cmds = self.faceui()
+        self.assertEqual(cmds[0], (m.CMD_FACEUI, b"thinking|"))
+        self.assertEqual([k for k, _ in cmds[-2:]], [m.CMD_SPEAK, m.CMD_FACEUI])
+        self.assertEqual(cmds[-1][1], b"idle|")
+        self.assertFalse(m.STATE["thinking"])
+        self.assertFalse(m.STATE["voice_busy"])
+
+    def test_errors_always_clear(self):
+        m = self.m
+        for fail in ("stt", "chat", "tts"):
+            self.stub(fail=fail)
+            m.begin_think("vad")
+            m.run_turn(b"\x00" * 100)
+            cmds = self.faceui()
+            self.assertEqual(cmds[-1], (m.CMD_FACEUI, b"idle|"), fail)
+            self.assertNotIn(m.CMD_SPEAK, [k for k, _ in cmds], fail)
+            self.assertFalse(m.STATE["thinking"], fail)
+            self.assertFalse(m.STATE["voice_busy"], fail)
+
+    def test_empty_transcript_and_reply_clear(self):
+        m = self.m
+        for text, reply in (("", ""), ("hi", "")):
+            self.stub(text=text, reply=reply)
+            m.run_turn(b"\x00" * 100)  # also opens the turn itself
+            cmds = self.faceui()
+            self.assertEqual(cmds[0], (m.CMD_FACEUI, b"thinking|"))
+            self.assertEqual(cmds[-1], (m.CMD_FACEUI, b"idle|"))
+            self.assertFalse(m.STATE["voice_busy"])
+
+    def test_keepalive_refreshes_then_gives_up(self):
+        m = self.m
+        m.begin_think("vad")
+        t0 = m.THINK["t0"]
+        self.faceui()
+        self.assertFalse(m.think_keepalive(t0 + 1))
+        self.assertTrue(m.think_keepalive(t0 + m.THINK_REFRESH_S + 0.1))
+        # robot offline: refresh not piled up
+        self.assertFalse(m.think_keepalive(t0 + 2 * m.THINK_REFRESH_S + 0.2))
+        self.faceui()
+        self.assertTrue(m.think_keepalive(t0 + 3 * m.THINK_REFRESH_S))
+        self.faceui()
+        # slow TTS (~30 s) still covered
+        self.assertTrue(m.think_keepalive(t0 + 31))
+        self.faceui()
+        # hung turn: stop refreshing so the robot clears on its own
+        self.assertFalse(m.think_keepalive(t0 + m.THINK_MAX_S + 1))
+        m.end_think()
+        self.assertFalse(m.think_keepalive(t0 + 40))
+
+    def test_no_refresh_after_end(self):
+        m = self.m
+        m.begin_think("vad")
+        m.end_think(b"\x01\x00", "done")
+        self.faceui()
+        self.assertFalse(m.think_keepalive())
+        self.assertEqual(self.faceui(), [])
+
+    def test_second_turn_rejected_while_busy(self):
+        m = self.m
+        self.assertTrue(m.begin_think("vad"))
+        self.assertFalse(m.begin_think("face"))
+        m.end_think()
+
+    def test_say_owns_turn_and_clears_on_error(self):
+        m = self.m
+        self.stub(fail="tts")
+        self.assertEqual(m.speak_turn("hello", "say"), 0)
+        cmds = self.faceui()
+        self.assertEqual(cmds, [(m.CMD_FACEUI, b"thinking|"), (m.CMD_FACEUI, b"idle|")])
+        self.stub()
+        self.assertGreater(m.speak_turn("hello", "say"), 0)
+        cmds = self.faceui()
+        self.assertEqual([k for k, _ in cmds], [m.CMD_FACEUI, m.CMD_SPEAK, m.CMD_FACEUI])
+        self.assertFalse(m.STATE["voice_busy"])
+
+    def test_face_greeting_thinks_then_shows_name(self):
+        m = self.m
+        self.stub()
+        m.speak_turn("Ann", "face", b"name|Ann")
+        self.assertEqual(self.faceui(), [(m.CMD_FACEUI, b"thinking|"), (m.CMD_FACEUI, b"name|Ann"), (m.CMD_SPEAK, b"\x01\x00" * 8)])
+        self.assertFalse(m.STATE["thinking"])
+
+    def test_say_during_turn_leaves_face_alone(self):
+        m = self.m
+        self.stub()
+        m.begin_think("vad")
+        self.faceui()
+        m.speak_turn("hello", "say")
+        self.assertEqual([k for k, _ in self.faceui()], [m.CMD_SPEAK])
+        self.assertTrue(m.STATE["thinking"])
+        m.end_think()
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -496,67 +496,12 @@ func watchdog(ssh *sshctl.Controller, hub *telem.Hub, body *spine.Body, ui *uiSt
 	}
 }
 
-type uiState struct {
-	mu         sync.Mutex
-	mode       string
-	caption    string
-	until      time.Time
-	thinkStart time.Time
-	muteUntil  time.Time
-	lastDrawn  string
-}
-
-func (u *uiState) thinking() bool {
-	if u == nil {
-		return false
-	}
-	u.mu.Lock()
-	defer u.mu.Unlock()
-	return u.mode == "thinking"
-}
-
-// muteFor keeps the mic stream closed while the speaker plays.
-func (u *uiState) muteFor(d time.Duration) {
-	if u == nil {
-		return
-	}
-	u.mu.Lock()
-	defer u.mu.Unlock()
-	u.muteUntil = time.Now().Add(d)
-}
-
-func (u *uiState) muted() bool {
-	if u == nil {
-		return false
-	}
-	u.mu.Lock()
-	defer u.mu.Unlock()
-	return time.Now().Before(u.muteUntil)
-}
-
-func (u *uiState) set(mode, caption string, d time.Duration) {
-	if u == nil {
-		return
-	}
-	u.mu.Lock()
-	defer u.mu.Unlock()
-	u.mode, u.caption = mode, caption
-	if d > 0 {
-		u.until = time.Now().Add(d)
-	} else {
-		u.until = time.Time{}
-	}
-	if mode == "thinking" {
-		u.thinkStart = time.Now()
-	}
-	u.lastDrawn = ""
-}
-
 func renderFace(u *uiState, reason veto.Reason) {
 	if u == nil {
 		return
 	}
 	u.mu.Lock()
+	u.expireLocked(time.Now())
 	mode, cap, until, t0 := u.mode, u.caption, u.until, u.thinkStart
 	if !until.IsZero() && time.Now().After(until) && mode != "thinking" {
 		u.mode, u.caption, mode, cap = "idle", "", "idle", ""
@@ -629,7 +574,11 @@ func cmdLoop(lnk *link.Client, ui *uiState, proc *audio.Processor) {
 			proc.NotePlayback(cmd.Payload)
 			playFor := time.Duration(len(cmd.Payload)/2) * time.Second / audio.Rate
 			ui.muteFor(playFor + 500*time.Millisecond)
+			// The reply is ready: thinking ends the moment the speaker starts.
+			ui.speakStart()
+			fmt.Printf("play start %s %dms\n", stamp(time.Now()), playFor.Milliseconds())
 			_ = audio.Play(cmd.Payload)
+			fmt.Printf("play end %s\n", stamp(time.Now()))
 			ui.muteFor(400 * time.Millisecond)
 		case link.CmdDisplay:
 			if len(cmd.Payload) == face.Bytes {
