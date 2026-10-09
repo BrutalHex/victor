@@ -52,6 +52,43 @@ PENDING: list[tuple[int, bytes]] = []
 UTTERANCES: queue.Queue[bytes] = queue.Queue(maxsize=2)
 LAST_JPEG = {"nav": b"", "face": b""}
 LAST_FACE_SPOKEN = {"name": "", "t": 0.0}
+# Mic test recorder (POST /record). While it runs the VAD/OpenAI turn is paused so
+# the file is the continuous robot stream, not VAD-gated pieces.
+REC = {"active": False, "buf": bytearray()}
+REC_DIR = "/app/data/rec"
+
+
+class SeqDedupe:
+    """The agent sends every media packet on UDP and again on the TCP link.
+
+    Feeding both copies to the VAD doubles and interleaves the stream (half the
+    20 ms packets play twice, out of order), which sounds like a buzzing comb.
+    Keep the first copy of each seq. A seq far below the newest one means the
+    agent restarted and its counter began again.
+    """
+
+    def __init__(self, window: int = 4096) -> None:
+        self.window = window
+        self.seen: set[int] = set()
+        self.newest = -1
+
+    def first(self, seq: int) -> bool:
+        if self.newest >= 0 and seq < self.newest - self.window:
+            self.seen.clear()
+            self.newest = -1
+        if seq in self.seen:
+            return False
+        self.seen.add(seq)
+        if seq > self.newest:
+            self.newest = seq
+        if len(self.seen) > self.window * 2:
+            floor = self.newest - self.window
+            self.seen = {s for s in self.seen if s >= floor}
+        return True
+
+
+AUDIO_SEQ = SeqDedupe()
+VIDEO_SEQ = SeqDedupe()
 CMD_FACEUI, CMD_SPEAK, CMD_DISPLAY = 1, 2, 3
 
 
@@ -102,11 +139,19 @@ def _ingest_vct1(buf: bytes, src: str = "") -> None:
         return
     if hdr.type == TYPE_AUDIO:
         with LOCK:
+            if not AUDIO_SEQ.first(hdr.seq):
+                STATE["audio_dup"] = STATE.get("audio_dup", 0) + 1
+                return
             STATE["audio"] += 1
+            if REC["active"]:
+                REC["buf"] += payload
+                return
         _on_audio(payload)
         return
     if hdr.type == TYPE_VIDEO:
         with LOCK:
+            if not VIDEO_SEQ.first(hdr.seq):
+                return
             STATE["video"] += 1
         if hdr.flags & FLAG_FACE:
             LAST_JPEG["face"] = payload
@@ -355,6 +400,9 @@ class Status(BaseHTTPRequestHandler):
             except ValueError as e:
                 self._json({"ok": False, "error": str(e)}, 400)
             return
+        if path == "/record":
+            self._json(*record(data))
+            return
         if path == "/think":
             on = bool(data.get("on", True))
             with LOCK:
@@ -376,6 +424,45 @@ class Status(BaseHTTPRequestHandler):
             self._json({"ok": True, "bytes": len(pcm)})
             return
         self.send_error(404)
+
+
+def _safe_name(name: str) -> str:
+    keep = "".join(c for c in name if c.isalnum() or c in "-_.")
+    return keep.strip(".")[:64] or time.strftime("rec-%Y%m%d-%H%M%S")
+
+
+def record(data: dict) -> tuple[dict, int]:
+    """Record the raw robot mic stream for N seconds to /app/data/rec/<name>.wav.
+
+    {"secs": 20, "name": "baseline", "transcribe": true}. Transcription uses the
+    same hub STT as a voice turn (OpenAI, key on the hub only).
+    """
+    try:
+        secs = float(data.get("secs") or 10)
+    except (TypeError, ValueError):
+        return {"ok": False, "error": "secs"}, 400
+    secs = max(1.0, min(secs, 120.0))
+    name = _safe_name(str(data.get("name") or ""))
+    with LOCK:
+        if REC["active"]:
+            return {"ok": False, "error": "busy"}, 409
+        REC["active"] = True
+        REC["buf"] = bytearray()
+    try:
+        time.sleep(secs)
+    finally:
+        with LOCK:
+            REC["active"] = False
+            pcm = bytes(REC["buf"])
+            REC["buf"] = bytearray()
+    os.makedirs(REC_DIR, exist_ok=True)
+    path = os.path.join(REC_DIR, name + ".wav")
+    with open(path, "wb") as f:
+        f.write(_wav_wrap(pcm))
+    out = {"ok": True, "path": path, "seconds": round(len(pcm) / 2 / 16000, 2), "bytes": len(pcm)}
+    if data.get("transcribe") and pcm:
+        out["transcript"] = VOICE.transcribe(pcm)
+    return out, 200
 
 
 UI_HTML = """<!doctype html><html><head><meta charset="utf-8"><title>victor hub</title>

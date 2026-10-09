@@ -32,8 +32,14 @@ type Frame struct {
 }
 
 const (
-	packedMin  = 95
-	micOffset  = 125
+	packedMin = 95
+	// audio[] follows touchLevel, micError, touchHires and _unused[24] in the
+	// packed BodyToHead (robot/syscon/schema/messages.h): 4+1+1+2 header,
+	// 4×12 motors, 4×2 cliffs, 12 battery, 16 range, 3×4 touch/mic/hires,
+	// 24 spare = 128, and 128 + 640 = the 768-byte dataframe. 125 put the
+	// low byte of each sample in the high byte of the next: a quiet room read
+	// as ±1000 hiss and any voice wrapped into full-scale white noise.
+	micOffset  = 128
 	micSamples = 320
 	micBytes   = micSamples * 2
 )
