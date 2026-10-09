@@ -259,6 +259,18 @@ def vector_voice(raw24k: bytes) -> bytes:
     return voicefx.resample(pcm, TTS_RATE, RATE)
 
 
+def warm_fx() -> float:
+    """Run the chain once on 0.3 s of silence so the first real reply does not
+    pay scipy's import/filter-design cost (measured ~2 s cold on the laptop).
+    Returns ms spent, or -1 when the chain is unavailable."""
+    t = time.perf_counter()
+    try:
+        vector_voice(bytes(int(TTS_RATE * 0.3) * 2))
+    except Exception:
+        return -1.0
+    return (time.perf_counter() - t) * 1000
+
+
 REPLY_MAX_CHARS = int(os.environ.get("HUB_REPLY_MAX_CHARS", "300"))
 MAX_SPEAK_S = 55  # the robot link drops commands over 2 MiB (~65 s of 16 kHz PCM)
 
@@ -327,6 +339,9 @@ class Voice:
         self.tts_instructions = os.environ.get("HUB_VOICE_INSTRUCTIONS", VECTOR_STYLE)
         self.last_tts_raw = b""
         self.last_fx_ms = 0
+        if _env_on("HUB_VOICE_VECTOR", "1"):
+            import threading
+            threading.Thread(target=lambda: print(f"tts fx warm ms={warm_fx():.0f}", flush=True), daemon=True).start()
         # Live web via the Responses API web_search tool (gpt-4o-mini supports it).
         self.web_search = _env_on("HUB_WEB_SEARCH", "1")
         self.search_model = os.environ.get("HUB_SEARCH_MODEL", "") or self.model

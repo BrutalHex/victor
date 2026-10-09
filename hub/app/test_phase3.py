@@ -508,6 +508,10 @@ class VectorVoice(unittest.TestCase):
         c.update(kw)
         return c
 
+    def test_warm_fx_runs(self):
+        import voice
+        self.assertGreaterEqual(voice.warm_fx(), 0.0)
+
     def test_pitch_raised_by_semitones(self):
         import voicefx
         x = self.harmonic(120)
