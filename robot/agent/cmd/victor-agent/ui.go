@@ -32,6 +32,7 @@ type uiState struct {
 	thinkFrame uint64        // face.FramesSent at think on
 	frames     func() uint64 // tests
 	muteUntil  time.Time
+	gx, gy     float64 // idle-life eye gaze offset
 	lastDrawn  string
 	now        func() time.Time // tests
 	log        func(string)     // tests
@@ -162,4 +163,13 @@ func (u *uiState) currentMode() string {
 	u.mu.Lock()
 	defer u.mu.Unlock()
 	return u.mode
+}
+
+func (u *uiState) setGaze(x, y float64) {
+	if u == nil {
+		return
+	}
+	u.mu.Lock()
+	u.gx, u.gy = x, y
+	u.mu.Unlock()
 }

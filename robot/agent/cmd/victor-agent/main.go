@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/BrutalHex/victor/robot/agent/internal/action"
+	"github.com/BrutalHex/victor/robot/agent/internal/idle"
 	"github.com/BrutalHex/victor/robot/agent/internal/anki"
 	"github.com/BrutalHex/victor/robot/agent/internal/audio"
 	"github.com/BrutalHex/victor/robot/agent/internal/blemask"
@@ -224,6 +225,9 @@ func runDaemon() int {
 	go cmdLoop(lnk, ui, proc, actCh)
 	runner := &action.Runner{Log: func(l string) { fmt.Println(l) }}
 	pet := &petting{ui: ui}
+	life := idle.New(time.Now().UnixNano())
+	var snd idle.SoundDetector
+	soundHit, motorNoise := false, false
 	face.Boot()
 	var lastFaceAt time.Time
 	// Status files: rewritten on change at most 2/s (was ~300 writes/s).
@@ -357,9 +361,30 @@ func runDaemon() int {
 					status.Put("/data/victor/action.txt", runner.Name()+" "+out.Done+"\n")
 				}
 			}
+			// Idle life: glances, head fidgets, look toward a sound. Head only;
+			// never wheels or lift. Only when nothing else owns the face/motors.
+			if have && !runner.Active() && !idle.Disabled() && ui.currentMode() == "idle" && !pet.touching() &&
+				reason != veto.Battery && reason != veto.Fall && reason != veto.Pickup && reason != veto.Cliff {
+				o := life.Tick(idle.In{Now: time.Now(), Head: fr.Motors[3].Pos, HaveHead: true, Sound: soundHit, SoundDir: proc.Direction()})
+				if o.Head != 0 {
+					pwm[3] = o.Head
+				}
+				ui.setGaze(o.LookX, o.LookY)
+				if o.Event != "" {
+					fmt.Printf("idle %s head=%d dir=%d gaze=%.2f,%.2f\n", o.Event, fr.Motors[3].Pos, proc.Direction(), o.LookX, o.LookY)
+				}
+			} else {
+				life.Pause(time.Now())
+				ui.setGaze(0, 0)
+			}
+			soundHit = false
+			motorNoise = pwm[3] > 2000 || pwm[3] < -2000 || pwm[2] > 2000 || pwm[2] < -2000 || pwm[0] != 0 || pwm[1] != 0
 			if body != nil {
 				body.SetDrive(pwm)
 				if mic := body.DrainMic(); len(mic) > 0 {
+					if en := audio.Energies(mic); snd.Feed(max(en[0], en[1], en[2], en[3]), ui.muted() || motorNoise) {
+						soundHit = true
+					}
 					if time.Since(lastMicLog) >= time.Second {
 						e := audio.Energies(mic)
 						_ = os.WriteFile("/data/victor/mics.txt", []byte(fmt.Sprintf("%d,%d,%d,%d dir=%d mode=%s ch=%d gain=%.1f\n", e[0], e[1], e[2], e[3], proc.Direction(), proc.Mode(), proc.Channel(), proc.Gain())), 0644)
@@ -562,6 +587,7 @@ func renderFace(u *uiState, reason veto.Reason) {
 	u.mu.Lock()
 	u.expireLocked(time.Now())
 	mode, cap, until, t0 := u.mode, u.caption, u.until, u.thinkStart
+	gx, gy := u.gx, u.gy
 	if !until.IsZero() && time.Now().After(until) && mode != "thinking" {
 		u.mode, u.caption, mode, cap = "idle", "", "idle", ""
 	}
@@ -608,8 +634,8 @@ func renderFace(u *uiState, reason veto.Reason) {
 		face.Blit(face.EyesCaption(strings.ToUpper(reason.String()), face.Red))
 		return
 	}
-	lx := 0.15 * math.Sin(float64(time.Now().UnixMilli())/900.0)
-	face.Blit(face.EyesFrame(lx, 0, blink))
+	lx := gx + 0.15*math.Sin(float64(time.Now().UnixMilli())/900.0)
+	face.Blit(face.EyesFrame(lx, gy, blink))
 }
 
 // Camera rates. The robot's CPU runs at 400-730 MHz: Go JPEG encoding costs

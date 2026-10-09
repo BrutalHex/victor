@@ -90,3 +90,5 @@ func (p *petting) maybePurr(now time.Time) {
 	p.purrUntil = now.Add(2 * time.Second)
 	go play(pcm)
 }
+
+func (p *petting) touching() bool { return p != nil && p.d.Touching() }

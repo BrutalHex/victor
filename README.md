@@ -113,3 +113,10 @@ shows the last one under `last_intent`. Set `HUB_INTENTS=0` in `.env` to switch 
 Stroke Vector's back: after ~0.4 s the eyes go to happy squints, growing to the "^ ^" bliss face the
 longer you pet, with a soft purr when the speaker is free. Letting go plays the "get out" face. The
 agent writes the live sensor to `/data/victor/touch.txt`. Touch never reaches the charge latch.
+
+## Idle life
+
+While nothing else is going on (no turn, action, petting or veto), the agent glances its eyes around every
+5-12 s, sometimes nudges its head up or down, and glances (eyes + head up) toward a sudden sound. Head only:
+no wheels, no lift (the lift is part of the SSH latch gesture). `touch /data/victor/idle-life.disabled`
+on the robot turns it off. Driving wander stays behind `/data/victor/explore.enabled` (off).
