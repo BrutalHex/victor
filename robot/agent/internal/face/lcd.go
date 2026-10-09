@@ -14,7 +14,6 @@ import (
 )
 
 const (
-	spiDev    = "/dev/spidev0.0"
 	fbDev     = "/dev/fb0"
 	gpioDC    = 110
 	cmdCASET  = 0x2A
@@ -160,6 +159,16 @@ func waitAnimGone(max time.Duration) {
 	}
 }
 
+// spiDev is the face panel. Stock vic-anim, vic-bootAnim, vic-faultCodeDisplay
+// and WireOS lcd.c all use /dev/spidev1.0; /dev/spidev0.0 is the IMU
+// (vic-robot, spi_imu.h). VICTOR_FACE_SPI overrides it for experiments.
+var spiDev = func() string {
+	if v := os.Getenv("VICTOR_FACE_SPI"); v != "" {
+		return v
+	}
+	return "/dev/spidev1.0"
+}()
+
 // PowerMode reads RDDPM (0x0A). Bit 4 = sleep out, bit 2 = display on, bit 7
 // = booster on. Only meaningful if the panel's SDA is readable; zero or 0xff
 // means nothing came back.
@@ -179,16 +188,7 @@ func PowerMode() (full byte, threeWire byte, err error) {
 	if err := spiXfer(f, []byte{0x0A, 0x00}, rx); err == nil {
 		full = rx[1]
 	}
-	// 3-wire: command out, then a read-only transfer on the same line.
-	mode := uint8(0x10)
-	if ioctl(f, 0x40016b01, uintptr(unsafe.Pointer(&mode))) == nil {
-		one := make([]byte, 1)
-		if spiXfer(f, []byte{0x0A}, nil) == nil && spiXfer(f, nil, one) == nil {
-			threeWire = one[0]
-		}
-		mode = 0
-		_ = ioctl(f, 0x40016b01, uintptr(unsafe.Pointer(&mode)))
-	}
+	// No 3-wire probe: msm spidev rejects SPI_3WIRE ("unsupported mode bits 10").
 	_ = gpioOut(gpioDC, 1)
 	return full, threeWire, nil
 }
