@@ -68,3 +68,23 @@ make help          # all targets
 First boot leaves SSH on so `ble-bootstrap` can finish. After that, CHARGE-LATCH owns port 22.
 
 Operator HTTP: `http://robot.mohammadabbasi.com:8080/status`, `/faces`, `/ui`. OpenAI key stays in `.env` on the hub.
+
+## Face page (teach Vector who you are)
+
+Open **http://localhost:8080/ui** on the hub machine (or `http://robot.mohammadabbasi.com:8080/ui` from the LAN). It shows a live preview from the robot's camera (about 1 fps), the enroll form, and the list of enrolled people with their photos.
+
+To enroll:
+
+1. Stand 0.5–1 m in front of Vector, facing him, with light on your face (not behind you). Check the preview until your face is clear, not a silhouette.
+2. Type your name, click **enroll**, and hold still about 5 s while it takes 3 photos. If it reports skipped frames, adjust the light or position and retry.
+3. Wait about 10 s, then ask "What's my name?" / "Wie heiße ich?" / "اسم من چیه؟".
+
+Same thing from a shell:
+
+```bash
+curl -XPOST localhost:8080/faces -d '{"name":"Mohammad","count":3,"gap":1.5}'   # enroll
+curl localhost:8080/faces                                                      # list
+curl -XDELETE 'localhost:8080/faces?id=<id>'                                    # remove
+```
+
+Matching runs on the hub through NVIDIA (`HUB_FACE_MODEL`, key in `NVIDIA_API_KEY` in `.env`); the result is in `/status` under `person`. Vector only says a name when it recognised an enrolled face with confidence ≥ `HUB_FACE_MIN_CONF` (0.7); otherwise it says it doesn't recognise you. No keys go on the robot. Set `HUB_FACE_ID=0` and run `make hub` to turn it off.
