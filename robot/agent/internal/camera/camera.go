@@ -31,7 +31,7 @@ var (
 	okOnce   sync.Once
 
 	Daemon = &Anki{}
-	tone   = &Tone{Gamma: 0.8, Black: 16}
+	tone   = &Tone{Gamma: 0.8, Black: 16, Target: 0.3}
 	toneMu sync.Mutex
 )
 
@@ -105,6 +105,12 @@ type AE struct {
 var autoExposure = &AE{Target: 0.28, ExpMs: 16, Gain: 1.5, send: func(ms uint16, g float32) error { return Daemon.SetExposure(ms, g) }}
 
 // SetAE configures the exposure loop (target <= 0 disables it).
+func SetDigitalTarget(target float64) {
+	toneMu.Lock()
+	tone.Target = target
+	toneMu.Unlock()
+}
+
 func SetAE(target float64) {
 	toneMu.Lock()
 	defer toneMu.Unlock()

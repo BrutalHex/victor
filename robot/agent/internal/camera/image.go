@@ -24,6 +24,29 @@ type Tone struct {
 	gains  [3]float64
 	lut    [3][256]uint8
 	Mean   float64 // mean linear level of the last prepared frame, 0..1 (before WB)
+	Target float64 // digital gain aims the mean here (0 = no digital gain)
+	dgain  float64
+	rows   [][]byte // cached copies of raw rows for the current frame
+	rowGen []uint32
+	gen    uint32
+}
+
+// row returns a cached copy of raw row y: the ION buffer is uncached, so one
+// bulk copy per row is much cheaper than many single-byte reads.
+func (t *Tone) row(f *Frame, y int) []byte {
+	if len(t.rows) < f.H {
+		t.rows = make([][]byte, f.H)
+		t.rowGen = make([]uint32, f.H)
+	}
+	if t.rowGen[y] != t.gen || len(t.rows[y]) != f.Stride {
+		if cap(t.rows[y]) < f.Stride {
+			t.rows[y] = make([]byte, f.Stride)
+		}
+		t.rows[y] = t.rows[y][:f.Stride]
+		copy(t.rows[y], f.Data[y*f.Stride:(y+1)*f.Stride])
+		t.rowGen[y] = t.gen
+	}
+	return t.rows[y]
 }
 
 func (t *Tone) buildLUTs(sum [3]float64) {
@@ -41,13 +64,22 @@ func (t *Tone) buildLUTs(sum [3]float64) {
 			t.gains[i] = 0.8*t.gains[i] + 0.2*g[i]
 		}
 	}
+	dg := 1.0
+	if t.Target > 0 && t.Mean > 0.001 {
+		dg = clampf(t.Target/t.Mean, 1, 8)
+	}
+	if t.dgain == 0 {
+		t.dgain = dg
+	} else {
+		t.dgain = 0.7*t.dgain + 0.3*dg
+	}
 	for c := 0; c < 3; c++ {
 		for i := 0; i < 256; i++ {
 			v := float64(i-t.Black) / float64(255-t.Black)
 			if v < 0 {
 				v = 0
 			}
-			v *= t.gains[c]
+			v *= t.gains[c] * t.dgain
 			if v > 1 {
 				v = 1
 			}
@@ -61,6 +93,7 @@ func (t *Tone) buildLUTs(sum [3]float64) {
 
 // Prepare updates white balance / LUTs from a sparse sample of the frame.
 func (t *Tone) Prepare(f *Frame) error {
+	t.gen++
 	var sum [3]float64
 	switch f.Format {
 	case FormatRGB888, FormatRGB888_2M:
@@ -137,8 +170,8 @@ func (t *Tone) Render(f *Frame, ow, oh int) *image.RGBA {
 		out := img.Pix[ty*img.Stride:]
 		if raw {
 			sy &^= 1
-			r0 := f.Data[sy*f.Stride:]
-			r1 := f.Data[(sy+1)*f.Stride:]
+			r0 := t.row(f, sy)
+			r1 := t.row(f, sy+1)
 			for x, sx := range xs {
 				i0 := sx/4*5 + sx%4
 				i1 := (sx+1)/4*5 + (sx+1)%4

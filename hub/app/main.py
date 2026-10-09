@@ -88,7 +88,7 @@ class SeqDedupe:
 
 
 AUDIO_SEQ = SeqDedupe()
-VIDEO_SEQ = SeqDedupe()
+VIDEO_SEQ = SeqDedupe(window=128)  # ~8 s of video: an agent restart resets seq
 CMD_FACEUI, CMD_SPEAK, CMD_DISPLAY = 1, 2, 3
 
 

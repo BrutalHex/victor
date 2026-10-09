@@ -584,7 +584,9 @@ func cameraLoop(hub *telem.Hub, lnk *link.Client) {
 
 // loadCameraConf reads /data/victor/camera.conf (key=value: swap_rb, flip, gamma).
 func loadCameraConf() {
-	swap, flip, gamma, black, ae := false, false, 0.8, 16, 0.28
+	// ae: drive sensor exposure ourselves (0 = leave it to the daemon's 3A);
+	// level: digital gain target for the mean linear level.
+	swap, flip, gamma, black, ae, level := false, false, 0.8, 16, 0.0, 0.3
 	if b, err := os.ReadFile("/data/victor/camera.conf"); err == nil {
 		for _, line := range strings.Split(string(b), "\n") {
 			k, v, ok := strings.Cut(strings.TrimSpace(line), "=")
@@ -601,6 +603,10 @@ func loadCameraConf() {
 				if a, err := strconv.ParseFloat(v, 64); err == nil {
 					ae = a
 				}
+			case "level":
+				if l, err := strconv.ParseFloat(v, 64); err == nil {
+					level = l
+				}
 			case "black":
 				if b, err := strconv.Atoi(v); err == nil {
 					black = b
@@ -614,7 +620,8 @@ func loadCameraConf() {
 	}
 	camera.SetTone(swap, flip, gamma, black)
 	camera.SetAE(ae)
-	fmt.Printf("camera conf swap_rb=%v flip=%v gamma=%.2f black=%d ae=%.2f\n", swap, flip, gamma, black, ae)
+	camera.SetDigitalTarget(level)
+	fmt.Printf("camera conf swap_rb=%v flip=%v gamma=%.2f black=%d ae=%.2f level=%.2f\n", swap, flip, gamma, black, ae, level)
 }
 
 func cmdLoop(lnk *link.Client, ui *uiState, proc *audio.Processor) {
