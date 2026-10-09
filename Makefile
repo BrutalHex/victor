@@ -1,4 +1,4 @@
-.PHONY: test agent-arm ble-bootstrap hub prove prove1 prove2 prove-explore prove3 prove4 ota sync
+.PHONY: test agent-arm ble-bootstrap hub prove prove1 prove2 prove-explore prove3 prove4 ota ota-check ota-serve ota-test sync
 
 GO ?= go
 AGENT := robot/agent
@@ -43,5 +43,21 @@ prove3: test agent-arm
 prove4:
 	./deploy/prove-phase4.sh
 
-ota: agent-arm
-	./deploy/make-ota.sh
+# Build the recovery .ota. See deploy/OTA.md.
+#   make ota OTA_ARGS="--from-robot"
+#   make ota OTA_ARGS="--boot boot.img --sysfs victor-image.ext4"
+OTA_ARGS ?=
+OTA_FILE ?= dist/victor.ota
+ota:
+	./deploy/make-ota.sh $(OTA_ARGS)
+
+ota-check:
+	./deploy/make-ota.sh --check $(OTA_ARGS)
+
+# Plain HTTP on :8088 for recovery ota-start (no HTTPS).
+ota-serve:
+	./deploy/serve-ota.sh $(OTA_FILE)
+
+# Offline end-to-end packer test (dummy images; no robot, no flash).
+ota-test:
+	./deploy/test-ota.sh
