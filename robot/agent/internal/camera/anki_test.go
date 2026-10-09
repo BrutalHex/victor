@@ -264,3 +264,56 @@ func TestWithLatestNoCopyAndMean(t *testing.T) {
 		t.Fatalf("mean %v", tn.Mean)
 	}
 }
+
+func BenchmarkPartsARM(b *testing.B) {
+	f := raw10(1600, 1200)
+	tn := &Tone{Gamma: 0.8, Black: 16, Target: 0.3}
+	b.Run("prepare", func(b *testing.B) {
+		for i := 0; i < b.N; i++ {
+			_ = tn.Prepare(f)
+		}
+	})
+	b.Run("render-nav", func(b *testing.B) {
+		for i := 0; i < b.N; i++ {
+			_ = tn.Prepare(f)
+			tn.Render(f, NavW, NavH)
+		}
+	})
+	b.Run("render-face", func(b *testing.B) {
+		for i := 0; i < b.N; i++ {
+			_ = tn.Prepare(f)
+			tn.Render(f, FaceW, FaceH)
+		}
+	})
+	nav := tn.Render(f, NavW, NavH)
+	face := tn.Render(f, FaceW, FaceH)
+	b.Run("jpeg-nav", func(b *testing.B) {
+		for i := 0; i < b.N; i++ {
+			EncodeJPEG(nav, 70)
+		}
+	})
+	b.Run("jpeg-face", func(b *testing.B) {
+		for i := 0; i < b.N; i++ {
+			EncodeJPEG(face, 75)
+		}
+	})
+}
+
+func TestRawSwapAndFlipConsistent(t *testing.T) {
+	f := raw10(160, 120)
+	plain := &Tone{Gamma: 1}
+	sw := &Tone{Gamma: 1, SwapRB: true}
+	fl := &Tone{Gamma: 1, Flip: true}
+	a, _ := plain.Convert(f)
+	b, _ := sw.Convert(f)
+	c, _ := fl.Convert(f)
+	pa := a.Pix[a.PixOffset(10, 30):]
+	pb := b.Pix[b.PixOffset(10, 30):]
+	pc := c.Pix[c.PixOffset(69, 29):]
+	if !(pa[0] > pa[2] && pb[2] > pb[0]) {
+		t.Fatalf("swap: plain %v swapped %v", pa[:3], pb[:3])
+	}
+	if pa[0] != pc[0] || pa[2] != pc[2] {
+		t.Fatalf("flip: %v vs %v", pa[:3], pc[:3])
+	}
+}

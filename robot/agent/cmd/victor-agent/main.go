@@ -548,37 +548,53 @@ func renderFace(u *uiState, reason veto.Reason) {
 	face.Blit(face.EyesFrame(lx, 0, blink))
 }
 
+// Camera rates. The robot's CPU runs at 400-730 MHz: Go JPEG encoding costs
+// ~65 ms for a 320x240 nav frame and ~265 ms for 640x480, so the old 10 + 5 fps
+// plan would eat two cores. camera.conf can change nav_fps / face_fps.
+var camNavFPS, camFaceFPS = 2.0, 1.0
+
 func cameraLoop(hub *telem.Hub, lnk *link.Client) {
 	loadCameraConf()
 	camera.Start()
 	t := time.NewTicker(100 * time.Millisecond)
 	defer t.Stop()
-	n := 0
+	n, faces := 0, 0
+	var lastNav, lastFace time.Time
+	var busy time.Duration
 	lastLog := time.Now()
-	for range t.C {
-		t0 := time.Now()
-		full, nav, err := camera.Snapshot(n%2 == 1)
-		if nav != nil && n < 4 {
-			fmt.Printf("camera snapshot face=%v %v\n", full != nil, time.Since(t0))
-		}
+	for now := range t.C {
 		if time.Since(lastLog) > time.Minute {
 			st, frames, cerr := camera.Daemon.Status()
-			fmt.Printf("camera %s frames=%d sent=%d err=%q last=%v\n", st, frames, n, cerr, err)
-			lastLog = time.Now()
+			fmt.Printf("camera %s frames=%d nav=%d face=%d cpu=%.0f%% err=%q\n", st, frames, n, faces,
+				100*busy.Seconds()/time.Since(lastLog).Seconds(), cerr)
+			lastLog, busy = time.Now(), 0
 		}
+		wantNav := camNavFPS > 0 && now.Sub(lastNav) >= time.Duration(float64(time.Second)/camNavFPS)
+		wantFace := camFaceFPS > 0 && now.Sub(lastFace) >= time.Duration(float64(time.Second)/camFaceFPS)
+		if !wantNav && !wantFace {
+			continue
+		}
+		t0 := time.Now()
+		full, nav, err := camera.Snapshot(wantFace)
 		if err != nil || nav == nil {
 			continue
 		}
-		if b, err := camera.EncodeJPEG(nav, 70); err == nil {
-			lnk.QueueMedia(hub.SendVideo(b, vct1.FlagNavJPEG))
+		if wantNav {
+			if b, err := camera.EncodeJPEG(nav, 70); err == nil {
+				lnk.QueueMedia(hub.SendVideo(b, vct1.FlagNavJPEG))
+				n++
+			}
+			lastNav = now
 		}
-		n++
 		if full != nil {
 			if b, err := camera.EncodeJPEG(full, 75); err == nil {
 				lnk.QueueMedia(hub.SendVideo(b, vct1.FlagFaceJPEG))
 				camera.Remember(b)
+				faces++
 			}
+			lastFace = now
 		}
+		busy += time.Since(t0)
 	}
 }
 
@@ -586,7 +602,7 @@ func cameraLoop(hub *telem.Hub, lnk *link.Client) {
 func loadCameraConf() {
 	// ae: drive sensor exposure ourselves (0 = leave it to the daemon's 3A);
 	// level: digital gain target for the mean linear level.
-	swap, flip, gamma, black, ae, level := false, false, 0.8, 16, 0.0, 0.3
+	swap, flip, gamma, black, ae, level := false, false, 0.8, 16, 0.0, 0.22
 	if b, err := os.ReadFile("/data/victor/camera.conf"); err == nil {
 		for _, line := range strings.Split(string(b), "\n") {
 			k, v, ok := strings.Cut(strings.TrimSpace(line), "=")
@@ -602,6 +618,14 @@ func loadCameraConf() {
 			case "ae":
 				if a, err := strconv.ParseFloat(v, 64); err == nil {
 					ae = a
+				}
+			case "nav_fps":
+				if x, err := strconv.ParseFloat(v, 64); err == nil {
+					camNavFPS = x
+				}
+			case "face_fps":
+				if x, err := strconv.ParseFloat(v, 64); err == nil {
+					camFaceFPS = x
 				}
 			case "level":
 				if l, err := strconv.ParseFloat(v, 64); err == nil {
@@ -621,7 +645,8 @@ func loadCameraConf() {
 	camera.SetTone(swap, flip, gamma, black)
 	camera.SetAE(ae)
 	camera.SetDigitalTarget(level)
-	fmt.Printf("camera conf swap_rb=%v flip=%v gamma=%.2f black=%d ae=%.2f level=%.2f\n", swap, flip, gamma, black, ae, level)
+	fmt.Printf("camera conf swap_rb=%v flip=%v gamma=%.2f black=%d ae=%.2f level=%.2f nav_fps=%.1f face_fps=%.1f\n",
+		swap, flip, gamma, black, ae, level, camNavFPS, camFaceFPS)
 }
 
 func cmdLoop(lnk *link.Client, ui *uiState, proc *audio.Processor) {

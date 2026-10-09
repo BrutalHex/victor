@@ -31,7 +31,7 @@ var (
 	okOnce   sync.Once
 
 	Daemon = &Anki{}
-	tone   = &Tone{Gamma: 0.8, Black: 16, Target: 0.3}
+	tone   = &Tone{Gamma: 0.8, Black: 16, Target: 0.22}
 	toneMu sync.Mutex
 )
 

@@ -29,6 +29,25 @@ type Tone struct {
 	rows   [][]byte // cached copies of raw rows for the current frame
 	rowGen []uint32
 	gen    uint32
+	gtab   [1025]uint8 // gamma curve sampled on [0,1]
+	gtabG  float64
+	cols   []int32 // per output column: packed byte index of the B pixel, for (W, ow)
+	colsW  [2]int
+}
+
+// gammaAt maps v in [0,1] through the gamma curve (table built once per gamma).
+func (t *Tone) gammaAt(v float64) uint8 {
+	if t.gtabG != t.Gamma || t.gtab[1024] == 0 {
+		for i := range t.gtab {
+			x := float64(i) / 1024
+			if t.Gamma > 0 && t.Gamma != 1 {
+				x = math.Pow(x, t.Gamma)
+			}
+			t.gtab[i] = uint8(x*255 + 0.5)
+		}
+		t.gtabG = t.Gamma
+	}
+	return t.gtab[int(v*1024+0.5)]
 }
 
 // row returns a cached copy of raw row y: the ION buffer is uncached, so one
@@ -83,10 +102,7 @@ func (t *Tone) buildLUTs(sum [3]float64) {
 			if v > 1 {
 				v = 1
 			}
-			if t.Gamma > 0 && t.Gamma != 1 {
-				v = math.Pow(v, t.Gamma)
-			}
-			t.lut[c][i] = uint8(v*255 + 0.5)
+			t.lut[c][i] = t.gammaAt(v)
 		}
 	}
 }
@@ -158,8 +174,60 @@ func (t *Tone) Render(f *Frame, ow, oh int) *image.RGBA {
 		xs[x] = sx
 	}
 	lr, lg, lb := &t.lut[0], &t.lut[1], &t.lut[2]
-	if t.SwapRB {
-		lr, lb = lb, lr
+	if raw {
+		// byte offsets of the B (even) pixel; the odd pixel is the next byte
+		// unless the even one is the 4th in its 5-byte group (never: sx is even,
+		// so sx%4 is 0 or 2 and sx+1 stays in the same group).
+		if t.colsW != [2]int{f.W, ow} {
+			t.cols = make([]int32, ow)
+			for x, sx := range xs {
+				t.cols[x] = int32(sx/4*5 + sx%4)
+			}
+			t.colsW = [2]int{f.W, ow}
+		}
+		cols := t.cols
+		for y := 0; y < oh; y++ {
+			sy := (y * f.H / oh) &^ 1
+			ty := y
+			if t.Flip {
+				ty = oh - 1 - y
+			}
+			out := img.Pix[ty*img.Stride : (ty+1)*img.Stride]
+			r0 := t.row(f, sy)
+			r1 := t.row(f, sy+1)
+			if t.SwapRB { // raw B -> output red, raw R -> output blue
+				for x, i := range cols {
+					tx := x
+					if t.Flip {
+						tx = ow - 1 - x
+					}
+					o := out[tx*4 : tx*4+4 : tx*4+4]
+					o[0] = lr[r0[i]]
+					o[1] = lg[uint8((uint16(r0[i+1])+uint16(r1[i]))>>1)]
+					o[2] = lb[r1[i+1]]
+					o[3] = 255
+				}
+				continue
+			}
+			if t.Flip {
+				for x, i := range cols {
+					o := (ow - 1 - x) * 4
+					out[o] = lr[r1[i+1]]
+					out[o+1] = lg[uint8((uint16(r0[i+1])+uint16(r1[i]))>>1)]
+					out[o+2] = lb[r0[i]]
+					out[o+3] = 255
+				}
+				continue
+			}
+			for x, i := range cols {
+				o := out[x*4 : x*4+4 : x*4+4]
+				o[0] = lr[r1[i+1]]
+				o[1] = lg[uint8((uint16(r0[i+1])+uint16(r1[i]))>>1)]
+				o[2] = lb[r0[i]]
+				o[3] = 255
+			}
+		}
+		return img
 	}
 	for y := 0; y < oh; y++ {
 		sy := y * f.H / oh
@@ -168,28 +236,6 @@ func (t *Tone) Render(f *Frame, ow, oh int) *image.RGBA {
 			ty = oh - 1 - y
 		}
 		out := img.Pix[ty*img.Stride:]
-		if raw {
-			sy &^= 1
-			r0 := t.row(f, sy)
-			r1 := t.row(f, sy+1)
-			for x, sx := range xs {
-				i0 := sx/4*5 + sx%4
-				i1 := (sx+1)/4*5 + (sx+1)%4
-				b := r0[i0]
-				g := uint8((uint16(r0[i1]) + uint16(r1[i0])) / 2)
-				r := r1[i1]
-				if t.SwapRB {
-					r, b = b, r
-				}
-				tx := x
-				if t.Flip {
-					tx = ow - 1 - x
-				}
-				o := out[tx*4:]
-				o[0], o[1], o[2], o[3] = lr[r], lg[g], lb[b], 255
-			}
-			continue
-		}
 		row := f.Data[sy*f.Stride:]
 		for x, sx := range xs {
 			p := row[sx*3:]
