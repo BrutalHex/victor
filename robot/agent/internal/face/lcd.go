@@ -545,9 +545,12 @@ func EOK() {
 	Blit(EyesFrame(0, 0, 0))
 }
 
-func Thinking(phase float64) {
-	Blit(EyesThinking(phase))
+func Thinking(elapsed time.Duration) {
+	Blit(ThinkingFrame(elapsed))
 }
+
+// FramesSent counts frames written to the panel (for fps checks).
+func FramesSent() uint64 { return framesSent }
 
 func Name(name string) {
 	Blit(EyesCaption(Caption(name), Green))

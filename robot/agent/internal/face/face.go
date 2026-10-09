@@ -4,6 +4,7 @@ package face
 import (
 	"os"
 	"strings"
+	"time"
 )
 
 // Vector 2.0 Midas is 160×80. Vector 1.0 Santek ST0103A2W-WSNLW-F is 184×96
@@ -34,9 +35,13 @@ func Frame(text string, fg uint16) []byte {
 	return buf
 }
 
-// ThinkingFrame is the DDL default pose with a squint, not a UI bar.
-func ThinkingFrame(phase float64) []byte {
-	return EyesThinking(phase)
+// ThinkingFrame replaces the eyes with DDL's knowledge-graph searching
+// animation (linked squares); the squinting eyes only if that asset is missing.
+func ThinkingFrame(elapsed time.Duration) []byte {
+	if f := SearchingFrame(elapsed); f != nil {
+		return f
+	}
+	return EyesThinking(elapsed.Seconds())
 }
 
 func blitText(buf []byte, text string, fg uint16, yShift int) {

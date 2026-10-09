@@ -2,6 +2,8 @@ package main
 
 import (
 	"fmt"
+
+	"github.com/BrutalHex/victor/robot/agent/internal/face"
 	"os"
 	"strconv"
 	"sync"
@@ -26,6 +28,8 @@ type uiState struct {
 	until      time.Time
 	thinkStart time.Time
 	thinkSeen  time.Time
+	thinkFrame uint64        // face.FramesSent at think on
+	frames     func() uint64 // tests
 	muteUntil  time.Time
 	lastDrawn  string
 	now        func() time.Time // tests
@@ -48,13 +52,31 @@ func (u *uiState) logf(format string, a ...any) {
 	fmt.Println(line)
 }
 
+func (u *uiState) sent() uint64 {
+	if u.frames != nil {
+		return u.frames()
+	}
+	return face.FramesSent()
+}
+
+// thinkStats: panel frames written while thinking and the rate.
+func (u *uiState) thinkStats(now time.Time) string {
+	n := u.sent() - u.thinkFrame
+	held := now.Sub(u.thinkStart).Seconds()
+	fps := 0.0
+	if held > 0 {
+		fps = float64(n) / held
+	}
+	return fmt.Sprintf("held=%.1fs frames=%d fps=%.1f", held, n, fps)
+}
+
 func stamp(t time.Time) string { return t.UTC().Format("15:04:05.000Z") }
 
 // expireLocked drops a thinking face the hub stopped refreshing.
 func (u *uiState) expireLocked(now time.Time) {
 	if u.mode == "thinking" && now.Sub(u.thinkSeen) > thinkStale {
 		u.mode, u.caption, u.until, u.lastDrawn = "idle", "", time.Time{}, ""
-		u.logf("think off %s why=stale held=%.1fs", stamp(now), now.Sub(u.thinkStart).Seconds())
+		u.logf("think off %s why=stale %s", stamp(now), u.thinkStats(now))
 	}
 }
 
@@ -79,7 +101,7 @@ func (u *uiState) speakStart() {
 	if u.mode == "thinking" {
 		now := u.clock()
 		u.mode, u.caption, u.until, u.lastDrawn = "idle", "", time.Time{}, ""
-		u.logf("think off %s why=speak held=%.1fs", stamp(now), now.Sub(u.thinkStart).Seconds())
+		u.logf("think off %s why=speak %s", stamp(now), u.thinkStats(now))
 	}
 }
 
@@ -115,9 +137,10 @@ func (u *uiState) set(mode, caption string, d time.Duration) {
 			return // keepalive: keep the animation phase running
 		}
 		u.thinkStart = now
+		u.thinkFrame = u.sent()
 		u.logf("think on %s", stamp(now))
 	} else if u.mode == "thinking" {
-		u.logf("think off %s why=%s held=%.1fs", stamp(now), mode, now.Sub(u.thinkStart).Seconds())
+		u.logf("think off %s why=%s %s", stamp(now), mode, u.thinkStats(now))
 	}
 	u.mode, u.caption = mode, caption
 	if d > 0 {

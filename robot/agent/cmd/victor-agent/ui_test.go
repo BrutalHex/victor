@@ -13,7 +13,7 @@ func (c *fakeClock) add(d time.Duration) { c.t = c.t.Add(d) }
 func newUI() (*uiState, *fakeClock, *[]string) {
 	c := &fakeClock{t: time.Date(2026, 10, 9, 17, 0, 0, 0, time.UTC)}
 	var logs []string
-	u := &uiState{mode: "idle", now: c.now, log: func(s string) { logs = append(logs, s) }}
+	u := &uiState{mode: "idle", now: c.now, log: func(s string) { logs = append(logs, s) }, frames: func() uint64 { return 0 }}
 	return u, c, &logs
 }
 

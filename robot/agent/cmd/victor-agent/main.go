@@ -509,12 +509,8 @@ func renderFace(u *uiState, reason veto.Reason) {
 	key := mode + "|" + cap + "|" + reason.String()
 	if mode == "thinking" {
 		u.mu.Unlock()
-		phase := time.Since(t0).Seconds()
-		phase = phase - float64(int(phase))
-		if phase < 0 {
-			phase = 0
-		}
-		face.Thinking(phase)
+		// DDL searching animation replaces the eyes for the whole turn.
+		face.Thinking(time.Since(t0))
 		return
 	}
 	blink := 0.0
