@@ -120,6 +120,24 @@ firewall is on (`sudo ufw allow 8088/tcp`).
 `./deploy/ble-bootstrap/ble-bootstrap get-status --pin <PIN>` / `ota-cancel`.
 If the wrong interface IP is picked for `--ota-file`, set `OTA_HOST_IP=<lan-ip>`.
 
+## 3b. Flash over SSH (robot already runs an unlocked image, no BLE)
+
+```bash
+make flash-ssh      # = ./deploy/flash-ssh.sh --reboot
+```
+
+Serves the `.ota` on `127.0.0.1` and tunnels it to the robot (`ssh -R`, so it
+works from WSL behind NAT), stops the hourly auto-update, runs the robot's
+`/anki/bin/update-engine`, which writes the **inactive** slot (`boot_b` +
+`system_b` when running on `_a`) and marks it active, reads both partitions
+back and compares sha256 with the manifest, then reboots. Refuses unless the
+robot is on slot `_a` (`ALLOW_FROM_SLOT=_b` to override), so the known-good
+slot is never overwritten by default. WireOS 3.0.9.1d's update-engine does not
+check signatures or sha256 itself; the packer and the readback do.
+
+Back to the previous slot (no BLE needed while SSH works):
+`ssh root@$ROBOT_SSH_IP '/bin/bootctl-anki b set_active a; reboot'`
+
 ## 4. Verify
 
 ```bash

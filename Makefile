@@ -1,4 +1,4 @@
-.PHONY: help test agent-arm ble-bootstrap hub prove prove1 prove2 prove-explore prove3 prove4 ota ota-check ota-serve ota-test ota-deps ota-robot ota-rollback flash verify release ota-all sync
+.PHONY: help test agent-arm ble-bootstrap hub prove prove1 prove2 prove-explore prove3 prove4 ota ota-check ota-serve ota-test ota-deps ota-robot ota-rollback flash flash-ssh verify release ota-all sync
 .DEFAULT_GOAL := test
 
 GO ?= go
@@ -104,6 +104,9 @@ flash: export FLASH_WIFI_SSID = $(SSID)
 flash: export FLASH_WIFI_PASSWORD = $(value PASSWORD)
 flash: ## Flash via recovery BLE: make flash [PIN=..] [SSID=..] [PASSWORD=..] (asks to confirm)
 	@./deploy/flash-ota.sh
+
+flash-ssh: ## Flash over SSH from a running image (update-engine, inactive slot; no BLE)
+	./deploy/flash-ssh.sh --reboot
 
 verify: ## Check the robot booted our image (SSH, BLE masked, agent, camera, no OpenAI key)
 	./deploy/verify-first-boot.sh

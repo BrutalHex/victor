@@ -15,7 +15,10 @@ chk "ble.disabled flag" "test -f /data/victor/ble.disabled"
 for u in ankibluetoothd vic-switchboard btproperty; do
   chk "$u masked/inactive" "! systemctl is-active -q $u.service"
 done
-chk "bluetooth rfkill blocked" "! rfkill list bluetooth 2>/dev/null | grep -q \"Soft blocked: no\""
+if [ -e /dev/rfkill ]; then chk "bluetooth rfkill blocked" "! rfkill list bluetooth 2>/dev/null | grep -q \"Soft blocked: no\""; else echo "INFO: no /dev/rfkill on this kernel"; fi
+chk "no HCI device up" "! ls /sys/class/bluetooth/hci* >/dev/null 2>&1 || ! grep -q 1 /sys/class/bluetooth/hci*/power 2>/dev/null"
+S=$(tr " " "\n" </proc/cmdline | sed -n "s/^androidboot.slot_suffix=_//p")
+chk "A/B slot $S marked successful" "/bin/bootctl-anki $S status $S | grep -q \"successful: 1\""
 chk "victor-agent active" "systemctl is-active -q victor-agent.service"
 chk "/data mounted exec" "! grep -E \" /data \" /proc/mounts | grep -q noexec"
 chk "hub hostname configured" "grep -q HUB_HOST= /data/victor/hub.env"
