@@ -16,10 +16,11 @@ import (
 const (
 	InjectPath = "/data/victor/camera.jpg"
 	OKPath     = "/data/victor/camera.ok"
-	NavW       = 320
-	NavH       = 180
-	FaceW      = 640
-	FaceH      = 360
+	// The sensor is 4:3 (1600x1200 raw on this firmware).
+	NavW  = 320
+	NavH  = 240
+	FaceW = 640
+	FaceH = 480
 )
 
 var (
@@ -29,7 +30,7 @@ var (
 	okOnce   sync.Once
 
 	Daemon = &Anki{}
-	tone   = &Tone{Gamma: 0.8}
+	tone   = &Tone{Gamma: 0.8, Black: 16}
 	toneMu sync.Mutex
 )
 
@@ -37,9 +38,9 @@ var (
 func Start() { go Daemon.Run(nil) }
 
 // SetTone adjusts colour/orientation (from /data/victor/camera.conf).
-func SetTone(swapRB, flip bool, gamma float64) {
+func SetTone(swapRB, flip bool, gamma float64, black int) {
 	toneMu.Lock()
-	tone.SwapRB, tone.Flip, tone.Gamma = swapRB, flip, gamma
+	tone.SwapRB, tone.Flip, tone.Gamma, tone.Black = swapRB, flip, gamma, black
 	toneMu.Unlock()
 }
 
@@ -57,9 +58,9 @@ func remember(b []byte) {
 	okOnce.Do(func() { _ = os.WriteFile(OKPath, []byte("1\n"), 0644) }) // once: no flash wear
 }
 
-// Snapshot returns the newest frame as full-size (640x360) and nav-size
-// (320x180) images. ErrNoFrame means nothing new yet.
-func Snapshot() (full, nav image.Image, err error) {
+// Snapshot returns the newest frame as a nav image (NavW x NavH) and, when
+// wantFace, a face image (FaceW x FaceH). ErrNoFrame means nothing new yet.
+func Snapshot(wantFace bool) (face, nav image.Image, err error) {
 	if b, e := os.ReadFile(InjectPath); e == nil && len(b) > 32 {
 		img, e := jpeg.Decode(bytes.NewReader(b))
 		if e != nil {
@@ -73,11 +74,14 @@ func Snapshot() (full, nav image.Image, err error) {
 	}
 	toneMu.Lock()
 	defer toneMu.Unlock()
-	big, err := tone.ToRGBA(f, 1)
-	if err != nil {
+	if err := tone.Prepare(f); err != nil {
 		return nil, nil, err
 	}
-	return big, halve(big), nil
+	nav = tone.Render(f, NavW, NavH)
+	if wantFace {
+		face = tone.Render(f, FaceW, FaceH)
+	}
+	return face, nav, nil
 }
 
 // Remember records the last full JPEG (for /data/victor/camera.ok and Last()).

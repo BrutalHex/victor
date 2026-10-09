@@ -164,3 +164,60 @@ func TestHalveAndFlip(t *testing.T) {
 		t.Fatal("halve size")
 	}
 }
+
+// raw10 builds a MIPI RAW10 BGGR frame; left half reddish, right half bluish.
+func raw10(w, h int) *Frame {
+	stride := w * 10 / 8
+	d := make([]byte, stride*h)
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			var v byte
+			red := x < w/2
+			switch {
+			case y%2 == 0 && x%2 == 0: // B
+				v = 40
+				if !red {
+					v = 200
+				}
+			case y%2 == 1 && x%2 == 1: // R
+				v = 200
+				if !red {
+					v = 40
+				}
+			default: // G
+				v = 100
+			}
+			d[y*stride+x/4*5+x%4] = v
+		}
+	}
+	return &Frame{W: w, H: h, Stride: stride, Format: FormatRAW2MP, Data: d}
+}
+
+func TestRawDebayerChannels(t *testing.T) {
+	f := raw10(160, 120)
+	tn := &Tone{Gamma: 1, Black: 0}
+	img, err := tn.Convert(f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if img.Bounds().Dx() != 80 || img.Bounds().Dy() != 60 {
+		t.Fatalf("size %v", img.Bounds())
+	}
+	l := img.Pix[img.PixOffset(10, 30):]
+	r := img.Pix[img.PixOffset(70, 30):]
+	if !(l[0] > l[2] && r[2] > r[0]) {
+		t.Fatalf("channels: left %v right %v", l[:3], r[:3])
+	}
+}
+
+func BenchmarkTick(b *testing.B) {
+	f := raw10(1600, 1200)
+	tn := &Tone{Gamma: 0.8, Black: 16}
+	for i := 0; i < b.N; i++ {
+		_ = tn.Prepare(f)
+		_, _ = EncodeJPEG(tn.Render(f, NavW, NavH), 70)
+		if i%2 == 0 {
+			_, _ = EncodeJPEG(tn.Render(f, FaceW, FaceH), 75)
+		}
+	}
+}

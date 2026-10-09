@@ -557,23 +557,23 @@ func cameraLoop(hub *telem.Hub, lnk *link.Client) {
 	lastLog := time.Now()
 	for range t.C {
 		t0 := time.Now()
-		full, nav, err := camera.Snapshot()
-		if full != nil && n < 3 {
-			fmt.Printf("camera snapshot %v\n", time.Since(t0))
+		full, nav, err := camera.Snapshot(n%2 == 1)
+		if nav != nil && n < 4 {
+			fmt.Printf("camera snapshot face=%v %v\n", full != nil, time.Since(t0))
 		}
-		if time.Since(lastLog) > 15*time.Second {
+		if time.Since(lastLog) > time.Minute {
 			st, frames, cerr := camera.Daemon.Status()
 			fmt.Printf("camera %s frames=%d sent=%d err=%q last=%v\n", st, frames, n, cerr, err)
 			lastLog = time.Now()
 		}
-		if err != nil || full == nil {
+		if err != nil || nav == nil {
 			continue
 		}
 		if b, err := camera.EncodeJPEG(nav, 70); err == nil {
 			lnk.QueueMedia(hub.SendVideo(b, vct1.FlagNavJPEG))
 		}
 		n++
-		if n%2 == 0 {
+		if full != nil {
 			if b, err := camera.EncodeJPEG(full, 75); err == nil {
 				lnk.QueueMedia(hub.SendVideo(b, vct1.FlagFaceJPEG))
 				camera.Remember(b)
@@ -584,7 +584,7 @@ func cameraLoop(hub *telem.Hub, lnk *link.Client) {
 
 // loadCameraConf reads /data/victor/camera.conf (key=value: swap_rb, flip, gamma).
 func loadCameraConf() {
-	swap, flip, gamma := false, false, 0.8
+	swap, flip, gamma, black := false, false, 0.8, 16
 	if b, err := os.ReadFile("/data/victor/camera.conf"); err == nil {
 		for _, line := range strings.Split(string(b), "\n") {
 			k, v, ok := strings.Cut(strings.TrimSpace(line), "=")
@@ -597,6 +597,10 @@ func loadCameraConf() {
 				swap = v == "1" || v == "true"
 			case "flip":
 				flip = v == "1" || v == "true"
+			case "black":
+				if b, err := strconv.Atoi(v); err == nil {
+					black = b
+				}
 			case "gamma":
 				if g, err := strconv.ParseFloat(v, 64); err == nil {
 					gamma = g
@@ -604,8 +608,8 @@ func loadCameraConf() {
 			}
 		}
 	}
-	camera.SetTone(swap, flip, gamma)
-	fmt.Printf("camera conf swap_rb=%v flip=%v gamma=%.2f\n", swap, flip, gamma)
+	camera.SetTone(swap, flip, gamma, black)
+	fmt.Printf("camera conf swap_rb=%v flip=%v gamma=%.2f black=%d\n", swap, flip, gamma, black)
 }
 
 func cmdLoop(lnk *link.Client, ui *uiState, proc *audio.Processor) {
