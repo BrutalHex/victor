@@ -29,6 +29,8 @@ import urllib.request
 import wave
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+from api import Api, ApiError
+
 RATE = 16000
 TTS_RATE = 24000  # OpenAI response_format=pcm
 VAD_RMS = int(os.environ.get("HUB_VAD_RMS", "120"))
@@ -125,9 +127,47 @@ def pcm16k(pcm: bytes, src_rate: int = TTS_RATE) -> bytes:
     return struct.pack("<" + "h" * len(out), *out)
 
 
+FRAME_BYTES = int(RATE * 0.02) * 2
+
+
+def trim_silence(pcm: bytes, lead_ms: int = 160, tail_ms: int = 240) -> bytes:
+    """Cut the VAD pre-roll/hang-over silence (up to ~0.9 s) before STT.
+
+    Frames count as speech at max(VAD_RMS, 12% of the loudest frame); keep
+    lead_ms before the first and tail_ms after the last speech frame."""
+    n = len(pcm) // FRAME_BYTES
+    if n < 3:
+        return pcm
+    levels = [rms(pcm[i * FRAME_BYTES:(i + 1) * FRAME_BYTES]) for i in range(n)]
+    thr = max(VAD_RMS, int(0.12 * max(levels)))
+    voiced = [i for i, v in enumerate(levels) if v >= thr]
+    if not voiced:
+        return pcm
+    a = max(0, voiced[0] - lead_ms // 20)
+    b = min(n, voiced[-1] + 1 + tail_ms // 20)
+    out = pcm[a * FRAME_BYTES:b * FRAME_BYTES]
+    return out if len(out) >= int(RATE * 0.3) * 2 else pcm
+
+
+def multipart(fields: dict[str, str], wav: bytes, boundary: str = "----victor") -> tuple[bytes, str]:
+    parts = b"".join(
+        f"--{boundary}\r\nContent-Disposition: form-data; name=\"{k}\"\r\n\r\n{v}\r\n".encode()
+        for k, v in fields.items()
+        if v
+    )
+    body = (
+        parts
+        + f"--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"a.wav\"\r\n"
+        f"Content-Type: audio/wav\r\n\r\n".encode()
+        + wav
+        + f"\r\n--{boundary}--\r\n".encode()
+    )
+    return body, f"multipart/form-data; boundary={boundary}"
+
+
 def _http_error(where: str, exc: BaseException) -> None:
     body = ""
-    if isinstance(exc, urllib.error.HTTPError):
+    if isinstance(exc, (urllib.error.HTTPError, ApiError)):
         try:
             body = exc.read().decode(errors="replace")[:300]
         except OSError:
@@ -201,6 +241,28 @@ def speakable(text: str) -> str:
     return t
 
 
+REPLY_MAX_CHARS = int(os.environ.get("HUB_REPLY_MAX_CHARS", "300"))
+MAX_SPEAK_S = 55  # the robot link drops commands over 2 MiB (~65 s of 16 kHz PCM)
+
+
+def short_reply(text: str, limit: int = 0) -> str:
+    """Keep whole sentences up to limit chars. Web search sometimes returns a
+    whole forecast table (1,500+ chars, 90 s of speech) despite the prompt."""
+    limit = limit or REPLY_MAX_CHARS
+    if len(text) <= limit:
+        return text
+    out = ""
+    for sent in re.split(r"(?<=[.!?])\s+", text):
+        if out and len(out) + 1 + len(sent) > limit:
+            break
+        out = f"{out} {sent}".strip()
+        if len(out) >= limit:
+            break
+    if len(out) > limit:
+        out = out[:limit].rsplit(" ", 1)[0].rstrip(",;:") + "."
+    return out
+
+
 def _env_on(name: str, default: str = "1") -> bool:
     return os.environ.get(name, default).strip().lower() not in ("0", "false", "no", "off", "")
 
@@ -234,6 +296,11 @@ class Voice:
         self.key = os.environ.get("OPENAI_API_KEY", "")
         self.model = os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
         self.stt_model = os.environ.get("OPENAI_TRANSCRIBE_MODEL", "gpt-4o-mini-transcribe")
+        # Pinned language: no Chinese/Welsh guesses on short noisy clips. "" = auto.
+        self.stt_language = os.environ.get("HUB_STT_LANGUAGE", "en").strip()
+        self.stt_trim = _env_on("HUB_STT_TRIM", "1")
+        self.api = Api(self.key)
+        self.last_stt: dict = {}
         self.tts_model = os.environ.get("OPENAI_TTS_MODEL", "gpt-4o-mini-tts")
         self.voice = os.environ.get("OPENAI_VOICE", "alloy")
         # Live web via the Responses API web_search tool (gpt-4o-mini supports it).
@@ -268,6 +335,8 @@ class Voice:
             self.silence = 0
             if not self.active and self.voiced >= START_FRAMES:
                 self.active = True
+                if self.key:
+                    self.api.warm()  # TLS while the user is still talking
                 self.buf = bytearray(b"".join(self.preroll))
                 self.preroll = []
             elif self.active:
@@ -298,25 +367,15 @@ class Voice:
         if not self.key:
             print("voice transcribe skipped; no key", flush=True)
             return ""
-        wav = _wav_wrap(pcm)
-        boundary = "----victor"
-        body = (
-            f"--{boundary}\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\n{self.stt_model}\r\n"
-            f"--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"a.wav\"\r\n"
-            f"Content-Type: audio/wav\r\n\r\n"
-        ).encode() + wav + f"\r\n--{boundary}--\r\n".encode()
-        req = urllib.request.Request(
-            "https://api.openai.com/v1/audio/transcriptions",
-            data=body,
-            headers={
-                "Authorization": f"Bearer {self.key}",
-                "Content-Type": f"multipart/form-data; boundary={boundary}",
-            },
-            method="POST",
+        t0 = time.time()
+        clip = trim_silence(pcm) if self.stt_trim else pcm
+        body, ctype = multipart(
+            {"model": self.stt_model, "language": self.stt_language, "response_format": "json"},
+            _wav_wrap(clip),
         )
+        connects = self.api.connects
         try:
-            with urllib.request.urlopen(req, timeout=20) as resp:
-                raw = resp.read().decode()
+            raw = self.api.post("/v1/audio/transcriptions", body, ctype, 20).decode()
             data = json.loads(raw)
             text = str(data.get("text") or "").strip()
             if not text:
@@ -325,6 +384,16 @@ class Voice:
         except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, OSError) as exc:
             _http_error("transcribe", exc)
             return ""
+        finally:
+            self.last_stt = {
+                "ms": int((time.time() - t0) * 1000),
+                "audio_s": round(len(pcm) / (2 * RATE), 2),
+                "sent_s": round(len(clip) / (2 * RATE), 2),
+                "bytes": len(body),
+                "new_tls": self.api.connects - connects,
+                "model": self.stt_model,
+            }
+            print("stt " + " ".join(f"{k}={v}" for k, v in self.last_stt.items()), flush=True)
 
     def chat(self, text: str) -> str:
         """One spoken reply. Web search (Responses API) first, plain chat as fallback."""
@@ -343,19 +412,17 @@ class Voice:
             if reply:
                 self.last_via = "chat"
         self.last_chat_ms = int((time.monotonic() - t0) * 1000)
-        reply = speakable(reply)
+        full = speakable(reply)
+        reply = short_reply(full)
+        if len(reply) < len(full):
+            print(f"voice reply cut {len(full)} -> {len(reply)} chars", flush=True)
         print(f"voice chat via={self.last_via or 'none'} searched={self.last_searched} ms={self.last_chat_ms}", flush=True)
         return reply
 
     def _post(self, url: str, payload: dict, timeout: float) -> dict:
-        req = urllib.request.Request(
-            url,
-            data=json.dumps(payload).encode(),
-            headers={"Authorization": f"Bearer {self.key}", "Content-Type": "application/json"},
-            method="POST",
-        )
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            return json.loads(resp.read().decode())
+        path = url.split("api.openai.com", 1)[-1]
+        raw = self.api.post(path, json.dumps(payload).encode(), "application/json", timeout)
+        return json.loads(raw.decode())
 
     def _chat_web(self, text: str) -> tuple[str, bool]:
         tz_name = hub_tz()[1]
@@ -404,15 +471,9 @@ class Voice:
         payload = json.dumps(
             {"model": self.tts_model, "voice": self.voice, "input": text, "response_format": "pcm"}
         ).encode()
-        req = urllib.request.Request(
-            "https://api.openai.com/v1/audio/speech",
-            data=payload,
-            headers={"Authorization": f"Bearer {self.key}", "Content-Type": "application/json"},
-            method="POST",
-        )
         try:
-            with urllib.request.urlopen(req, timeout=20) as resp:
-                return pcm16k(resp.read(), TTS_RATE)
+            pcm = pcm16k(self.api.post("/v1/audio/speech", payload, "application/json", 30), TTS_RATE)
+            return pcm[: MAX_SPEAK_S * RATE * 2]
         except (urllib.error.URLError, TimeoutError, OSError) as exc:
             _http_error("tts", exc)
             return b""

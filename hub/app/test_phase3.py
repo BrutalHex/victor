@@ -413,5 +413,77 @@ class ThinkingTurn(unittest.TestCase):
         m.end_think()
 
 
+class SttAndReply(unittest.TestCase):
+    def test_trim_cuts_vad_silence(self):
+        from voice import RATE, trim_silence, tone
+        silence = b"\x00\x00" * int(RATE * 0.9)
+        speech = tone(300, 1200)
+        out = trim_silence(silence + speech + silence)
+        self.assertLess(len(out), len(speech) + int(RATE * 0.45) * 2)
+        self.assertGreaterEqual(len(out), len(speech))
+        self.assertEqual(trim_silence(silence), silence)  # nothing voiced: unchanged
+
+    def test_multipart_has_language_and_model(self):
+        from voice import multipart
+        body, ctype = multipart({"model": "m", "language": "en", "prompt": ""}, b"RIFF")
+        self.assertIn(b'name="language"\r\n\r\nen', body)
+        self.assertNotIn(b'name="prompt"', body)
+        self.assertTrue(ctype.startswith("multipart/form-data; boundary="))
+
+    def test_short_reply_keeps_sentences(self):
+        from voice import short_reply
+        text = "It is 12 degrees with light rain in Berlin. " + "Forecast: Saturday cloudy, low 7, high 17. " * 40
+        out = short_reply(text, 120)
+        self.assertTrue(out.startswith("It is 12 degrees"))
+        self.assertLessEqual(len(out), 120)
+        self.assertEqual(short_reply("Hi there.", 120), "Hi there.")
+        long_one = "word " * 100
+        self.assertLessEqual(len(short_reply(long_one, 50)), 50)
+
+    def test_api_reuses_connection(self):
+        import api as apimod
+
+        class FakeResp:
+            status, will_close = 200, False
+
+            def read(self):
+                return b'{"text": "ok"}'
+
+        class FakeConn:
+            made = 0
+
+            def __init__(self, *a, **k):
+                FakeConn.made += 1
+                self.sock = None
+                self.fail = False
+
+            def connect(self):
+                pass
+
+            def request(self, *a, **k):
+                if self.fail:
+                    self.fail = False
+                    raise apimod.http.client.RemoteDisconnected("idle")
+
+            def getresponse(self):
+                return FakeResp()
+
+            def close(self):
+                pass
+
+        saved = apimod.http.client.HTTPSConnection
+        apimod.http.client.HTTPSConnection = FakeConn
+        try:
+            a = apimod.Api("k")
+            for _ in range(3):
+                a.post("/v1/x", b"{}", "application/json", 5)
+            self.assertEqual(FakeConn.made, 1)
+            a._idle[0][0].fail = True  # server closed the idle connection
+            self.assertEqual(a.post("/v1/x", b"{}", "application/json", 5), b'{"text": "ok"}')
+            self.assertEqual(FakeConn.made, 2)
+        finally:
+            apimod.http.client.HTTPSConnection = saved
+
+
 if __name__ == "__main__":
     unittest.main()
