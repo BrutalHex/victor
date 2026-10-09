@@ -17,6 +17,8 @@ from urllib.parse import parse_qs, urlparse
 from edge import Edge
 from explore import NAMES, Explorer
 from faces import FaceDB
+from face_id import FaceID, is_identity_question, person_context
+import voice as voice_mod
 from protocol import FLAG_FACE, TYPE_AUDIO, TYPE_SENSOR, TYPE_VIDEO, decode, unpack_sensor
 from safety import classical_vote
 from voice import MIN_UTTERANCE_BYTES, Voice, _wav_wrap, speech_like, tone
@@ -45,7 +47,9 @@ STATE = {
 _WINDOW = []
 LOCK = threading.Lock()
 EXPLORER = Explorer()
-FACE_DB = FaceDB(os.environ.get("HUB_FACE_DB", "/tmp/victor-faces.db"))
+FACE_DB = FaceDB()  # HUB_FACE_DB or /app/data/faces.db (persistent volume)
+FACE_ID = FaceID(FACE_DB)
+FACE_GREET_S = float(os.environ.get("HUB_FACE_GREET_S", "600") or 600)
 VOICE = Voice()
 EDGE = Edge()
 PENDING: list[tuple[int, bytes]] = []
@@ -194,6 +198,7 @@ def _on_audio(pcm: bytes) -> None:
         return
     if not begin_think("vad"):
         return
+    FACE_ID.kick()
     print(f"voice utterance {len(utt)} bytes rms={VOICE.last_rms} noise={int(VOICE.noise)}", flush=True)
     try:
         os.makedirs("/app/data", exist_ok=True)
@@ -280,6 +285,8 @@ def reply_turn(pcm: bytes) -> tuple[str, str, bytes]:
     """STT -> chat (web search) -> TTS, timed. Thinking stays on throughout."""
     t = time.time()
     text = VOICE.transcribe(pcm)
+    if text and FACE_ID.ready() and is_identity_question(text):
+        FACE_ID.wait_fresh(max_age=15, timeout=float(os.environ.get("HUB_FACE_WAIT_S", "4") or 4))
     t_stt = time.time()
     reply = VOICE.chat(text) if text else ""
     t_chat = time.time()
@@ -357,27 +364,40 @@ def _on_nav_frame(jpeg: bytes) -> None:
 
 
 def _on_face_frame(jpeg: bytes) -> None:
-    name, score = FACE_DB.match(jpeg)
-    if not name:
+    """Face-size frames feed the NVIDIA face-to-name matcher (background)."""
+    FACE_ID.on_frame(jpeg)
+
+
+def _person_context() -> str:
+    return person_context(FACE_ID.present(), FACE_ID.min_conf)
+
+
+def _on_face_result(res: dict) -> None:
+    """A confident match: show the name and greet, at most once per FACE_GREET_S."""
+    name = res.get("name")
+    if not name or float(res.get("confidence") or 0) < FACE_ID.min_conf:
         return
     with LOCK:
-        STATE["face"] = {"name": name, "score": round(score, 3)}
+        STATE["face"] = {"name": name, "score": round(float(res["confidence"]), 2)}
     now = time.time()
-    if LAST_FACE_SPOKEN["name"] == name and now - LAST_FACE_SPOKEN["t"] < 30:
+    if LAST_FACE_SPOKEN["name"] == name and now - LAST_FACE_SPOKEN["t"] < FACE_GREET_S:
         return
-    LAST_FACE_SPOKEN["name"] = name
-    LAST_FACE_SPOKEN["t"] = now
     with LOCK:
         busy = bool(STATE.get("voice_busy"))
     if busy:
-        return  # don't talk over a reply turn
+        return  # don't talk over a reply turn; try on the next result
+    LAST_FACE_SPOKEN["name"] = name
+    LAST_FACE_SPOKEN["t"] = now
     show = f"name|{name}".encode()
     if VOICE.key:
-        # Thinking while the name is synthesised, then name + speech.
-        threading.Thread(target=speak_turn, args=(name, "face", show), daemon=True).start()
+        threading.Thread(target=speak_turn, args=(f"Hi, {name}!", "face", show), daemon=True).start()
     else:
         queue_cmd(CMD_FACEUI, show)
         queue_cmd(CMD_SPEAK, tone(660, 250))
+
+
+voice_mod.PERSON_CONTEXT = _person_context
+FACE_ID.on_result = _on_face_result
 
 
 def handle_robot(conn: socket.socket) -> None:
@@ -483,10 +503,26 @@ class Status(BaseHTTPRequestHandler):
                 "langs": VOICE.langs,
                 "stt_language": VOICE.stt_language or "auto",
             }
+            body["person"] = FACE_ID.present()
             self._json(body)
             return
         if path == "/faces":
             self._json({"faces": FACE_DB.list()})
+            return
+        if path == "/faces/img":
+            try:
+                fid = int((parse_qs(urlparse(self.path).query).get("id") or ["0"])[0])
+            except ValueError:
+                fid = 0
+            img = FACE_DB.image(fid)
+            if not img:
+                self.send_error(404)
+                return
+            self.send_response(200)
+            self.send_header("Content-Type", "image/jpeg")
+            self.send_header("Content-Length", str(len(img)))
+            self.end_headers()
+            self.wfile.write(img)
             return
         if path == "/frame":
             kind = (parse_qs(urlparse(self.path).query).get("kind") or ["face"])[0]
@@ -517,6 +553,9 @@ class Status(BaseHTTPRequestHandler):
             self.send_error(404)
             return
         qs = parse_qs(u.query)
+        if qs.get("name"):
+            self._json({"ok": True, "deleted": FACE_DB.delete_name(qs["name"][0])})
+            return
         try:
             fid = int((qs.get("id") or ["0"])[0])
         except ValueError:
@@ -532,16 +571,7 @@ class Status(BaseHTTPRequestHandler):
         except json.JSONDecodeError:
             data = {}
         if path == "/faces":
-            name = str(data.get("name") or "")
-            img = b""
-            if data.get("image_b64"):
-                img = base64.b64decode(data["image_b64"])
-            elif LAST_JPEG["face"] or LAST_JPEG["nav"]:
-                img = LAST_JPEG["face"] or LAST_JPEG["nav"]
-            try:
-                self._json(FACE_DB.enroll(name, img))
-            except ValueError as e:
-                self._json({"ok": False, "error": str(e)}, 400)
+            self._json(*enroll(data))
             return
         if path == "/record":
             self._json(*record(data))
@@ -563,6 +593,58 @@ class Status(BaseHTTPRequestHandler):
             self._json({"ok": n > 0, "bytes": n})
             return
         self.send_error(404)
+
+
+def enroll(data: dict) -> tuple[dict, int]:
+    """POST /faces {"name": "Ann", "count": 3, "gap": 1.5} enrolls `count` live
+    face frames taken `gap` s apart (or one "image_b64"). With the NVIDIA key set,
+    each frame is first checked for a visible person; frames without one are
+    skipped, so standing out of view enrolls nothing."""
+    from face_id import clean_name
+
+    name = clean_name(str(data.get("name") or ""))
+    if not name:
+        return {"ok": False, "error": "name required"}, 400
+    if data.get("image_b64"):
+        try:
+            frames = [base64.b64decode(data["image_b64"])]
+        except (ValueError, TypeError):
+            return {"ok": False, "error": "image_b64"}, 400
+    else:
+        try:
+            count = max(1, min(int(data.get("count") or 3), 6))
+            gap = max(0.5, min(float(data.get("gap") or 1.5), 5.0))
+        except (TypeError, ValueError):
+            return {"ok": False, "error": "count/gap"}, 400
+        frames = []
+        last = b""
+        deadline = time.time() + count * gap + 5
+        while len(frames) < count and time.time() < deadline:
+            img = LAST_JPEG["face"]
+            if img and img is not last and (not frames or time.time() - frames[-1][1] >= gap):
+                frames.append((img, time.time()))
+                last = img
+            time.sleep(0.1)
+        frames = [f for f, _ in frames]
+    if not frames:
+        return {"ok": False, "error": "no camera frame (is the robot streaming video?)"}, 409
+    stored, skipped, checks = [], 0, []
+    for img in frames:
+        if FACE_ID.ready():
+            res = FACE_ID.recognize(img, [])  # no gallery: just "is a person visible?"
+            checks.append({"person": res["person"], "ms": res["ms"], "error": res["error"][:80]})
+            if res["error"] or not res["person"]:
+                skipped += 1
+                continue
+        stored.append(FACE_DB.enroll(name, img)["id"])
+    ok = bool(stored)
+    out = {"ok": ok, "name": name, "stored": len(stored), "ids": stored, "skipped": skipped, "checks": checks}
+    if not ok:
+        out["error"] = "no person visible in the frames; stand 0.5-1 m in front of the robot, face it, and retry"
+    print(f"face enroll name={name!r} stored={len(stored)} skipped={skipped}", flush=True)
+    if ok:
+        FACE_ID.kick()
+    return out, 200 if ok else 422
 
 
 def _safe_name(name: str) -> str:
@@ -604,20 +686,35 @@ def record(data: dict) -> tuple[dict, int]:
     return out, 200
 
 
-UI_HTML = """<!doctype html><html><head><meta charset="utf-8"><title>victor hub</title>
-<style>body{font-family:sans-serif;max-width:40rem;margin:2rem auto}</style></head>
-<body><h1>victor hub</h1><p>Face names (local SQLite, not OpenAI).</p>
-<form onsubmit="enroll(event)"><input name="name" placeholder="name" required>
-<button>enroll last frame</button></form>
-<pre id="out"></pre>
+UI_HTML = """<!doctype html><html><head><meta charset="utf-8"><title>victor hub - faces</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>body{font-family:sans-serif;max-width:44rem;margin:1.5rem auto;padding:0 1rem}
+img.live{width:100%;max-width:640px;border:1px solid #888}.refs img{height:96px;margin:2px}
+.row{margin:.4rem 0}button{padding:.4rem .8rem}</style></head>
+<body><h1>victor hub - faces</h1>
+<p>Live robot camera (1 fps). Stand 0.5-1 m in front of Vector, face it, good light.</p>
+<img class="live" id="live" alt="no camera frame yet">
+<form onsubmit="enroll(event)" class="row"><input name="name" placeholder="your name" required>
+<button>enroll (3 photos, ~5 s)</button></form>
+<div class="row" id="who"></div>
+<pre id="out"></pre><div id="list"></div>
 <script>
-async function enroll(e){e.preventDefault();
- const name=e.target.name.value;
+function tick(){document.getElementById('live').src='/frame?kind=face&t='+Date.now();
+ fetch('/status').then(r=>r.json()).then(j=>{const p=j.person||{};
+  document.getElementById('who').textContent='recognised: '+(p.present_name||'nobody')+
+   ' conf '+p.confidence+' age '+p.age_s+'s person='+p.present_person+(p.error?' error: '+p.error:'');});}
+setInterval(tick,1000);tick();
+async function enroll(e){e.preventDefault();const name=e.target.name.value;
+ document.getElementById('out').textContent='taking photos...';
  const r=await fetch('/faces',{method:'POST',headers:{'Content-Type':'application/json'},
-  body:JSON.stringify({name})});
- document.getElementById('out').textContent=await r.text();
-}
-fetch('/faces').then(r=>r.json()).then(j=>document.getElementById('out').textContent=JSON.stringify(j,null,2));
+  body:JSON.stringify({name,count:3,gap:1.5})});
+ document.getElementById('out').textContent=await r.text();list();}
+async function del(id){await fetch('/faces?id='+id,{method:'DELETE'});list();}
+function list(){fetch('/faces').then(r=>r.json()).then(j=>{const d=document.getElementById('list');d.innerHTML='';
+ for(const f of j.faces){const s=document.createElement('div');s.className='refs';
+  s.innerHTML=(f.photo?'<img src="/faces/img?id='+f.id+'">':'(no photo)')+' '+f.name+' #'+f.id+
+   ' <button onclick="del('+f.id+')">delete</button>';d.appendChild(s);}});}
+list();
 </script></body></html>
 """
 
@@ -636,6 +733,11 @@ def main() -> None:
     tcp_port = int(os.environ.get("HUB_SKILL_PORT", "7443"))
     http_port = int(os.environ.get("HUB_HTTP_PORT", "8080"))
     threading.Thread(target=voice_loop, daemon=True).start()
+    threading.Thread(target=FACE_ID.loop, daemon=True).start()
+    if FACE_ID.ready():
+        print(f"face id on: model={FACE_ID.model} key=${FACE_ID.key_var} (value not logged)", flush=True)
+    else:
+        print(f"face id off: set ${FACE_ID.key_var} (and HUB_FACE_ID=1) for face-to-name", flush=True)
     threading.Thread(target=think_loop, daemon=True).start()
     threading.Thread(target=udp_loop, args=(host, udp_sensor), daemon=True).start()
     threading.Thread(target=udp_loop, args=(host, udp_audio), daemon=True).start()

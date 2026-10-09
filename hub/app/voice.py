@@ -216,8 +216,17 @@ def now_context(now: _dt.datetime | None = None) -> str:
     return text
 
 
+PERSON_CONTEXT = None  # main sets a callable -> camera/identity section (face_id.person_context)
+
+
 def system_prompt(now: _dt.datetime | None = None) -> str:
-    return SYSTEM_PROMPT + " " + langmod.reply_rule(langmod.allowed()) + "\n" + now_context(now)
+    text = SYSTEM_PROMPT + " " + langmod.reply_rule(langmod.allowed()) + "\n" + now_context(now)
+    if PERSON_CONTEXT is not None:
+        try:
+            text += "\n" + PERSON_CONTEXT()
+        except Exception as exc:  # noqa: BLE001 - never break a voice turn
+            print(f"voice person context failed {exc!r}", flush=True)
+    return text
 
 
 _MD_LINK = re.compile(r"\[([^\]]*)\]\((?:https?://|www\.)[^)]*\)")

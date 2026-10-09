@@ -10,7 +10,10 @@ import struct
 import threading
 import time
 
-DB_PATH = os.environ.get("HUB_FACE_DB", "/tmp/victor-faces.db")
+# /app/data is the hub's persistent volume (hub/data on the host).
+DB_PATH = os.environ.get("HUB_FACE_DB") or (
+    "/app/data/faces.db" if os.path.isdir("/app/data") else "/tmp/victor-faces.db"
+)
 MATCH_MIN = 0.92
 
 
@@ -23,6 +26,9 @@ def _connect(path: str) -> sqlite3.Connection:
         "embedding BLOB NOT NULL,"
         "created REAL NOT NULL)"
     )
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(faces)").fetchall()}
+    if "jpeg" not in cols:  # reference photo for the VLM matcher (face_id.py)
+        conn.execute("ALTER TABLE faces ADD COLUMN jpeg BLOB")
     conn.commit()
     return conn
 
@@ -83,16 +89,47 @@ class FaceDB:
         vec = embed(jpeg)
         with self.lock:
             cur = self.conn.execute(
-                "INSERT INTO faces(name, embedding, created) VALUES(?,?,?)",
-                (name, pack(vec), time.time()),
+                "INSERT INTO faces(name, embedding, created, jpeg) VALUES(?,?,?,?)",
+                (name, pack(vec), time.time(), jpeg),
             )
             self.conn.commit()
             return {"id": cur.lastrowid, "name": name}
 
     def list(self) -> list[dict]:
         with self.lock:
-            rows = self.conn.execute("SELECT id, name, created FROM faces ORDER BY id").fetchall()
-        return [{"id": r[0], "name": r[1], "created": r[2]} for r in rows]
+            rows = self.conn.execute(
+                "SELECT id, name, created, jpeg IS NOT NULL FROM faces ORDER BY id"
+            ).fetchall()
+        return [{"id": r[0], "name": r[1], "created": r[2], "photo": bool(r[3])} for r in rows]
+
+    def image(self, fid: int) -> bytes:
+        with self.lock:
+            row = self.conn.execute("SELECT jpeg FROM faces WHERE id=?", (fid,)).fetchone()
+        return bytes(row[0]) if row and row[0] else b""
+
+    def delete_name(self, name: str) -> int:
+        with self.lock:
+            cur = self.conn.execute("DELETE FROM faces WHERE lower(name)=lower(?)", (name.strip(),))
+            self.conn.commit()
+            return cur.rowcount
+
+    def refs(self, limit: int = 6, per_name: int = 2) -> list[tuple[str, bytes]]:
+        """Newest reference photos, at most per_name per person, limit in total."""
+        with self.lock:
+            rows = self.conn.execute(
+                "SELECT name, jpeg FROM faces WHERE jpeg IS NOT NULL ORDER BY id DESC"
+            ).fetchall()
+        out: list[tuple[str, bytes]] = []
+        seen: dict[str, int] = {}
+        for name, jpeg in rows:
+            key = name.lower()
+            if seen.get(key, 0) >= per_name:
+                continue
+            seen[key] = seen.get(key, 0) + 1
+            out.append((name, bytes(jpeg)))
+            if len(out) >= limit:
+                break
+        return out
 
     def delete(self, fid: int) -> bool:
         with self.lock:
