@@ -59,7 +59,7 @@ cleanup() {
 trap cleanup EXIT
 
 if [[ -n "$OTA_FILE" && -z "$URL" ]]; then
-  HOST_IP="$(hostname -I | awk '{print $1}')"
+  HOST_IP="${OTA_HOST_IP:-$(hostname -I | awk '{print $1}')}"
   DIR="$(cd "$(dirname "$OTA_FILE")" && pwd)"
   BASE="$(basename "$OTA_FILE")"
   python3 -m http.server "$HTTP_PORT" --bind 0.0.0.0 --directory "$DIR" &
