@@ -290,7 +290,7 @@ class ThinkingTurn(unittest.TestCase):
     def faceui(self):
         return [(k, p) for k, p in self.m.pop_cmds()]
 
-    def stub(self, text="hi", reply="hello", audio=b"\x01\x00" * 8, fail=None):
+    def stub(self, text="tell me a joke", reply="hello", audio=b"\x01\x00" * 8, fail=None):
         m = self.m
 
         def busy(tag):
@@ -344,7 +344,7 @@ class ThinkingTurn(unittest.TestCase):
 
     def test_empty_transcript_and_reply_clear(self):
         m = self.m
-        for text, reply in (("", ""), ("hi", "")):
+        for text, reply in (("", ""), ("tell me a joke", "")):
             self.stub(text=text, reply=reply)
             m.run_turn(b"\x00" * 100)  # also opens the turn itself
             cmds = self.faceui()
@@ -830,7 +830,7 @@ class FaceToName(unittest.TestCase):
         self.assertEqual(main.FACE_ID.calls, 1)
         self.assertIn("the person in front of you is Ann", prompts[-1])
         self.assertNotIn("image_url", prompts[-1])
-        main.VOICE.transcribe = lambda pcm: "What time is it?"
+        main.VOICE.transcribe = lambda pcm: "Tell me a joke"
         main.reply_turn(b"\x00" * 10)
         self.assertEqual(len(posts), 1)  # next turn: no call
         self.assertNotIn("Ann", prompts[-1])  # and no leftover name
@@ -867,6 +867,200 @@ class FaceToName(unittest.TestCase):
         finally:
             main.FACE_ID.key, main.FACE_ID.post, main.FACE_ID.enabled, main.FACE_DB = saved
             main.FACE_ID.db = main.FACE_DB
+
+
+class StockIntents(unittest.TestCase):
+    """DDL/wire-pod style commands: matched in en/de/fa, run without a chat
+    call, actions go out as CMD_ACTION after the reply; no match -> chat."""
+
+    CASES = [
+        ("Hey Vector, what time is it?", "intent_clock_time", "en"),
+        ("Wie spät ist es?", "intent_clock_time", "de"),
+        ("ساعت چنده؟", "intent_clock_time", "fa"),
+        ("Look at me", "intent_imperative_lookatme", "en"),
+        ("Schau mich an", "intent_imperative_lookatme", "de"),
+        ("به من نگاه کن", "intent_imperative_lookatme", "fa"),
+        ("Fist bump!", "intent_play_fistbump", "en"),
+        ("Go to your charger", "intent_system_charger", "en"),
+        ("Fahr zu deiner Ladestation", "intent_system_charger", "de"),
+        ("برو سر شارژرت", "intent_system_charger", "fa"),
+        ("Get off the charger", "intent_system_leavecharger", "en"),
+        ("Set a timer for 2 minutes", "intent_clock_settimer_extend", "en"),
+        ("Stell einen Timer auf zehn Minuten", "intent_clock_settimer_extend", "de"),
+        ("تایمر ۳ دقیقه بذار", "intent_clock_settimer_extend", "fa"),
+        ("Cancel the timer", "intent_global_stop_extend", "en"),
+        ("Timer abbrechen", "intent_global_stop_extend", "de"),
+        ("I love you", "intent_imperative_love", "en"),
+        ("دوستت دارم", "intent_imperative_love", "fa"),
+        ("Lauter", "intent_imperative_volumeup", "de"),
+        ("volume down", "intent_imperative_volumedown", "en"),
+        ("Good robot", "intent_imperative_praise", "en"),
+        ("Shut up", "intent_imperative_shutup", "en"),
+        ("Go to sleep", "intent_system_sleep", "en"),
+        ("Turn left", "intent_imperative_turnleft", "en"),
+        ("Dreh dich um", "intent_imperative_turnaround", "de"),
+        ("Come here", "intent_imperative_come", "en"),
+        ("Take a picture", "intent_photo_take_extend", "en"),
+        ("Roll your cube", "intent_play_rollcube", "en"),
+        ("My name is Ann", "intent_names_username_extend", "en"),
+        ("اسم من آنا است", "intent_names_username_extend", "fa"),
+        ("Hello", "intent_greeting_hello", "en"),
+        ("How old are you?", "intent_character_age", "en"),
+    ]
+    CHAT = ["What's my name?", "اسم من چیه؟", "Wie heiße ich?", "What's the weather like today?",
+            "Tell me a joke", "hello how are you doing today", "Can you tell me about the time of the Romans?",
+            "Who am I?", "I think the timer on my oven is broken, what should I do?"]
+
+    def test_match_three_languages(self):
+        import intents
+        for q, name, lang in self.CASES:
+            m = intents.match(q)
+            self.assertIsNotNone(m, q)
+            self.assertEqual((m.name, m.lang), (name, lang), q)
+        for q in self.CHAT:
+            self.assertIsNone(intents.match(q), q)
+
+    def test_duration_and_level(self):
+        import intents
+        self.assertEqual(intents.parse_duration("5 minutes"), 300)
+        self.assertEqual(intents.parse_duration("zehn sekunden"), 10)
+        self.assertEqual(intents.parse_duration("۳ دقیقه"), 180)
+        self.assertEqual(intents.parse_duration("two and a half minutes"), 150)
+        self.assertEqual(intents.parse_level("max"), 5)
+        self.assertEqual(intents.parse_level("2"), 2)
+
+    def setUp(self):
+        import main
+        self.m = main
+        main.pop_cmds()
+        with main.LOCK:
+            main.STATE.update(thinking=False, voice_busy=False)
+            main.STATE["last_sensor"] = {"on_charger": True}
+        self.saved = (main.VOICE.transcribe, main.VOICE.chat, main.VOICE.tts, main.VOLUME.path, main.VOLUME.level,
+                      main.FACE_ID.post, main.FACE_ID.key, main.FACE_ID.enabled)
+        self.chats, self.posts = [], []
+        main.VOICE.chat = lambda t: self.chats.append(t) or "chat reply"
+        main.VOICE.tts = lambda r: b"\x00\x10" * 8
+        main.FACE_ID.post = lambda payload: self.posts.append(payload) or {"choices": [{"message": {"content": "{}"}}]}
+        main.FACE_ID.key, main.FACE_ID.enabled = "k", True
+        main.VOLUME.path = os.path.join(tempfile.mkdtemp(), "volume.txt")
+        main.VOLUME.level = 4
+
+    def tearDown(self):
+        m = self.m
+        (m.VOICE.transcribe, m.VOICE.chat, m.VOICE.tts, m.VOLUME.path, m.VOLUME.level,
+         m.FACE_ID.post, m.FACE_ID.key, m.FACE_ID.enabled) = self.saved
+        m.TIMER.cancel()
+        with m.LOCK:
+            m.STATE["last_sensor"] = None
+        m.pop_cmds()
+
+    def turn(self, q):
+        self.m.VOICE.transcribe = lambda pcm: q
+        self.m.VOICE.last_lang = ""
+        self.m.run_turn(b"\x00" * 100)
+        return self.m.pop_cmds()
+
+    def test_action_sent_after_reply_no_chat_no_face_call(self):
+        m = self.m
+        cmds = self.turn("Look at me")
+        self.assertEqual(self.chats, [])
+        self.assertEqual(self.posts, [])
+        self.assertEqual(cmds[-1], (m.CMD_ACTION, b"look_at_me"))
+        self.assertIn((m.CMD_FACEUI, b"idle|"), cmds)
+        cmds = self.turn("Fist bump")
+        self.assertEqual(cmds[-1], (m.CMD_ACTION, b"fistbump"))
+        self.assertIn(m.CMD_SPEAK, [k for k, _ in cmds])
+
+    def test_no_driving_on_charger_except_leave(self):
+        m = self.m
+        for q in ("Go forward", "Turn left", "Come here", "Back up"):
+            cmds = self.turn(q)
+            self.assertNotIn(m.CMD_ACTION, [k for k, _ in cmds], q)
+            self.assertIn("charger", m.STATE["last_reply"].lower(), q)
+        with m.LOCK:
+            m.STATE["last_sensor"] = None  # unknown counts as on the charger
+        self.assertNotIn(m.CMD_ACTION, [k for k, _ in self.turn("Go forward")])
+        with m.LOCK:
+            m.STATE["last_sensor"] = {"on_charger": True}
+        self.assertEqual(self.turn("Get off the charger")[-1], (m.CMD_ACTION, b"leave_charger"))
+        with m.LOCK:
+            m.STATE["last_sensor"] = {"on_charger": False}
+        self.assertEqual(self.turn("Turn left")[-1], (m.CMD_ACTION, b"turn_left"))
+        self.assertNotIn(m.CMD_ACTION, [k for k, _ in self.turn("Get off the charger")])
+        self.assertEqual(self.chats, [])
+
+    def test_face_clips_and_honest_refusals(self):
+        m = self.m
+        cmds = self.turn("I love you")
+        self.assertIn((m.CMD_FACEUI, b"anim|iloveyou"), cmds)
+        self.assertNotIn(m.CMD_SPEAK, [k for k, _ in cmds])  # stock: no speech
+        cmds = self.turn("Go to your charger")
+        self.assertIn((m.CMD_FACEUI, b"anim|cant_help"), cmds)
+        self.assertIn("charger", m.STATE["last_reply"])
+        self.turn("Roll your cube")
+        self.assertIn("cube", m.STATE["last_reply"])
+        self.assertIn((m.CMD_FACEUI, b"sleep|"), self.turn("Go to sleep"))
+        self.assertEqual(self.turn("shut up")[-1], (m.CMD_ACTION, b"stop"))
+        self.assertEqual(self.chats, [])
+
+    def test_time_local_in_language(self):
+        m = self.m
+        self.turn("Wie spät ist es?")
+        self.assertRegex(m.STATE["last_reply"], r"^Es ist \d\d:\d\d Uhr\.$")
+        self.turn("What time is it?")
+        self.assertRegex(m.STATE["last_reply"], r"^It's \d{1,2}:\d\d [AP]M\.$")
+        self.assertEqual(self.chats, [])
+
+    def test_volume_scales_speech_and_persists(self):
+        m = self.m
+        self.turn("volume down")
+        self.assertEqual(m.VOLUME.level, 3)
+        self.assertEqual(open(m.VOLUME.path).read(), "3")
+        speak = [p for k, p in self.turn("tell me a joke") if k == m.CMD_SPEAK][0]
+        self.assertEqual(struct.unpack("<h", speak[2:4])[0], int(0x1000 * 0.7))
+        self.turn("volume max")
+        self.assertEqual(m.VOLUME.level, 5)
+        m.VOLUME.level = 4
+        self.assertEqual(m.VOLUME.apply(b"\x00\x10"), b"\x00\x10")  # default = unchanged
+
+    def test_timer_set_check_cancel_fire(self):
+        m = self.m
+        self.turn("Set a timer for 5 minutes")
+        self.assertEqual(m.STATE["last_reply"], "Timer set for 5 minutes.")
+        self.assertGreater(m.TIMER.left(), 290)
+        self.turn("Cancel the timer")
+        self.assertEqual(m.TIMER.left(), 0)
+        fired = []
+        m.TIMER.start(0, "de", fired.append)
+        time.sleep(0.2)
+        self.assertEqual(fired, ["de"])
+
+    def test_chat_fallback_and_identity_path_intact(self):
+        m = self.m
+        self.turn("Tell me a joke")
+        self.assertEqual(self.chats, ["Tell me a joke"])
+        calls = []
+        saved = m.FACE_ID.identify
+        m.FACE_ID.identify = lambda: calls.append(1) or {"name": None, "confidence": 0, "person": True}
+        try:
+            self.turn("What's my name?")
+            self.turn("اسم من چیه؟")
+            self.turn("What time is it?")
+        finally:
+            m.FACE_ID.identify = saved
+        self.assertEqual(self.chats[-2:], ["What's my name?", "اسم من چیه؟"])
+        self.assertEqual(len(calls), 2)  # one identify call per identity question, none for the time
+
+    def test_disabled_by_env_flag(self):
+        m = self.m
+        saved = m.INTENTS_ON
+        m.INTENTS_ON = False
+        try:
+            self.turn("Look at me")
+            self.assertEqual(self.chats, ["Look at me"])
+        finally:
+            m.INTENTS_ON = saved
 
 
 try:

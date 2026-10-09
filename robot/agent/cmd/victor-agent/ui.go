@@ -27,6 +27,7 @@ type uiState struct {
 	caption    string
 	until      time.Time
 	thinkStart time.Time
+	animStart  time.Time // anim / pet / sleep clip start
 	thinkSeen  time.Time
 	thinkFrame uint64        // face.FramesSent at think on
 	frames     func() uint64 // tests
@@ -142,6 +143,9 @@ func (u *uiState) set(mode, caption string, d time.Duration) {
 	} else if u.mode == "thinking" {
 		u.logf("think off %s why=%s %s", stamp(now), mode, u.thinkStats(now))
 	}
+	if mode != u.mode || caption != u.caption {
+		u.animStart = now
+	}
 	u.mode, u.caption = mode, caption
 	if d > 0 {
 		u.until = now.Add(d)
@@ -149,4 +153,13 @@ func (u *uiState) set(mode, caption string, d time.Duration) {
 		u.until = time.Time{}
 	}
 	u.lastDrawn = ""
+}
+
+func (u *uiState) currentMode() string {
+	if u == nil {
+		return ""
+	}
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	return u.mode
 }

@@ -25,8 +25,13 @@ type Frame struct {
 	BatteryFlags   uint16
 	ProxSigmaMM    uint8
 	ProxRawRangeMM uint16
-	Touch          uint16
-	Button         bool
+	// Touch is the backpack capacitive level the stock engine uses
+	// (backpackTouchSensorRaw): touchHires[0] on production bodies, else
+	// touchLevel[0]^1.2. TouchLevel is touchLevel[0] as sent.
+	Touch      uint16
+	TouchLevel uint16
+	TouchHires uint16
+	Button     bool
 	// Mic is 4 channels × 80 samples (interleaved) when the 768-byte dataframe is present.
 	Mic []int16
 }
@@ -76,8 +81,9 @@ func ParsePacked(b []byte) (Frame, error) {
 	if len(b) < touchOff+4 {
 		return f, errors.New("short spine tail")
 	}
-	f.Touch = binary.LittleEndian.Uint16(b[touchOff:])
+	// Button: unchanged on purpose (it feeds CHARGE-LATCH). See ButtonBytes.
 	f.Button = binary.LittleEndian.Uint16(b[touchOff+2:]) > 0
+	f.TouchLevel, f.TouchHires, f.Touch = touchFields(b)
 	if len(b) >= micOffset+micBytes {
 		f.Mic = make([]int16, micSamples)
 		for i := 0; i < micSamples; i++ {
@@ -85,6 +91,34 @@ func ParsePacked(b []byte) (Frame, error) {
 		}
 	}
 	return f, nil
+}
+
+// Real BodyToHead offsets (robot/syscon/schema/messages.h, checked against
+// recorded frames): battery is 12 bytes (64..75), RangeData 16 (76..91),
+// touchLevel[2] at 92, micError[2] at 96, touchHires[2] at 100. The old
+// touch read at 89 (inside RangeData) and was always 0 on hardware.
+const (
+	touchLevelOff = 92
+	touchHiresOff = 100
+)
+
+// ButtonBytes is where Button is read from (offset 91, 2 bytes). Kept as
+// is for the latch; note it overlaps calibrationResult's top byte and the
+// low byte of touchLevel[0] (see deploy notes / tests).
+const ButtonBytes = 91
+
+func touchFields(b []byte) (level, hires, touch uint16) {
+	if len(b) >= touchHiresOff+2 {
+		level = binary.LittleEndian.Uint16(b[touchLevelOff:])
+		hires = binary.LittleEndian.Uint16(b[touchHiresOff:])
+	}
+	switch {
+	case hires != 0 && hires != 0xFFFF:
+		touch = hires
+	case level != 0 && level != 0xFFFF:
+		touch = uint16(math.Min(65534, math.Pow(float64(level), 1.2)))
+	}
+	return level, hires, touch
 }
 
 func (f Frame) OnCharger() bool {

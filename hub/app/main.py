@@ -18,6 +18,7 @@ from edge import Edge
 from explore import NAMES, Explorer
 from faces import FaceDB
 from face_id import NO_CONTEXT, FaceID, is_identity_question, person_context
+import intents as intents_mod
 import voice as voice_mod
 from protocol import FLAG_FACE, TYPE_AUDIO, TYPE_SENSOR, TYPE_VIDEO, decode, unpack_sensor
 from safety import classical_vote
@@ -92,6 +93,7 @@ class SeqDedupe:
 AUDIO_SEQ = SeqDedupe()
 VIDEO_SEQ = SeqDedupe(window=128)  # ~8 s of video: an agent restart resets seq
 CMD_FACEUI, CMD_SPEAK, CMD_DISPLAY = 1, 2, 3
+CMD_ACTION = 4  # payload: action name; the agent's runner executes it under the on-robot veto
 
 
 def queue_cmd(kind: int, payload: bytes) -> None:
@@ -246,7 +248,7 @@ def end_think(audio: bytes = b"", why: str = "done", show: bytes = b"") -> None:
         if show:  # e.g. name|Ann: replaces thinking, shown while it speaks
             PENDING.append((CMD_FACEUI, show))
         if audio:
-            PENDING.append((CMD_SPEAK, audio))
+            PENDING.append((CMD_SPEAK, VOLUME.apply(audio)))
         if not show:
             PENDING.append((CMD_FACEUI, b"idle|"))
     print(f"think off {_ms()} why={why} held={held:.1f}s speak={len(audio)}", flush=True)
@@ -279,12 +281,19 @@ def think_loop() -> None:
 
 
 def reply_turn(pcm: bytes) -> tuple[str, str, bytes]:
-    """STT -> chat (web search) -> TTS, timed. Thinking stays on throughout."""
+    """STT -> stock command (no chat) or chat (web search) -> TTS, timed.
+    Thinking stays on throughout. A matched command leaves its face clip and
+    robot action in TURN_OUT for run_turn to send after the reply."""
     t = time.time()
     text = VOICE.transcribe(pcm)
     TURN_PERSON["ctx"] = ""
+    TURN_OUT.update(show=b"", action="", intent="")
+    VOICE.last_via = ""
+    intent = intents_mod.match(text) if (text and INTENTS_ON) else None
+    if intent and intent.name != "intent_names_username_extend" and is_identity_question(text):
+        intent = None  # identity questions keep the face-ID path
     t_face = time.time()
-    if text and is_identity_question(text):
+    if text and intent is None and is_identity_question(text):
         # The only place a camera frame goes to the AI during voice: one call, this turn only.
         res = FACE_ID.identify()
         TURN_PERSON["ctx"] = person_context(res, FACE_ID.min_conf)
@@ -293,7 +302,11 @@ def reply_turn(pcm: bytes) -> tuple[str, str, bytes]:
                 STATE["face"] = {"name": res["name"], "score": round(float(res["confidence"]), 2)}
     t_stt = time.time()
     try:
-        reply = VOICE.chat(text) if text else ""
+        if intent is not None:
+            reply = run_intent(intent)
+            VOICE.last_via = "intent"
+        else:
+            reply = VOICE.chat(text) if text else ""
     finally:
         TURN_PERSON["ctx"] = ""
     t_chat = time.time()
@@ -305,6 +318,196 @@ def reply_turn(pcm: bytes) -> tuple[str, str, bytes]:
         flush=True,
     )
     return text, reply, audio
+
+
+# ------------------------------------------------------------ stock commands
+INTENTS_ON = os.environ.get("HUB_INTENTS", "1").strip().lower() not in ("0", "false", "no", "off")
+TURN_OUT = {"show": b"", "action": "", "intent": ""}
+PHOTO_DIR = os.environ.get("HUB_PHOTO_DIR") or "/app/data/photos"
+
+
+class Volume:
+    """Speech gain on the hub, levels 1..5. Level 4 = 1.0 = the old loudness."""
+
+    GAINS = {1: 0.25, 2: 0.45, 3: 0.7, 4: 1.0, 5: 1.4}
+
+    def __init__(self, path: str | None = None):
+        self.path = path or os.environ.get("HUB_VOLUME_FILE") or "/app/data/volume.txt"
+        self.level = 4
+        try:
+            self.level = max(1, min(5, int(open(self.path).read().strip())))
+        except (OSError, ValueError):
+            pass
+
+    def set(self, level: int) -> int:
+        self.level = max(1, min(5, int(level)))
+        try:
+            os.makedirs(os.path.dirname(self.path), exist_ok=True)
+            with open(self.path, "w") as f:
+                f.write(str(self.level))
+        except OSError as exc:
+            print(f"volume save failed {exc!r}", flush=True)
+        return self.level
+
+    def apply(self, pcm: bytes) -> bytes:
+        g = self.GAINS.get(self.level, 1.0)
+        if g == 1.0 or not pcm:
+            return pcm
+        from array import array
+        a = array("h")
+        a.frombytes(pcm[: len(pcm) // 2 * 2])
+        for i, v in enumerate(a):
+            x = int(v * g)
+            a[i] = 32767 if x > 32767 else (-32768 if x < -32768 else x)
+        return a.tobytes()
+
+
+VOLUME = Volume()
+
+
+class Timer:
+    """One kitchen timer. fire(lang) runs on a daemon thread when it ends."""
+
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.end = 0.0
+        self.lang = "en"
+        self.gen = 0
+
+    def start(self, seconds: int, lang: str, fire) -> None:
+        with self.lock:
+            self.gen += 1
+            gen, self.end, self.lang = self.gen, time.time() + seconds, lang
+
+        def run():
+            time.sleep(seconds)
+            with self.lock:
+                if gen != self.gen or not self.end:
+                    return
+                self.end = 0.0
+            fire(lang)
+
+        threading.Thread(target=run, daemon=True).start()
+
+    def left(self) -> int:
+        with self.lock:
+            return max(0, int(round(self.end - time.time()))) if self.end else 0
+
+    def cancel(self) -> bool:
+        with self.lock:
+            was = bool(self.end)
+            self.end, self.gen = 0.0, self.gen + 1
+            return was
+
+
+TIMER = Timer()
+
+
+def _timer_fire(lang: str) -> None:
+    print(f"intent timer done {_ms()}", flush=True)
+    speak_turn(intents_mod.say("timer_done", lang), "timer", b"anim|hello")
+
+
+def _on_charger() -> bool | None:
+    with LOCK:
+        s = STATE.get("last_sensor")
+    return None if not s else bool(s.get("on_charger"))
+
+
+def _lang(intent) -> str:
+    lang = getattr(VOICE, "last_lang", "") or intent.lang
+    return lang if lang in ("en", "de", "fa") else intent.lang
+
+
+def run_intent(intent) -> str:
+    """Execute one stock command. Returns the spoken reply ("" = stock had none);
+    face clip / action go to TURN_OUT. Robot motion is only ever a named action
+    the agent's runner executes under its veto."""
+    I = intents_mod
+    n, lang = intent.name, _lang(intent)
+    show, action, reply = "", "", ""
+    if n in I.SIMPLE:
+        show, action, key = I.SIMPLE[n]
+        reply = I.say(key, lang) if key else ""
+    elif n in I.DRIVE:
+        act, key = I.DRIVE[n]
+        if _on_charger() is not False:  # unknown counts as on the charger
+            reply = I.say("on_charger", lang)
+        else:
+            action, reply = act, (I.say(key, lang) if key else "")
+    elif n == "intent_system_leavecharger":
+        if _on_charger() is False:
+            reply = I.say("not_on_charger", lang)
+        else:
+            action, reply = "leave_charger", I.say("leave", lang)
+    elif n == "intent_imperative_shutup":
+        action, show = "stop", "shutup"
+    elif n == "intent_system_sleep":
+        show = "sleep|"
+    elif n == "intent_clock_time":
+        tz, _ = voice_mod.hub_tz()
+        import datetime as _dt
+        now = _dt.datetime.now(tz)
+        t = now.strftime("%-I:%M %p") if lang == "en" else now.strftime("%H:%M")
+        reply = I.say("time", lang, t=t)
+    elif n == "intent_clock_settimer_extend":
+        sec = I.parse_duration(intent.arg)
+        if sec <= 0 or sec > 24 * 3600:
+            reply = I.say("timer_how_long", lang)
+        else:
+            TIMER.start(sec, lang, _timer_fire)
+            reply = I.say("timer_set", lang, d=I.fmt_duration(sec, lang))
+    elif n == "intent_clock_checktimer":
+        left = TIMER.left()
+        reply = I.say("timer_left", lang, d=I.fmt_duration(left, lang)) if left else I.say("no_timer", lang)
+    elif n == "intent_global_stop_extend":
+        reply = I.say("timer_cancel", lang) if TIMER.cancel() else I.say("no_timer", lang)
+    elif n == "intent_character_age":
+        bday = (os.environ.get("HUB_ROBOT_BIRTHDAY") or "").strip()
+        try:
+            import datetime as _dt
+            days = (_dt.date.today() - _dt.date.fromisoformat(bday)).days
+            reply = I.say("age", lang, d=I.fmt_age(days, lang)) if days >= 0 else I.say("age_unknown", lang)
+        except ValueError:
+            reply = I.say("age_unknown", lang)
+        show = "howold"
+    elif n in ("intent_imperative_volumeup", "intent_imperative_volumedown", "intent_imperative_volumelevel_extend"):
+        if n.endswith("volumeup"):
+            lvl = VOLUME.level + 1
+        elif n.endswith("volumedown"):
+            lvl = VOLUME.level - 1
+        else:
+            lvl = I.parse_level(intent.arg) or VOLUME.level
+        lvl = VOLUME.set(lvl)
+        reply = I.say("volume", lang, n=lvl)
+        show = "volume_max" if lvl == 5 else ("volume_min" if lvl == 1 else "volume")
+    elif n == "intent_photo_take_extend":
+        img = FACE_ID.latest()
+        if not img:
+            reply = I.say("no_photo", lang)
+        else:
+            os.makedirs(PHOTO_DIR, exist_ok=True)
+            path = os.path.join(PHOTO_DIR, time.strftime("photo-%Y%m%d-%H%M%S.jpg"))
+            with open(path, "wb") as f:
+                f.write(img)
+            print(f"intent photo saved {path} bytes={len(img)}", flush=True)
+            show, reply = "photo", I.say("photo", lang)
+    elif n == "intent_names_username_extend":
+        name = intent.arg.title() if intent.arg.isascii() else intent.arg
+        out, code = enroll({"name": name, "count": 2, "gap": 1.0})  # explicit enroll: NVIDIA person check per frame
+        reply = I.say("enrolled" if out.get("ok") else "enroll_fail", lang, n=out.get("name") or name)
+    elif n in I.CUBE:
+        reply, show = I.say("cube", lang), "cant_help"
+    else:  # I.CANT and anything unhandled
+        reply = I.say("cant", lang)
+    if show:
+        TURN_OUT["show"] = show.encode() if show.endswith("|") else f"anim|{show}".encode()
+    TURN_OUT.update(action=action, intent=n)
+    with LOCK:
+        STATE["last_intent"] = {"intent": n, "lang": lang, "arg": intent.arg, "action": action,
+                                "face": show, "reply": reply, "t": time.time()}
+    print(f"intent {n} lang={lang} arg={intent.arg!r} action={action or '-'} face={show or '-'} reply={reply!r}", flush=True)
+    return reply
 
 
 def voice_loop() -> None:
@@ -337,7 +540,13 @@ def run_turn(pcm: bytes) -> None:
             STATE["last_chat_ms"] = getattr(VOICE, "last_chat_ms", 0)
             STATE["last_lang"] = getattr(VOICE, "last_lang", "")
             STATE["last_drop"] = getattr(VOICE, "last_drop", "")
-        end_think(audio, why)
+        show, action = TURN_OUT["show"], TURN_OUT["action"]
+        if TURN_OUT["intent"]:
+            why = "intent " + TURN_OUT["intent"]
+        TURN_OUT.update(show=b"", action="", intent="")
+        end_think(audio, why, show)
+        if action:  # after idle/clip so the runner's own clip is not overwritten
+            queue_cmd(CMD_ACTION, action.encode())
     print(f"voice transcript={text!r} lang={getattr(VOICE, 'last_lang', '')} reply={reply!r} speak={len(audio)}", flush=True)
 
 
@@ -355,7 +564,7 @@ def speak_turn(text: str, why: str, show: bytes = b"") -> int:
         if own:
             end_think(pcm, why, show)
         elif pcm:
-            queue_cmd(CMD_SPEAK, pcm)
+            queue_cmd(CMD_SPEAK, VOLUME.apply(pcm))
     return len(pcm)
 
 
@@ -490,7 +699,11 @@ class Status(BaseHTTPRequestHandler):
                 "stt_language": VOICE.stt_language or "auto",
             }
             body["person"] = FACE_ID.present()
+            body["intents"] = {"enabled": INTENTS_ON, "volume": VOLUME.level, "timer_left_s": TIMER.left()}
             self._json(body)
+            return
+        if path == "/intents":
+            self._json({"enabled": INTENTS_ON, "intents": intents_mod.status_table()})
             return
         if path == "/faces":
             self._json({"faces": FACE_DB.list()})

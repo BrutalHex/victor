@@ -3,9 +3,16 @@ package audio
 import (
 	"bytes"
 	"encoding/binary"
+	"math"
+	"math/rand"
 	"os"
 	"os/exec"
+	"sync"
 )
+
+// playMu keeps one aplay at a time: speech waits for a short purr, a purr
+// never interrupts speech (PlaySoft gives up if the speaker is busy).
+var playMu sync.Mutex
 
 const (
 	Rate       = 16000
@@ -110,6 +117,22 @@ func Play(pcm []byte) error {
 	if len(pcm) == 0 {
 		return nil
 	}
+	playMu.Lock()
+	defer playMu.Unlock()
+	return play(pcm)
+}
+
+// PlaySoft plays only if the speaker is free (petting purr); false if busy.
+func PlaySoft(pcm []byte) bool {
+	if len(pcm) == 0 || !playMu.TryLock() {
+		return false
+	}
+	defer playMu.Unlock()
+	_ = play(pcm)
+	return true
+}
+
+func play(pcm []byte) error {
 	_ = os.MkdirAll("/data/victor", 0755)
 	_ = os.WriteFile(SpeakFile, pcm, 0644)
 	if _, err := exec.LookPath("aplay"); err != nil {
@@ -119,4 +142,25 @@ func Play(pcm []byte) error {
 	cmd.Stdin = bytes.NewReader(pcm)
 	_ = cmd.Run()
 	return nil
+}
+
+// Purr is a soft, low purr (about -30 dBFS): noise bursts at ~24 Hz through
+// a low-pass, with a slow swell. Stock Vector plays a petting sound from its
+// Wwise banks, which are not on this robot.
+func Purr(d float64) []byte {
+	n := int(d * Rate)
+	out := make([]byte, n*2)
+	r := rand.New(rand.NewSource(42))
+	lp := 0.0
+	for i := 0; i < n; i++ {
+		t := float64(i) / Rate
+		burst := 0.5 + 0.5*math.Sin(2*math.Pi*24*t)
+		burst *= burst
+		swell := math.Sin(math.Pi * t / d)
+		x := (r.Float64()*2 - 1) * burst
+		lp += 0.06 * (x - lp)
+		v := lp * swell * 2400
+		binary.LittleEndian.PutUint16(out[i*2:], uint16(int16(v)))
+	}
+	return out
 }

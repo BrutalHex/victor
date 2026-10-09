@@ -15,6 +15,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/BrutalHex/victor/robot/agent/internal/action"
 	"github.com/BrutalHex/victor/robot/agent/internal/anki"
 	"github.com/BrutalHex/victor/robot/agent/internal/audio"
 	"github.com/BrutalHex/victor/robot/agent/internal/blemask"
@@ -219,7 +220,10 @@ func runDaemon() int {
 	go injectLoop(*inject, m, ssh, body, ov, ui)
 	go watchdog(ssh, hub, body, ui)
 	go cameraLoop(hub, lnk)
-	go cmdLoop(lnk, ui, proc)
+	actCh := make(chan string, 4)
+	go cmdLoop(lnk, ui, proc, actCh)
+	runner := &action.Runner{Log: func(l string) { fmt.Println(l) }}
+	pet := &petting{ui: ui}
 	face.Boot()
 	var lastFaceAt time.Time
 	// Status files: rewritten on change at most 2/s (was ~300 writes/s).
@@ -264,6 +268,9 @@ func runDaemon() int {
 					showFaceUI(on, false, ui)
 					body.SetSSHLED(on)
 				}
+				// Back touch: its own detector on the capacitive level; it
+				// never feeds the latch (the latch reads fr.Button only).
+				pet.feed(time.Now(), fr, status)
 			}
 			cliffs := s.Cliffs
 			if c := ov.cliffs(); c != nil {
@@ -306,6 +313,33 @@ func runDaemon() int {
 					pwm[3] = skill.LookUp.Head()
 				} else {
 					pwm[3] = skill.LookDown.Head()
+				}
+			}
+			// Voice-command actions (hub names them; power decided here under the veto).
+			select {
+			case name := <-actCh:
+				if runner.Start(name, time.Now()) {
+					fmt.Printf("action %s start charger=%v veto=%s\n", name, vin.OnCharger, reason)
+					status.Put("/data/victor/action.txt", name+" start\n")
+				} else {
+					fmt.Printf("action %q unknown\n", name)
+				}
+			default:
+			}
+			if runner.Active() {
+				abort := reason == veto.Battery || reason == veto.Fall || reason == veto.Pickup || reason == veto.Cliff || reason == veto.HeartbeatMiss
+				ain := action.In{Now: time.Now(), OnCharger: vin.OnCharger, Abort: abort}
+				if have {
+					ain.EncL, ain.EncR, ain.EncLift = fr.Motors[0].Pos, fr.Motors[1].Pos, fr.Motors[2].Pos
+				}
+				out := runner.Tick(ain)
+				pwm = out.PWM
+				if out.Clip != "" {
+					ui.set("anim", out.Clip, face.ClipLen(out.Clip))
+				}
+				if out.Done != "" {
+					fmt.Printf("action %s done: %s\n", runner.Name(), out.Done)
+					status.Put("/data/victor/action.txt", runner.Name()+" "+out.Done+"\n")
 				}
 			}
 			if body != nil {
@@ -523,6 +557,21 @@ func renderFace(u *uiState, reason veto.Reason) {
 		face.Thinking(time.Since(t0))
 		return
 	}
+	if mode == "anim" || mode == "sleep" || mode == "pet" {
+		at := u.animStart
+		u.mu.Unlock()
+		clip, loop := cap, false
+		switch mode {
+		case "sleep":
+			clip, loop = "sleeping", true
+		case "pet":
+			loop = true
+		}
+		if buf, ok := face.Clip(clip, time.Since(at), loop); ok {
+			face.Blit(buf)
+		}
+		return
+	}
 	blink := 0.0
 	if int(time.Now().UnixMilli()/80)%40 == 0 {
 		blink = 0.85
@@ -649,7 +698,7 @@ func loadCameraConf() {
 		swap, flip, gamma, black, ae, level, camNavFPS, camFaceFPS)
 }
 
-func cmdLoop(lnk *link.Client, ui *uiState, proc *audio.Processor) {
+func cmdLoop(lnk *link.Client, ui *uiState, proc *audio.Processor, actCh chan<- string) {
 	for cmd := range lnk.Commands() {
 		switch cmd.Kind {
 		case link.CmdSpeak:
@@ -667,12 +716,26 @@ func cmdLoop(lnk *link.Client, ui *uiState, proc *audio.Processor) {
 				_ = os.WriteFile("/data/victor/face.rgb565", cmd.Payload, 0644)
 				ui.set("display", "", 2*time.Second)
 			}
+		case link.CmdAction:
+			name := strings.ToLower(strings.TrimSpace(string(cmd.Payload)))
+			select {
+			case actCh <- name:
+			default:
+				fmt.Printf("action %q dropped (busy)\n", name)
+			}
 		case link.CmdFaceUI:
 			mode, cap, _ := strings.Cut(string(cmd.Payload), "|")
 			mode = strings.ToLower(strings.TrimSpace(mode))
 			switch mode {
 			case "thinking":
 				ui.set("thinking", cap, 0)
+			case "anim":
+				clip := strings.TrimSpace(cap)
+				if d := face.ClipLen(clip); d > 0 {
+					ui.set("anim", clip, d)
+				}
+			case "sleep":
+				ui.set("sleep", "", 0)
 			case "name":
 				ui.set("name", cap, 3*time.Second)
 			case "idle", "e-ok", "":

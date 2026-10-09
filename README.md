@@ -88,3 +88,28 @@ curl -XDELETE 'localhost:8080/faces?id=<id>'                                    
 ```
 
 Matching runs on the hub through NVIDIA (`HUB_FACE_MODEL`, key in `NVIDIA_API_KEY` in `.env`), and only on demand: nothing is sent in the background. A camera frame leaves the hub only when (a) you click **enroll** (each photo is checked for a visible face) or (b) a voice turn is an identity question ("what's my name / who am I / do you know me", "wie heiße ich / wer bin ich / kennst du mich", "اسم من چیه / من کی هستم / منو میشناسی"). Then the hub takes the newest face frame (≤ `HUB_FACE_FRAME_MAX_AGE_S`, 5 s), makes one call (retries on a busy endpoint, `HUB_FACE_TIMEOUT` 25 s) while Vector shows the thinking face, and puts the result into that turn's prompt only. There are no periodic checks and no automatic greeting. OpenAI never receives camera images (STT gets audio, chat gets text). The camera preview on `/ui` stays on the hub. The last check is in `/status` under `person` (`calls` = identity checks, `enroll_calls` = enroll checks). Vector only says a name when it recognised an enrolled face with confidence ≥ `HUB_FACE_MIN_CONF` (0.7); otherwise it says it doesn't recognise you or can't see you. No keys go on the robot. Set `HUB_FACE_ID=0` and run `make hub` to turn it off.
+
+## Voice commands (stock Vector set)
+
+The hub matches the transcript against the stock Vector / wire-pod command set in English, German and
+Persian (`hub/app/intents.py`, whole-utterance patterns, no LLM). A match runs directly, without a chat
+call; anything else goes to normal chat. `GET /intents` lists every command and its status; `/status`
+shows the last one under `last_intent`. Set `HUB_INTENTS=0` in `.env` to switch matching off.
+
+- Works: what time is it, set / check / cancel a timer, volume up / down / 1-5 (hub speech gain), take a
+  picture (saved on the hub in `/app/data/photos`), my name is ... (enrolls your face), hello / good
+  morning / good night / goodbye, I love you, good robot, bad robot, sorry, shut up / stop, go to sleep,
+  wake up, how old are you (set `HUB_ROBOT_BIRTHDAY`).
+- Robot actions (run by the agent under the on-robot veto; face clips from DDL animations): look at me,
+  fist bump, dance / do a trick, come here, go forward, back up, turn left / right / around,
+  get off the charger. On the charger only "get off the charger" drives; the lift never moves there.
+  `touch /data/victor/voice-drive.disabled` on the robot stops every voice-driven wheel move.
+- Not yet (Vector says so politely): go to your charger (needs charger vision), cube games
+  (cube needs BLE), blackjack, explore, eye colour, messages, Alexa.
+- Weather and knowledge questions stay with chat (web search). "What's my name?" keeps the face check.
+
+## Back touch (petting)
+
+Stroke Vector's back: after ~0.4 s the eyes go to happy squints, growing to the "^ ^" bliss face the
+longer you pet, with a soft purr when the speaker is free. Letting go plays the "get out" face. The
+agent writes the live sensor to `/data/victor/touch.txt`. Touch never reaches the charge latch.
