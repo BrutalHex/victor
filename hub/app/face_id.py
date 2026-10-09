@@ -26,12 +26,15 @@ DEFAULT_BASE = "https://integrate.api.nvidia.com/v1"
 DEFAULT_MODEL = "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning"
 
 SYSTEM = (
-    "You are a careful face-matching component for a home robot. You compare the person in the "
-    "CURRENT camera frame with labelled REFERENCE photos of enrolled people. Only answer with a name "
-    "if the same person is clearly visible and matches a reference; otherwise use null. Never guess, "
-    "never invent names, never use a name that is not in the reference list. Reply with one JSON "
-    'object only, no prose: {"person": true|false, "name": <reference name or null>, '
-    '"confidence": <0..1>}.'
+    "You are a strict face-verification component for a home robot. You compare the face in the "
+    "CURRENT camera frame with labelled REFERENCE photos of enrolled people. A name may only be given "
+    "when the CURRENT frame shows a human face clearly enough to identify (not a silhouette, the back of "
+    "a head, or a tiny/blurred figure) AND that face is the same individual as in that name's reference "
+    "photos (same facial features, not just similar clothes, room, lighting or pose). References that "
+    "do not show a human face can never match. When in doubt use null: a wrong name is much worse than "
+    "no name. Never guess, never invent names, never use a name that is not in the reference list. "
+    'Reply with one JSON object only, no prose: {"person": true|false, "face_visible": true|false, '
+    '"name": <reference name or null>, "confidence": <0..1>}.'
 )
 
 
@@ -54,7 +57,7 @@ _THINK = re.compile(r"<think>.*?</think>", re.S | re.I)
 def parse_result(text: str, names: list[str]) -> dict:
     """Model output -> {"person", "name", "confidence"}; tolerant of reasoning
     text, code fences and trailing prose. Unknown names become None."""
-    out = {"person": False, "name": None, "confidence": 0.0}
+    out = {"person": False, "face_visible": False, "name": None, "confidence": 0.0}
     if not text:
         return out
     t = _THINK.sub("", text)
@@ -77,6 +80,13 @@ def parse_result(text: str, names: list[str]) -> dict:
     except (TypeError, ValueError):
         out["confidence"] = 0.0
     name = data.get("name")
+    fv = data.get("face_visible")
+    if fv is None:
+        out["face_visible"] = out["person"]  # older/short answers: assume the person's face counts
+    else:
+        out["face_visible"] = fv is True or str(fv).lower() == "true"
+    if not out["face_visible"]:
+        name = None  # no identifiable face, no name
     if isinstance(name, str) and name.strip() and name.strip().lower() not in ("null", "none", "unknown"):
         canon = {n.lower(): n for n in names}
         out["name"] = canon.get(clean_name(name).lower())
@@ -120,9 +130,10 @@ def build_payload(model: str, frame: bytes, refs: list[tuple[str, bytes]]) -> di
     content.append({"type": "image_url", "image_url": {"url": data_url(frame)}})
     content.append({
         "type": "text",
-        "text": 'Is a person visible in the CURRENT frame, and is it one of the enrolled people? '
-                'Answer only with JSON: {"person": true|false, "name": "<enrolled name>" or null, '
-                '"confidence": 0..1}. Use null unless you are confident it is the same person.',
+        "text": 'Is a person visible in the CURRENT frame, is their face clearly visible, and is it the same '
+                'individual as one of the enrolled people? Answer only with JSON: {"person": true|false, '
+                '"face_visible": true|false, "name": "<enrolled name>" or null, "confidence": 0..1}. '
+                'Use null unless you are confident it is the same face.',
     })
     return {
         "model": model,
@@ -168,7 +179,7 @@ class FaceID:
         self.errors = 0
         self.last_call_t = 0.0
         self.result = {"person": False, "name": None, "confidence": 0.0, "t": 0.0, "ms": 0, "error": ""}
-        self.retries = int(_env_float("HUB_FACE_RETRIES", 2))  # extra tries on 429/5xx (shared free endpoint)
+        self.retries = int(_env_float("HUB_FACE_RETRIES", 4))  # extra tries on 429/5xx (shared free endpoint)
         self.retry_s = _env_float("HUB_FACE_RETRY_S", 1.5)
         self.sleep = time.sleep
         self.post = self._post  # tests replace this
@@ -248,7 +259,7 @@ class FaceID:
 
     def recognize(self, frame: bytes, refs: list[tuple[str, bytes]]) -> dict:
         t0 = time.time()
-        res = {"person": False, "name": None, "confidence": 0.0, "error": "", "raw": ""}
+        res = {"person": False, "face_visible": False, "name": None, "confidence": 0.0, "error": "", "raw": ""}
         try:
             payload = build_payload(self.model, shrink(frame, 640), [(n, shrink(j, 384)) for n, j in refs])
             data = None

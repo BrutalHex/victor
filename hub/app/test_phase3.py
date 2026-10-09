@@ -604,6 +604,14 @@ class FaceToName(unittest.TestCase):
             pass
         return FaceDB(path)
 
+    def test_parse_face_not_visible_drops_name(self):
+        from face_id import parse_result
+        r = parse_result('{"person": true, "face_visible": false, "name": "Ann", "confidence": 0.9}', ["Ann"])
+        self.assertIsNone(r["name"])
+        self.assertTrue(r["person"])
+        r = parse_result('{"person": true, "face_visible": true, "name": "ann", "confidence": 0.9}', ["Ann"])
+        self.assertEqual(r["name"], "Ann")
+
     def test_parse_strict_json_and_reasoning(self):
         from face_id import parse_result
         names = ["Mohammad Abbasi", "Ann"]

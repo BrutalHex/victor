@@ -631,9 +631,10 @@ def enroll(data: dict) -> tuple[dict, int]:
     stored, skipped, checks = [], 0, []
     for img in frames:
         if FACE_ID.ready():
-            res = FACE_ID.recognize(img, [])  # no gallery: just "is a person visible?"
-            checks.append({"person": res["person"], "ms": res["ms"], "error": res["error"][:80]})
-            if res["error"] or not res["person"]:
+            res = FACE_ID.recognize(img, [])  # no gallery: just "is a face visible?"
+            checks.append({"person": res["person"], "face": res.get("face_visible", res["person"]),
+                           "ms": res["ms"], "error": res["error"][:80]})
+            if res["error"] or not res["person"] or not res.get("face_visible", res["person"]):
                 skipped += 1
                 continue
         stored.append(FACE_DB.enroll(name, img)["id"])
