@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"time"
 )
 
 const FlagPath = "/data/victor/ssh.enabled"
@@ -47,6 +48,42 @@ func (c *Controller) Set(on bool) error {
 		return err
 	}
 	return c.Apply()
+}
+
+// OffSince returns the mtime of the flag file. Set writes the flag, so when
+// SSH is off this is when it was turned off; it survives reboots, which keeps
+// the 24 h watchdog clock honest across power cycles.
+func (c *Controller) OffSince() time.Time {
+	fi, err := os.Stat(c.Flag)
+	if err != nil {
+		return time.Time{}
+	}
+	return fi.ModTime()
+}
+
+// WatchdogOffAfter is how long SSH must be off before the watchdog may
+// re-enable it (GROK_INSTRUCTIONS.md: 24 h AND hub heartbeat missing 10 min
+// AND on charger).
+const WatchdogOffAfter = 24 * time.Hour
+
+// WatchdogDue decides whether the SSH watchdog should auto-enable SSH.
+func WatchdogDue(offFor time.Duration, heartbeatMissing, onCharger bool) bool {
+	return offFor >= WatchdogOffAfter && heartbeatMissing && onCharger
+}
+
+// OffFor combines the in-process off timer with the persisted flag mtime.
+// Vector has no RTC, so a flag mtime before 2020 or in the future is ignored.
+func OffFor(now, inProcessSince, flagMtime time.Time) time.Duration {
+	var d time.Duration
+	if !inProcessSince.IsZero() {
+		d = now.Sub(inProcessSince)
+	}
+	if !flagMtime.IsZero() && flagMtime.Year() >= 2020 && !flagMtime.After(now) {
+		if fd := now.Sub(flagMtime); fd > d {
+			d = fd
+		}
+	}
+	return d
 }
 
 func (c *Controller) Toggle() (bool, error) {

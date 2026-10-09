@@ -472,7 +472,17 @@ func watchdog(ssh *sshctl.Controller, hub *telem.Hub, body *spine.Body, ui *uiSt
 		if offSince.IsZero() {
 			offSince = time.Now()
 		}
-		if time.Since(offSince) >= 24*time.Hour && hub.HeartbeatMissing(10*time.Minute) {
+		// Off time survives reboot via the flag mtime.
+		offFor := sshctl.OffFor(time.Now(), offSince, ssh.OffSince())
+		// Without the spine we cannot see the charger; enabling SSH never
+		// moves motors, so treat "unknown" as on-charger rather than lock out.
+		onCharger := true
+		if body != nil {
+			if fr, ok := body.Last(); ok {
+				onCharger = fr.OnCharger()
+			}
+		}
+		if sshctl.WatchdogDue(offFor, hub.HeartbeatMissing(10*time.Minute), onCharger) {
 			_ = ssh.Set(true)
 			showFaceUI(true, true, ui)
 			if body != nil {
