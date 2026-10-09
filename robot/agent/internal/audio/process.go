@@ -3,6 +3,7 @@ package audio
 import (
 	"math"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 )
@@ -26,8 +27,11 @@ const (
 	RawRate    = 15625
 	Directions = 12
 	hpHz       = 80.0
-	targetRMS  = 1800.0
-	maxGain    = 3.0
+	targetRMS  = 2500.0
+	startGain  = 16.0
+	minGain    = 1.0
+	maxGain    = 64.0
+	limitPeak  = 24000.0
 )
 
 // Mode is the SDK audio processing mode.
@@ -89,6 +93,7 @@ type Processor struct {
 	ns      wiener
 	res     resampler
 	aec     echo
+	lvl     leveler
 	primed  bool
 }
 
@@ -176,12 +181,12 @@ func (p *Processor) Process(interleaved []int16) []int16 {
 	// Those three are what turned a quiet room into a clipped 200 Hz band and
 	// left the shout out of the file.
 	if p.mode == ModeFast {
-		return toInt16(p.res.push(beam))
+		return p.lvl.apply(p.res.push(beam))
 	}
 	clean := p.ns.apply(beam)
 	up := p.res.push(clean)
 	up = p.aec.cancel(up)
-	return p.agc(up)
+	return p.lvl.apply(up)
 }
 
 func toInt16(x []float64) []int16 {
@@ -514,43 +519,63 @@ func energy(x []float64) float64 {
 	return a
 }
 
-func (p *Processor) agc(x []float64) []int16 {
+// leveler is the gain stage after the spine fix. Raw backpack samples are
+// small: in a quiet room a voice ~1 m away is ~40 rms / 300 peak with a
+// ~1.5 rms floor, which the hub VAD (450 rms floor) never hears. It starts at
+// a fixed gain, rises slowly toward targetRMS only on blocks well above the
+// tracked noise floor (stationary fan/motor noise never pumps the gain), and
+// drops at once if a block would pass the limiter.
+type leveler struct {
+	gain   float64
+	floor  float64
+	primed bool
+}
+
+func micGainFromEnv() float64 {
+	if v, err := strconv.ParseFloat(strings.TrimSpace(os.Getenv("VICTOR_MIC_GAIN")), 64); err == nil && v >= 1 && v <= maxGain {
+		return v
+	}
+	return startGain
+}
+
+func (l *leveler) apply(x []float64) []int16 {
 	if len(x) == 0 {
 		return nil
 	}
-	sp, ru := bandScore(x)
-	var acc float64
+	if l.gain == 0 {
+		l.gain = micGainFromEnv()
+	}
+	var acc, peak float64
 	for _, v := range x {
 		acc += v * v
+		if a := math.Abs(v); a > peak {
+			peak = a
+		}
 	}
 	rms := math.Sqrt(acc / float64(len(x)))
-	// A 12x chase is what pinned the fan band to 32767. Boost only when the
-	// speech score leads, and never by more than 3. Rumble decays the gain.
-	if rms > 40 && sp > ru*1.4 {
-		want := targetRMS / rms
-		if want > p.gain {
-			p.gain = 0.92*p.gain + 0.08*want
+	switch {
+	case !l.primed:
+		l.floor = rms
+		l.primed = true
+	case rms < l.floor:
+		l.floor = 0.8*l.floor + 0.2*rms
+	default:
+		l.floor = 0.998*l.floor + 0.002*rms
+	}
+	if rms > 4*l.floor && rms > 3 {
+		want := math.Max(minGain, math.Min(maxGain, targetRMS/rms))
+		if want < l.gain {
+			l.gain = 0.7*l.gain + 0.3*want
 		} else {
-			p.gain = 0.98*p.gain + 0.02*want
+			l.gain = 0.97*l.gain + 0.03*want
 		}
-	} else if ru > sp*1.4 {
-		p.gain = 0.85*p.gain + 0.15*0.45
 	}
-	if p.gain < 0.35 {
-		p.gain = 0.35
-	}
-	if p.gain > maxGain {
-		p.gain = maxGain
+	if peak*l.gain > limitPeak {
+		l.gain = limitPeak / peak
 	}
 	out := make([]int16, len(x))
 	for i, v := range x {
-		s := v * p.gain
-		// Soft knee. A hard rail is what the transcriber heard as a thump.
-		if s > 20000 {
-			s = 20000 + (s-20000)*0.15
-		} else if s < -20000 {
-			s = -20000 + (s+20000)*0.15
-		}
+		s := v * l.gain
 		if s > 28000 {
 			s = 28000
 		} else if s < -28000 {
@@ -559,6 +584,16 @@ func (p *Processor) agc(x []float64) []int16 {
 		out[i] = int16(s)
 	}
 	return out
+}
+
+// Gain is the current mic gain (for mics.txt).
+func (p *Processor) Gain() float64 {
+	if p == nil {
+		return 1
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.lvl.gain
 }
 
 type biquad struct {

@@ -3,9 +3,15 @@
 push() only segments audio. Transcription, chat, and TTS run off the skill socket
 so a 2s robot read deadline cannot drop the reply.
 
-The robot sends one backpack mic at 16 kHz (high-passed, mild noise floor).
-A rumble-dominated clip is not an utterance: the 4 cm array cannot null a
-200 Hz fan, and the transcriber invents words for that band.
+The robot sends one backpack mic at 16 kHz (high-passed, levelled toward
+~2500 rms). A rumble-dominated clip is not an utterance: the 4 cm array cannot
+null a 200 Hz fan, and the transcriber invents words for that band.
+
+VAD levels are pre-emphasised rms (rms() below). Measured on the robot after
+the spine offset fix (2026-10-09, quiet room, robot on charger): silence ~35,
+speech median ~400 at the robot's levelled gain. The old 450 floor was tuned
+against byte-misaligned mic data that read as ±1000 hiss and never let a real
+voice through.
 """
 
 from __future__ import annotations
@@ -21,8 +27,8 @@ import wave
 
 RATE = 16000
 TTS_RATE = 24000  # OpenAI response_format=pcm
-VAD_RMS = 450
-VAD_RATIO = 1.7
+VAD_RMS = int(os.environ.get("HUB_VAD_RMS", "120"))
+VAD_RATIO = float(os.environ.get("HUB_VAD_RATIO", "3.0"))
 START_FRAMES = 5
 END_FRAMES = 8
 CAL_FRAMES = 50  # 1s at 20 ms packets; learn the room before arming

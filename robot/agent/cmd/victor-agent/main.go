@@ -303,7 +303,7 @@ func runDaemon() int {
 				if mic := body.DrainMic(); len(mic) > 0 {
 					if time.Since(lastMicLog) >= time.Second {
 						e := audio.Energies(mic)
-						_ = os.WriteFile("/data/victor/mics.txt", []byte(fmt.Sprintf("%d,%d,%d,%d dir=%d mode=%s ch=%d\n", e[0], e[1], e[2], e[3], proc.Direction(), proc.Mode(), proc.Channel())), 0644)
+						_ = os.WriteFile("/data/victor/mics.txt", []byte(fmt.Sprintf("%d,%d,%d,%d dir=%d mode=%s ch=%d gain=%.1f\n", e[0], e[1], e[2], e[3], proc.Direction(), proc.Mode(), proc.Channel(), proc.Gain())), 0644)
 						lastMicLog = time.Now()
 					}
 					if !ui.thinking() {

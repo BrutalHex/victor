@@ -144,5 +144,20 @@ class CRC(unittest.TestCase):
         self.assertEqual(struct.unpack("<I", buf[-4:])[0], crc)
 
 
+
+class Dedupe(unittest.TestCase):
+    def test_udp_tcp_copies_dropped(self):
+        from main import SeqDedupe
+        d = SeqDedupe(window=64)
+        self.assertTrue(d.first(1))
+        self.assertTrue(d.first(2))
+        self.assertFalse(d.first(1))
+        self.assertFalse(d.first(2))
+        for s in range(3, 500):
+            self.assertTrue(d.first(s))
+            self.assertFalse(d.first(s))
+        # agent restart: counter starts again
+        self.assertTrue(d.first(1))
+
 if __name__ == "__main__":
     unittest.main()
