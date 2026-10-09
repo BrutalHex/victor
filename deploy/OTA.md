@@ -166,7 +166,7 @@ vision API and no cloud key on the robot.
 
 | Piece | Where | State |
 |---|---|---|
-| Camera capture | robot, `victor-agent` `internal/camera` | Reads `/data/victor/camera.jpg` (test inject) or a JPEG snapshot from `/dev/video0`. The real Qualcomm camera path (V4L2 streaming / vendor camera daemon) is still a TODO, so on the real robot VIDEO may stay empty until that is written. `make verify` warns if no frame was grabbed |
+| Camera capture | robot, `victor-agent` `internal/camera` | Client of the stock camera daemon `mm-anki-camera` (unix socket `/var/run/mm-anki-camera/camera-server`, ION shared buffer, RGB888 640x360). Sends 320x180 nav JPEGs at 10 fps and 640x360 face JPEGs at 5 fps. `/data/victor/camera.jpg` still overrides for tests. Colour/orientation: `/data/victor/camera.conf` (`swap_rb`, `flip`, `gamma`). Hub `GET /frame?kind=face` returns the latest frame |
 | VCT1 VIDEO | robot -> hub UDP 7500 (+ TCP 7443 link) | shipped in the agent; endpoint from `hub.env` / `robot.mohammadabbasi.com` |
 | Faces | hub `faces.py`, SQLite, `GET/POST/DELETE :8080/faces` | simple 64-d grayscale-grid embedding + cosine >= 0.92 on the whole face frame; no face detector yet |
 | Edge model | hub `edge.py`, ONNX Runtime CPU, `hub/models/*.onnx` | `tiny_edge.onnx` placeholder generated at container start; drop a real NVIDIA TAO ONNX (<= 15 MB) in `hub/models/`. Votes `stop`/`back_off` only; IR cliffs on the robot win |

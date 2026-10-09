@@ -9,6 +9,7 @@ import (
 	"net"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -548,28 +549,59 @@ func renderFace(u *uiState, reason veto.Reason) {
 }
 
 func cameraLoop(hub *telem.Hub, lnk *link.Client) {
+	loadCameraConf()
+	camera.Start()
 	t := time.NewTicker(100 * time.Millisecond)
 	defer t.Stop()
 	n := 0
+	lastLog := time.Now()
 	for range t.C {
-		jpeg, err := camera.Grab()
-		if err != nil || len(jpeg) == 0 {
+		full, nav, err := camera.Snapshot()
+		if time.Since(lastLog) > time.Minute {
+			st, frames, cerr := camera.Daemon.Status()
+			fmt.Printf("camera %s frames=%d sent=%d err=%q\n", st, frames, n, cerr)
+			lastLog = time.Now()
+		}
+		if err != nil || full == nil {
 			continue
 		}
-		nav, err := camera.ScaleJPEG(jpeg, camera.NavW, camera.NavH)
-		if err != nil {
-			nav = jpeg
+		if b, err := camera.EncodeJPEG(nav, 70); err == nil {
+			lnk.QueueMedia(hub.SendVideo(b, vct1.FlagNavJPEG))
 		}
-		lnk.QueueMedia(hub.SendVideo(nav, vct1.FlagNavJPEG))
 		n++
 		if n%2 == 0 {
-			big, err := camera.ScaleJPEG(jpeg, camera.FaceW, camera.FaceH)
-			if err != nil {
-				big = jpeg
+			if b, err := camera.EncodeJPEG(full, 75); err == nil {
+				lnk.QueueMedia(hub.SendVideo(b, vct1.FlagFaceJPEG))
+				camera.Remember(b)
 			}
-			lnk.QueueMedia(hub.SendVideo(big, vct1.FlagFaceJPEG))
 		}
 	}
+}
+
+// loadCameraConf reads /data/victor/camera.conf (key=value: swap_rb, flip, gamma).
+func loadCameraConf() {
+	swap, flip, gamma := false, false, 0.8
+	if b, err := os.ReadFile("/data/victor/camera.conf"); err == nil {
+		for _, line := range strings.Split(string(b), "\n") {
+			k, v, ok := strings.Cut(strings.TrimSpace(line), "=")
+			if !ok {
+				continue
+			}
+			v = strings.TrimSpace(v)
+			switch strings.TrimSpace(k) {
+			case "swap_rb":
+				swap = v == "1" || v == "true"
+			case "flip":
+				flip = v == "1" || v == "true"
+			case "gamma":
+				if g, err := strconv.ParseFloat(v, 64); err == nil {
+					gamma = g
+				}
+			}
+		}
+	}
+	camera.SetTone(swap, flip, gamma)
+	fmt.Printf("camera conf swap_rb=%v flip=%v gamma=%.2f\n", swap, flip, gamma)
 }
 
 func cmdLoop(lnk *link.Client, ui *uiState, proc *audio.Processor) {

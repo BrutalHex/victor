@@ -488,6 +488,19 @@ class Status(BaseHTTPRequestHandler):
         if path == "/faces":
             self._json({"faces": FACE_DB.list()})
             return
+        if path == "/frame":
+            kind = (parse_qs(urlparse(self.path).query).get("kind") or ["face"])[0]
+            img = LAST_JPEG.get("face" if kind != "nav" else "nav") or b""
+            if not img:
+                self.send_error(404, "no frame yet")
+                return
+            self.send_response(200)
+            self.send_header("Content-Type", "image/jpeg")
+            self.send_header("Content-Length", str(len(img)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(img)
+            return
         if path == "/ui":
             html = UI_HTML.encode()
             self.send_response(200)
