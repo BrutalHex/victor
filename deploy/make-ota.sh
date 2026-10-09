@@ -231,6 +231,7 @@ fi
 
 # ---------------------------------------------------------------- sysfs copy
 IMG="${WORK}/sysfs.victor.img"
+[[ "$RAW" == 1 ]] && IMG="${WORK}/sysfs.raw.img"
 log "copying $SYSFS -> $IMG (input is left untouched)"
 cp --sparse=always "$SYSFS" "$IMG" 2>/dev/null || cp "$SYSFS" "$IMG"
 if ! debugfs -R 'stats' "$IMG" >/dev/null 2>&1; then

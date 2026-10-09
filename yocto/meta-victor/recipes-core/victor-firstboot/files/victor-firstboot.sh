@@ -10,6 +10,13 @@
 D=/data/victor
 SHARE=/usr/share/victor
 
+# Wait for /data (Vector: mount-data.service, dm-crypt userdata) so nothing
+# is written to the read-only rootfs underneath it.
+i=0
+while [ "$i" -lt "${VICTOR_DATA_WAIT:-60}" ] && ! awk '$2=="/data"{f=1} END{exit !f}' /proc/mounts; do
+  sleep 1
+  i=$((i + 1))
+done
 # /data must be writable and executable.
 mount -o remount,rw,exec /data 2>/dev/null || true
 mkdir -p "$D"
