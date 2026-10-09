@@ -23,6 +23,7 @@ type Tone struct {
 	Black  int     // black level on the 8-bit scale (raw only)
 	gains  [3]float64
 	lut    [3][256]uint8
+	Mean   float64 // mean linear level of the last prepared frame, 0..1 (before WB)
 }
 
 func (t *Tone) buildLUTs(sum [3]float64) {
@@ -90,6 +91,18 @@ func (t *Tone) Prepare(f *Frame) error {
 		}
 	default:
 		return errors.New("camera: unsupported frame format")
+	}
+	if total := sum[0] + sum[1] + sum[2]; total > 0 {
+		n := 0.0
+		switch f.Format {
+		case FormatRAW, FormatRAW2MP:
+			n = float64(((f.H-1)/12 + 1) * ((f.W-1)/12 + 1))
+		default:
+			n = float64(((f.H-1)/8 + 1) * ((f.W-1)/8 + 1))
+		}
+		t.Mean = total / 3 / n / float64(255-t.Black)
+	} else {
+		t.Mean = 0
 	}
 	if t.SwapRB {
 		sum[0], sum[2] = sum[2], sum[0]

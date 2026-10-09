@@ -221,3 +221,46 @@ func BenchmarkTick(b *testing.B) {
 		}
 	}
 }
+
+func TestAutoExposure(t *testing.T) {
+	var sent [][2]float64
+	e := &AE{Target: 0.3, ExpMs: 10, Gain: 1, send: func(ms uint16, g float32) error {
+		sent = append(sent, [2]float64{float64(ms), float64(g)})
+		return nil
+	}}
+	now := time.Now()
+	e.step(0.05, now) // dark: exposure up (x2 per step)
+	if len(sent) != 1 || sent[0][0] != 20 {
+		t.Fatalf("dark step %v", sent)
+	}
+	e.step(0.05, now.Add(100*time.Millisecond)) // rate limited
+	if len(sent) != 1 {
+		t.Fatal("not rate limited")
+	}
+	for i := 1; i < 6; i++ {
+		e.step(0.05, now.Add(time.Duration(i)*time.Second))
+	}
+	if e.ExpMs != 33 || e.Gain != 4 {
+		t.Fatalf("limits exp=%v gain=%v", e.ExpMs, e.Gain)
+	}
+	n := len(sent)
+	e.step(0.29, now.Add(10*time.Second)) // close enough: no change
+	if len(sent) != n {
+		t.Fatal("changed inside the dead band")
+	}
+	e.step(0.9, now.Add(11*time.Second)) // bright: halves
+	if e.ExpMs*e.Gain > 33*4/2+0.1 {
+		t.Fatalf("bright step exp=%v gain=%v", e.ExpMs, e.Gain)
+	}
+}
+
+func TestWithLatestNoCopyAndMean(t *testing.T) {
+	f := raw10(160, 120)
+	tn := &Tone{Gamma: 1, Black: 0}
+	if err := tn.Prepare(f); err != nil {
+		t.Fatal(err)
+	}
+	if tn.Mean < 0.3 || tn.Mean > 0.6 {
+		t.Fatalf("mean %v", tn.Mean)
+	}
+}

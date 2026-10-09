@@ -17,6 +17,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"math"
 	"os"
 	"sync"
 	"sync/atomic"
@@ -38,6 +39,7 @@ const (
 	c2sRegister   = 1
 	c2sUnregister = 2
 	c2sStart      = 3
+	c2sParams     = 5
 	s2cStatus     = 6
 	s2cBuffer     = 7
 	s2cHeartbeat  = 8
@@ -243,30 +245,44 @@ func (a *Anki) session(stop <-chan struct{}) error {
 
 func u32p(mem []byte, off int) *uint32 { return (*uint32)(unsafe.Pointer(&mem[off])) }
 
-// Latest copies the newest frame not returned before.
+// Latest copies the newest frame not returned before (tests, debugging).
 func (a *Anki) Latest() (*Frame, error) {
+	var out *Frame
+	err := a.WithLatest(func(f *Frame) {
+		c := *f
+		c.Data = append([]byte(nil), f.Data...)
+		out = &c
+	})
+	return out, err
+}
+
+// WithLatest calls fn with the newest frame not seen before, reading straight
+// from the shared ION buffer (it is uncached: copying a whole 2.4 MB raw frame
+// cost ~70 ms on the robot). The slot stays locked while fn runs; fn must not
+// keep f.Data.
+func (a *Anki) WithLatest(fn func(*Frame)) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	mem := a.mem
 	if mem == nil || len(mem) < 64 {
-		return nil, ErrNoFrame
+		return ErrNoFrame
 	}
 	if string(mem[0:4]) != "CAM0" {
-		return nil, errors.New("camera: bad buffer magic")
+		return errors.New("camera: bad buffer magic")
 	}
 	w := atomic.LoadUint32(u32p(mem, 4))
 	if w >= maxFrames {
-		return nil, ErrNoFrame
+		return ErrNoFrame
 	}
 	frameSize := int(binary.LittleEndian.Uint32(mem[36:]))
 	lock := u32p(mem, 8+4*int(w))
 	if !atomic.CompareAndSwapUint32(lock, 0, 1) {
-		return nil, ErrNoFrame // server writing this slot right now
+		return ErrNoFrame // server writing this slot right now
 	}
 	defer atomic.StoreUint32(lock, 0)
 	off := int(binary.LittleEndian.Uint32(mem[40+4*int(w):]))
 	if off <= 0 || off+frameHdrLen > len(mem) {
-		return nil, errors.New("camera: bad slot offset")
+		return errors.New("camera: bad slot offset")
 	}
 	h := mem[off:]
 	f := &Frame{
@@ -278,17 +294,33 @@ func (a *Anki) Latest() (*Frame, error) {
 		Format:    h[25],
 	}
 	if f.Timestamp == 0 || f.ID == a.lastID {
-		return nil, ErrNoFrame
+		return ErrNoFrame
 	}
 	n := f.Stride * f.H
 	if n <= 0 || frameHdrLen+n > frameSize || off+frameHdrLen+n > len(mem) {
-		return nil, fmt.Errorf("camera: frame %dx%d stride %d does not fit slot %d", f.W, f.H, f.Stride, frameSize)
+		return fmt.Errorf("camera: frame %dx%d stride %d does not fit slot %d", f.W, f.H, f.Stride, frameSize)
 	}
-	f.Data = append([]byte(nil), h[frameHdrLen:frameHdrLen+n]...)
+	f.Data = h[frameHdrLen : frameHdrLen+n : frameHdrLen+n]
 	a.lastID = f.ID
 	a.Frames++
 	if a.Frames == 1 {
 		log.Printf("camera first frame id=%d %dx%d stride=%d fmt=%d bpp=%d", f.ID, f.W, f.H, f.Stride, f.Format, h[24])
 	}
-	return f, nil
+	fn(f)
+	return nil
+}
+
+// SetExposure sends manual exposure (ms, 1..33) and analog gain to the daemon.
+func (a *Anki) SetExposure(ms uint16, gain float32) error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.fd <= 0 || a.status != "running" {
+		return errors.New("camera: not running")
+	}
+	p := make([]byte, 12)
+	binary.LittleEndian.PutUint32(p[0:], 0) // PARAMS_ID_EXP
+	binary.LittleEndian.PutUint16(p[4:], ms)
+	binary.LittleEndian.PutUint32(p[8:], math.Float32bits(gain))
+	_, err := unix.Write(a.fd, encodeMsg(c2sParams, p))
+	return err
 }

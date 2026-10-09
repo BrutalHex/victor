@@ -584,7 +584,7 @@ func cameraLoop(hub *telem.Hub, lnk *link.Client) {
 
 // loadCameraConf reads /data/victor/camera.conf (key=value: swap_rb, flip, gamma).
 func loadCameraConf() {
-	swap, flip, gamma, black := false, false, 0.8, 16
+	swap, flip, gamma, black, ae := false, false, 0.8, 16, 0.28
 	if b, err := os.ReadFile("/data/victor/camera.conf"); err == nil {
 		for _, line := range strings.Split(string(b), "\n") {
 			k, v, ok := strings.Cut(strings.TrimSpace(line), "=")
@@ -597,6 +597,10 @@ func loadCameraConf() {
 				swap = v == "1" || v == "true"
 			case "flip":
 				flip = v == "1" || v == "true"
+			case "ae":
+				if a, err := strconv.ParseFloat(v, 64); err == nil {
+					ae = a
+				}
 			case "black":
 				if b, err := strconv.Atoi(v); err == nil {
 					black = b
@@ -609,7 +613,8 @@ func loadCameraConf() {
 		}
 	}
 	camera.SetTone(swap, flip, gamma, black)
-	fmt.Printf("camera conf swap_rb=%v flip=%v gamma=%.2f black=%d\n", swap, flip, gamma, black)
+	camera.SetAE(ae)
+	fmt.Printf("camera conf swap_rb=%v flip=%v gamma=%.2f black=%d ae=%.2f\n", swap, flip, gamma, black, ae)
 }
 
 func cmdLoop(lnk *link.Client, ui *uiState, proc *audio.Processor) {
