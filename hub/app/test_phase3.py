@@ -383,6 +383,7 @@ class ThinkingTurn(unittest.TestCase):
         import main
         self.m = main
         main.pop_cmds()
+        main.VOLUME.level = 4  # unity gain: these tests compare speech bytes
         with main.LOCK:
             main.STATE["thinking"] = False
             main.STATE["voice_busy"] = False
@@ -1140,7 +1141,31 @@ class StockIntents(unittest.TestCase):
         self.turn("volume max")
         self.assertEqual(m.VOLUME.level, 5)
         m.VOLUME.level = 4
-        self.assertEqual(m.VOLUME.apply(b"\x00\x10"), b"\x00\x10")  # default = unchanged
+        self.assertEqual(m.VOLUME.apply(b"\x00\x10"), b"\x00\x10")  # level 4 = unchanged
+
+    def test_volume_steps_get_louder_without_clipping(self):
+        import numpy as np
+        m = self.m
+        t = np.arange(16000) / 16000
+        # speech-like: 180 Hz voiced bursts with harmonics, peak-normalised to -1 dBFS like the TTS chain
+        x = (np.sin(2 * np.pi * 180 * t) + 0.5 * np.sin(2 * np.pi * 540 * t) + 0.3 * np.sin(2 * np.pi * 1260 * t))
+        x *= 0.3 + 0.7 * np.abs(np.sin(2 * np.pi * 3 * t))
+        x = x / np.abs(x).max() * 0.89
+        pcm = (x * 32767).astype("<i2").tobytes()
+        rms = []
+        for lvl in range(1, 6):
+            m.VOLUME.level = lvl
+            y = np.frombuffer(m.VOLUME.apply(pcm), dtype="<i2").astype(float)
+            rms.append(np.sqrt(np.mean(y ** 2)))
+            self.assertLess(np.abs(y).max(), 32767 * 0.98, lvl)  # never pinned at full scale
+        for a, b in zip(rms, rms[1:]):
+            self.assertGreater(b, a * 1.2)  # every step is audibly louder
+        self.assertGreater(20 * math.log10(rms[4] / rms[3]), 3.0)  # level 5 at least +3 dB over 4
+
+    def test_volume_default_is_max(self):
+        m = self.m
+        v = m.Volume(os.path.join(tempfile.mkdtemp(), "none.txt"))
+        self.assertEqual(v.level, 5)
 
     def test_timer_set_check_cancel_fire(self):
         m = self.m
@@ -1271,6 +1296,96 @@ class VectorVoice(unittest.TestCase):
         secs = len(pcm) / 2 / voice.RATE
         self.assertAlmostEqual(secs, 1.5 / 0.94, delta=0.1)
         self.assertLessEqual(len(pcm), voice.MAX_SPEAK_S * voice.RATE * 2)
+
+
+class Router(unittest.TestCase):
+    """Policy around the OpenAI command/chat classifier (the model's judgement is checked live by router_eval.py)."""
+
+    class Api:
+        def __init__(self, reply=None, fail=False):
+            self.reply, self.fail, self.calls = reply, fail, []
+
+        def post(self, path, body, ctype, timeout):
+            self.calls.append((path, json.loads(body)))
+            if self.fail:
+                raise OSError("down")
+            return json.dumps({"choices": [{"message": {"content": json.dumps(self.reply)}}]}).encode()
+
+    def route(self, text, reply, lang="en", fail=False):
+        import router
+        api = self.Api(reply, fail)
+        it, how = router.route(api, text, lang, True)
+        return (it.name if it else None), how, api, it
+
+    def cmd(self, intent, conf=0.9, **args):
+        a = {"duration": None, "level": None, "name": None}
+        a.update(args)
+        return {"type": "command", "intent": intent, "args": a, "confidence": conf}
+
+    CHAT = {"type": "chat", "intent": None, "args": {"duration": None, "level": None, "name": None}, "confidence": 0.95}
+
+    def test_mixed_examples_follow_the_model(self):
+        cases = [
+            ("what do you think about dancing", self.CHAT, None),
+            ("can you dance for me", self.cmd("intent_imperative_dance"), "intent_imperative_dance"),
+            ("I turned left yesterday", self.CHAT, None),
+            ("Ich habe gestern getanzt", self.CHAT, None),
+            ("kannst du für mich tanzen", self.cmd("intent_imperative_dance"), "intent_imperative_dance"),
+            ("رقص دوست داری؟", self.CHAT, None),
+            ("برای من برقص", self.cmd("intent_imperative_dance"), "intent_imperative_dance"),
+        ]
+        for text, reply, want in cases:
+            got, how, api, _ = self.route(text, reply)
+            self.assertEqual(got, want, text)
+            self.assertIn(how, ("llm", "fast"), text)
+            self.assertEqual(len(api.calls), 1 if how == "llm" else 0)
+
+    def test_short_exact_commands_skip_the_api(self):
+        for text, want in (("turn left", "intent_imperative_turnleft"), ("Stopp", "intent_imperative_shutup"),
+                           ("fist bump", "intent_play_fistbump"), ("Hey Vector, what time is it?", "intent_clock_time"),
+                           ("سلام وکتور، الان ساعت چنده؟", "intent_clock_time"), ("بچرخ به چپ", None)):
+            got, how, api, _ = self.route(text, self.CHAT)
+            if want:
+                self.assertEqual((got, how, len(api.calls)), (want, "fast", 0), text)
+
+    def test_low_confidence_and_unknown_go_to_chat(self):
+        self.assertIsNone(self.route("dance maybe", self.cmd("intent_imperative_dance", conf=0.4))[0])
+        self.assertIsNone(self.route("do the thing", self.cmd("intent_bogus"))[0])
+        self.assertIsNone(self.route("do the thing", {"type": "command", "intent": None, "args": {}, "confidence": 1})[0])
+
+    def test_args_reach_the_intent(self):
+        _, _, _, it = self.route("could you set a timer for five minutes", self.cmd("intent_clock_settimer_extend", duration="five minutes"))
+        self.assertEqual((it.name, it.arg), ("intent_clock_settimer_extend", "five minutes"))
+        _, _, _, it = self.route("ich heiße Mohammad", self.cmd("intent_names_username_extend", name="Mohammad"), "de")
+        self.assertEqual((it.arg.lower(), it.lang), ("mohammad", "de"))
+        self.assertIsNone(self.route("my name is", self.cmd("intent_names_username_extend", name=None))[0])
+
+    def test_api_down_falls_back_to_patterns(self):
+        import router
+        old, router.FAST_MAX_WORDS = router.FAST_MAX_WORDS, 0
+        try:
+            got, how, _, _ = self.route("please could you turn to the left now", None, fail=True)
+        finally:
+            router.FAST_MAX_WORDS = old
+        self.assertEqual((got, how), ("intent_imperative_turnleft", "fallback"))
+        got, how, _, _ = self.route("tell me about the weather on mars", None, fail=True)
+        self.assertEqual((got, how), (None, "fallback"))
+
+    def test_request_is_strict_schema_small_and_complete(self):
+        import router
+        _, _, api, _ = self.route("what do you think about dancing", self.CHAT)
+        path, body = api.calls[0]
+        self.assertEqual(path, "/v1/chat/completions")
+        self.assertEqual(body["model"], router.MODEL)
+        self.assertLessEqual(body["max_tokens"], 100)
+        js = body["response_format"]["json_schema"]
+        self.assertTrue(js["strict"])
+        enum = js["schema"]["properties"]["intent"]["enum"]
+        self.assertIn(None, enum)
+        import intents
+        self.assertEqual(set(enum) - {None}, {n for n, *_ in intents._DEF})
+        for n in enum[:-1]:
+            self.assertIn(n, router.PROMPT)
 
 
 if __name__ == "__main__":

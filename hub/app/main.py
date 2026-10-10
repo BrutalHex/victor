@@ -19,6 +19,7 @@ from explore import NAMES, Explorer
 from faces import FaceDB
 from face_id import NO_CONTEXT, FaceID, is_identity_question, person_context
 import intents as intents_mod
+import router
 import voice as voice_mod
 from protocol import FLAG_FACE, FLAG_ROBOT_NOISE, TYPE_AUDIO, TYPE_SENSOR, TYPE_VIDEO, decode, unpack_sensor
 from safety import classical_vote
@@ -290,7 +291,13 @@ def reply_turn(pcm: bytes) -> tuple[str, str, bytes]:
     TURN_PERSON["ctx"] = ""
     TURN_OUT.update(show=b"", action="", intent="")
     VOICE.last_via = ""
-    intent = intents_mod.match(text) if (text and INTENTS_ON) else None
+    t_r = time.time()
+    intent, how = (None, "off")
+    if text and INTENTS_ON and is_identity_question(text):
+        intent, how = router.fast(text), "identity"  # face path; no router call
+    elif text and INTENTS_ON:
+        intent, how = router.route(VOICE.api, text, getattr(VOICE, "last_lang", ""), bool(VOICE.key))
+    TURN_OUT["route"] = how
     if intent and intent.name != "intent_names_username_extend" and is_identity_question(text):
         intent = None  # identity questions keep the face-ID path
     t_face = time.time()
@@ -316,7 +323,7 @@ def reply_turn(pcm: bytes) -> tuple[str, str, bytes]:
     audio = VOICE.tts(reply) if reply else b""
     t_tts = time.time()
     print(
-        f"voice timing end={_ms()}  stt={int((t_face - t) * 1000)}ms face={int((t_stt - t_face) * 1000)}ms chat={int((t_chat - t_stt) * 1000)}ms "
+        f"voice timing end={_ms()}  stt={int((t_r - t) * 1000)}ms route={int((t_face - t_r) * 1000)}ms/{TURN_OUT.get('route', '')} face={int((t_stt - t_face) * 1000)}ms chat={int((t_chat - t_stt) * 1000)}ms "
         f"tts={int((t_tts - t_chat) * 1000)}ms via={getattr(VOICE, 'last_via', '')}",
         flush=True,
     )
@@ -330,13 +337,21 @@ PHOTO_DIR = os.environ.get("HUB_PHOTO_DIR") or "/app/data/photos"
 
 
 class Volume:
-    """Speech gain on the hub, levels 1..5. Level 4 = 1.0 = the old loudness."""
+    """Speech gain on the hub, levels 1..5 (default 5 = loudest, HUB_VOLUME_DEFAULT).
 
-    GAINS = {1: 0.25, 2: 0.45, 3: 0.7, 4: 1.0, 5: 1.4}
+    TTS arrives peak-normalised to -1 dBFS, so plain gain above 1.0 only hard-clips.
+    Level 5 adds ~+5 dB of loudness with a soft limiter instead: samples above the
+    knee are compressed smoothly towards full scale, nothing is clipped flat."""
+
+    GAINS = {1: 0.25, 2: 0.45, 3: 0.7, 4: 1.0, 5: 2.0}
+    KNEE = 0.55  # fraction of full scale where the limiter starts bending
 
     def __init__(self, path: str | None = None):
         self.path = path or os.environ.get("HUB_VOLUME_FILE") or "/app/data/volume.txt"
-        self.level = 4
+        try:
+            self.level = max(1, min(5, int(os.environ.get("HUB_VOLUME_DEFAULT", "5"))))
+        except ValueError:
+            self.level = 5
         try:
             self.level = max(1, min(5, int(open(self.path).read().strip())))
         except (OSError, ValueError):
@@ -356,13 +371,17 @@ class Volume:
         g = self.GAINS.get(self.level, 1.0)
         if g == 1.0 or not pcm:
             return pcm
-        from array import array
-        a = array("h")
-        a.frombytes(pcm[: len(pcm) // 2 * 2])
-        for i, v in enumerate(a):
-            x = int(v * g)
-            a[i] = 32767 if x > 32767 else (-32768 if x < -32768 else x)
-        return a.tobytes()
+        import numpy as np
+        x = np.frombuffer(pcm[: len(pcm) // 2 * 2], dtype="<i2").astype(np.float64) / 32768.0 * g
+        if g > 1.0:
+            k = self.KNEE
+            a = np.abs(x)
+            over = a > k
+            # smooth knee: k + (1-k)*tanh((a-k)/(1-k)) stays below 1.0 and is continuous in value and slope
+            a[over] = k + (1 - k) * np.tanh((a[over] - k) / (1 - k))
+            x = np.sign(x) * a * 0.97
+        y = np.clip(np.round(x * 32768.0), -32768, 32767).astype("<i2")
+        return y.tobytes()
 
 
 VOLUME = Volume()
