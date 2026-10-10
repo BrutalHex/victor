@@ -120,6 +120,8 @@ CMD_ACTION = 4  # payload: action name; the agent's runner executes it under the
 
 
 def queue_cmd(kind: int, payload: bytes) -> None:
+    if kind == CMD_ACTION:
+        _note_action_sent(payload)
     with LOCK:
         PENDING.append((kind, payload))
 
@@ -159,6 +161,7 @@ def _ingest_vct1(buf: bytes, src: str = "") -> None:
         except ValueError:
             return
         _button_events(sensor)
+        _action_events(sensor)
         with LOCK:
             STATE["sensors"] += 1
             STATE["last_seq"] = hdr.seq
@@ -197,6 +200,43 @@ def _ingest_vct1(buf: bytes, src: str = "") -> None:
 
 
 BUTTON = {"last": None, "presses": 0, "last_at": 0.0, "last_action": ""}
+
+
+ACTION = {"seq": None, "sent": 0.0, "lang": "en", "last": None}
+# SENSOR action_result -> the reason Vector says out loud (vct1.Result*)
+WHY = {2: "why_cliff", 3: "why_rear_cliff", 4: "why_pickup", 5: "why_battery", 7: "why_obstacle",
+       8: "why_charger", 9: "drive_off", 10: "why_stalled", 11: "why_timeout"}
+WHY_WINDOW_S = 90.0  # only for actions the hub sent recently (a voice turn)
+
+
+def _action_events(sensor: dict) -> None:
+    """The robot finished a voice action/plan: if it refused or stopped it,
+    say why (he never just stays silent). OK / cancelled / hub gone: nothing."""
+    seq, res = sensor.get("action_seq"), sensor.get("action_result")
+    if seq is None:
+        return
+    with LOCK:
+        last = ACTION["seq"]
+        ACTION["seq"] = seq
+        recent = time.time() - ACTION["sent"] < WHY_WINDOW_S
+        lang = ACTION["lang"]
+    if last is None or seq == last:
+        return
+    ACTION["last"] = {"seq": seq, "result": res, "t": time.time()}
+    key = WHY.get(int(res or 0))
+    print(f"action result seq={seq} result={res} -> {key or '-'} recent={recent}", flush=True)
+    if key and recent:
+        text = intents_mod.say(key, lang)
+        threading.Thread(target=speak_turn, args=(text, "action " + key, b"anim|expr_worried"), daemon=True).start()
+
+
+def _note_action_sent(payload: bytes) -> None:
+    name = payload.decode(errors="replace")
+    if name.startswith("ssh_") or name in ("stop", "explore", "explore_stop"):
+        return
+    lang = getattr(VOICE, "last_lang", "") or "en"
+    with LOCK:
+        ACTION.update(sent=time.time(), lang=lang if lang in ("en", "de", "fa") else "en")
 
 
 def _button_events(sensor: dict) -> None:

@@ -104,6 +104,21 @@ func frontCliff(in Input) bool {
 	return false
 }
 
+// RearCliff: one of the two back cliff sensors (indices 2, 3) sees an edge.
+// Not a veto reason (the robot may stand with its back to an edge); the
+// agent checks it only while reversing.
+func RearCliff(cliffs [4]uint16, thresh [4]uint16, calibrated bool) bool {
+	for i := 2; i < 4; i++ {
+		if cliffs[i] < 40 {
+			return true
+		}
+		if calibrated && thresh[i] > 0 && cliffs[i] < thresh[i] {
+			return true
+		}
+	}
+	return false
+}
+
 func allCliffsVoid(in Input) bool {
 	if in.OnCharger {
 		return false

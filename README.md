@@ -271,6 +271,13 @@ When he talks: `speak` = before (default for drives: the plan starts when the sp
 "stop"), during (short wiggles / dances / head moves; long drives are forced to "before"), or after (move
 first, then "Done!").
 
+Back up (about 12 cm, short spoken ack, fast path): "move back", "go back", "back up", "backwards", "step back",
+"reverse", "fahr zurück", "geh zurück", "rückwärts", "برو عقب", "عقب برو", "برگرد عقب". Reversing is checked
+against the two rear cliff sensors (an edge behind stops it; a front edge does not block backing away from it).
+He never stays silent about a move: if the robot refuses or stops one, the agent reports the reason in the
+SENSOR packet and Vector says it ("I'm on the charger", "I can't back up, there's an edge behind me",
+"something's in my way", "put me down first", "my wheels are stuck").
+
 Cancel at once: say "stop" / "halt" / "stopp" / "ایست" (fast path, no model call), press the back button
 (the agent cancels the plan and wander on the press), or "Stop Vector".
 

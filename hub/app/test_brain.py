@@ -394,5 +394,113 @@ class SessionRestore(unittest.TestCase):
             main.SESSION, main.SESSION_FILE = saved
 
 
+class MoveBack(unittest.TestCase):
+    """Live 10 Oct 15:37: 'move back' did nothing. Fast-path drive commands had
+    an empty spoken ack (silent turn), 'Hey guys, so move back.' was dropped by
+    the language filter and 'just back.' was called unclear."""
+
+    PHRASES = ["move back", "go back", "back up", "backwards", "please move back", "Please move back.", "step back",
+               "reverse", "fahr zurück", "geh zurück", "rückwärts", "برو عقب", "عقب برو", "برگرد عقب"]
+
+    def setUp(self):
+        import main
+        from session import Session
+        self.m = main
+        main.pop_cmds()
+        self.saved = (main.SESSION, main.VOICE.key, main.VOICE.transcribe, main.VOICE.tts, main.VOICE.chat, brain.ON)
+        main.SESSION = Session(enabled=False, idle_s=0)
+        main.VOICE.key = "k"
+        main.VOICE.tts = lambda r: b"\x00\x10" * 800
+        main.VOICE.chat = lambda t: "chat"
+        brain.ON = True
+
+    def tearDown(self):
+        m = self.m
+        m.SESSION, m.VOICE.key, m.VOICE.transcribe, m.VOICE.tts, m.VOICE.chat, brain.ON = self.saved
+        with m.LOCK:
+            m.STATE["last_sensor"] = None
+        m.pop_cmds()
+
+    def turn(self, q, on_charger=False):
+        with self.m.LOCK:
+            self.m.STATE["last_sensor"] = {"on_charger": on_charger}
+        self.m.VOICE.transcribe = lambda pcm: q
+        self.m.VOICE.last_lang = "fa" if any("\u0600" <= c <= "\u06ff" for c in q) else ("de" if "ü" in q else "en")
+        self.m.run_turn(b"\x00" * 100)
+        return self.m.pop_cmds()
+
+    def test_all_phrases_back_up_with_an_ack(self):
+        for q in self.PHRASES:
+            cmds = self.turn(q)
+            self.assertIn((self.m.CMD_ACTION, b"backup"), cmds, q)
+            self.assertIn(self.m.CMD_SPEAK, [k for k, _ in cmds], q)
+            self.assertTrue(self.m.STATE["last_reply"], q)
+
+    def test_on_charger_says_why(self):
+        cmds = self.turn("move back", on_charger=True)
+        self.assertNotIn(self.m.CMD_ACTION, [k for k, _ in cmds])
+        self.assertIn("charger", self.m.STATE["last_reply"].lower())
+
+    def test_other_drive_commands_are_not_silent(self):
+        for q in ("turn left", "turn right", "turn around", "go forward"):
+            self.turn(q)
+            self.assertTrue(self.m.STATE["last_reply"], q)
+
+    def test_noisy_transcripts_survive_the_filters(self):
+        import lang
+        import wake
+        self.assertEqual(lang.classify("Hey guys, so move back.")[0], "en")
+        self.assertFalse(wake.unclear("just back."))
+        self.assertFalse(wake.unclear("step back"))
+        self.assertEqual(lang.classify("Fahr bitte ein Stück zurück")[0], "de")
+
+    def test_long_persian_moves_reach_the_brain(self):
+        import router
+        for q in ("به سمت راست حرکت کن", "سیصد و شصت درجه بچرخ", "Hey guys, so move back."):
+            self.assertIsNone(router.fast(q))  # > 4 words: the model plans it (turn -90 / turn 360 / drive -120)
+
+
+class ActionResult(unittest.TestCase):
+    def setUp(self):
+        import main
+        self.m = main
+        self.said = []
+        self.saved = main.speak_turn
+        main.speak_turn = lambda text, why, show=b"": self.said.append(text) or 1
+        main.ACTION.update(seq=None, sent=0.0, lang="en")
+
+    def tearDown(self):
+        self.m.speak_turn = self.saved
+
+    def ev(self, seq, res):
+        self.m._action_events({"action_seq": seq, "action_result": res})
+        time.sleep(0.05)
+
+    def test_refusal_is_spoken(self):
+        m = self.m
+        self.ev(4, 0)  # first packet: baseline only
+        m.VOICE.last_lang = "de"
+        m.queue_cmd(m.CMD_ACTION, b"backup")
+        self.ev(5, 3)  # rear cliff
+        self.assertEqual(self.said, [__import__("intents").say("why_rear_cliff", "de")])
+        self.ev(6, 1)  # ok: silent
+        self.ev(7, 12)  # cancelled: silent
+        self.assertEqual(len(self.said), 1)
+        m.pop_cmds()
+
+    def test_old_results_not_spoken(self):
+        self.ev(1, 0)
+        self.ev(2, 7)  # no recent voice action
+        self.assertEqual(self.said, [])
+
+    def test_sensor_unpack(self):
+        import struct
+        import protocol
+        p = bytes(39) + struct.pack("<4H", 3900, 0, 0, 0) + struct.pack("<HHB", 2, 9, 3)
+        d = protocol.unpack_sensor(p)
+        self.assertEqual((d["button_presses"], d["action_seq"], d["action_result"]), (2, 9, 3))
+        self.assertIsNone(protocol.unpack_sensor(p[:49])["action_seq"])
+
+
 if __name__ == "__main__":
     unittest.main()

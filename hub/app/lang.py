@@ -51,10 +51,13 @@ _ZW = {"\u200c", "\u200d", "\u200e", "\u200f"}
 
 _EN = set("""the a an is are was were be i you he she it we they what when where why how who which
 this that these those to of in on at for with and or but not do does did can could would will
-my your me hello hi please thanks thank yes no time weather today tell about there here""".split())
+my your me hello hi please thanks thank yes no time weather today tell about there here
+so just hey guys go come move back backwards forward turn left right around spin drive step reverse stop
+look up down dance bit little now""".split())
 _DE = set("""der die das ein eine einen ist sind war bin bist ich du er sie es wir ihr nicht und oder
 aber wie was wann wo warum wer welche welcher mit von zu im auf für ist's heute bitte danke ja nein
-hallo guten tag wetter uhr wieviel spät mir mich dir dich kannst kann sag erzähl über noch""".split())
+hallo guten tag wetter uhr wieviel spät mir mich dir dich kannst kann sag erzähl über noch
+fahr fahre geh gehe zurück rückwärts vorwärts dreh links rechts komm hier tanz schau stück bisschen""".split())
 _OTHER = set("""el los las una por para que como está muy les des est pas avec pour mais je vous il
 het een niet ook van zijn che non sono della ser bir bu ve için çok değil ne nasıl""".split())
 

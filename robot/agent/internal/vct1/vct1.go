@@ -98,10 +98,32 @@ type Sensor struct {
 	// (wraps). The hub turns an increase into a button_press event. 49-byte
 	// payload; a 47-byte one (older agent) has none.
 	ButtonPresses uint16
+	// ActionSeq counts finished voice actions/plans (wraps); ActionResult is
+	// the last one's outcome (Result* below). 52-byte payload; older agents
+	// send 47/49 bytes and the hub then never hears an outcome.
+	ActionSeq    uint16
+	ActionResult uint8
 }
 
-// SensorSize is the SENSOR payload length (47 before ButtonPresses).
-const SensorSize = 49
+// Voice action outcomes (SENSOR ActionResult).
+const (
+	ResultNone      uint8 = 0
+	ResultOK        uint8 = 1
+	ResultCliff     uint8 = 2 // front edge (forward move)
+	ResultRearCliff uint8 = 3 // edge behind (reverse move)
+	ResultPickup    uint8 = 4 // picked up / falling
+	ResultBattery   uint8 = 5
+	ResultHubGone   uint8 = 6
+	ResultObstacle  uint8 = 7 // ToF obstacle ahead
+	ResultCharger   uint8 = 8 // wheels/lift held on the charger
+	ResultDisabled  uint8 = 9 // voice-drive.disabled
+	ResultStalled   uint8 = 10
+	ResultTimeout   uint8 = 11
+	ResultCancelled uint8 = 12 // voice stop / button
+)
+
+// SensorSize is the SENSOR payload length (47 before ButtonPresses, 49 before ActionSeq).
+const SensorSize = 52
 
 func (s Sensor) Marshal() []byte {
 	b := make([]byte, SensorSize)
@@ -139,6 +161,10 @@ func (s Sensor) Marshal() []byte {
 	binary.LittleEndian.PutUint16(b[off:], s.Flags)
 	off += 2
 	binary.LittleEndian.PutUint16(b[off:], s.ButtonPresses)
+	off += 2
+	binary.LittleEndian.PutUint16(b[off:], s.ActionSeq)
+	off += 2
+	b[off] = s.ActionResult
 	return b
 }
 
@@ -182,6 +208,11 @@ func UnmarshalSensor(b []byte) (Sensor, error) {
 	off += 2
 	if len(b) >= off+2 {
 		s.ButtonPresses = binary.LittleEndian.Uint16(b[off:])
+	}
+	off += 2
+	if len(b) >= off+3 {
+		s.ActionSeq = binary.LittleEndian.Uint16(b[off:])
+		s.ActionResult = b[off+2]
 	}
 	return s, nil
 }

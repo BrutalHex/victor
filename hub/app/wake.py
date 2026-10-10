@@ -213,7 +213,9 @@ super sorry bye goodbye night morning louder quieter stop go come look sing danc
 right left up down fine true really what's it's i'm you're don't can't play music photo picture picture
 der die das ein eine ist sind ich du er sie es wir nicht und oder aber wie was wann wo warum wer mit von zu
 im auf für heute bitte danke ja nein hallo guten tag wetter uhr spät mir mich dir dich kannst kann sag
-gut toll schön lauter leiser tschüss nacht morgen genau stimmt echt nochmal witz""".split())
+gut toll schön lauter leiser tschüss nacht morgen genau stimmt echt nochmal witz
+back backwards backward move moving reverse step forward forwards ahead turn spin drive just so around away
+zurück rückwärts vorwärts fahr fahre geh gehe dreh links rechts komm hier tanz schau""".split())
 
 
 def unclear(text: str) -> bool:

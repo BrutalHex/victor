@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/BrutalHex/victor/robot/agent/internal/vct1"
 )
 
 func kinds(p Plan) []stepKind {
@@ -163,5 +165,52 @@ func TestFaceStepsDoNotCount(t *testing.T) {
 	p, notes := ParsePlan("plan:face expr_happy;" + strings.Repeat("drive 100;turn 60;", 6) + "face expr_proud")
 	if len(notes) != 0 || len(p.Steps) != 14 {
 		t.Fatalf("steps %d notes %v", len(p.Steps), notes)
+	}
+}
+
+func TestBackupDrives10to15cm(t *testing.T) {
+	s := newSim(t)
+	s.run("backup", false, 400, -1, -1)
+	mm := -float64(s.l) * mmPerTick
+	if mm < 100 || mm > 160 || !strings.HasPrefix(s.done, "ok") {
+		t.Fatalf("backed %.0f mm done %q", mm, s.done)
+	}
+}
+
+func TestReversing(t *testing.T) {
+	var r Runner
+	r.StartText("plan:drive -120;drive 50", time.Unix(0, 0))
+	if !r.Reversing() {
+		t.Fatal("first step reverses")
+	}
+	r.StartText("plan:drive 120", time.Unix(0, 0))
+	if r.Reversing() {
+		t.Fatal("forward")
+	}
+	r.Cancel("x")
+	if r.Reversing() {
+		t.Fatal("idle")
+	}
+}
+
+func TestResultCodes(t *testing.T) {
+	for _, c := range []struct {
+		done, why string
+		want      uint8
+	}{
+		{"ok", "", vct1.ResultOK},
+		{"aborted: veto (rear cliff [10 10 10 10])", "rear cliff [10 10 10 10]", vct1.ResultRearCliff},
+		{"aborted: veto (cliff)", "cliff", vct1.ResultCliff},
+		{"aborted: veto (obstacle 50 mm)", "obstacle 50 mm", vct1.ResultObstacle},
+		{"aborted: veto (pickup)", "pickup", vct1.ResultPickup},
+		{"ok (wheels held: on charger)", "", vct1.ResultCharger},
+		{"ok (wheels disabled by flag)", "", vct1.ResultDisabled},
+		{"ok (move stalled (no wheel motion at full breakaway power))", "", vct1.ResultStalled},
+		{"aborted: timeout", "", vct1.ResultTimeout},
+		{"", "", vct1.ResultNone},
+	} {
+		if got := Result(c.done, c.why); got != c.want {
+			t.Fatalf("%q/%q -> %d want %d", c.done, c.why, got, c.want)
+		}
 	}
 }

@@ -249,6 +249,8 @@ func runDaemon() int {
 	status := statusfile.New()
 	tick := time.NewTicker(*rate)
 	var btn button.Debouncer // backpack presses -> SENSOR ButtonPresses -> hub button_press
+	var actSeq uint16        // finished voice actions -> SENSOR ActionSeq/ActionResult -> hub says why
+	var actResult uint8
 	defer tick.Stop()
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
@@ -286,6 +288,7 @@ func runDaemon() int {
 					status.Put("/data/victor/button.txt", fmt.Sprintf("presses=%d at=%s\n", btn.Presses, time.Now().Format(time.RFC3339)))
 					// the back button cancels a running voice plan / explore at once
 					if runner.Cancel("button") {
+						actSeq, actResult = actSeq+1, vct1.ResultCancelled
 						fmt.Printf("action %s cancelled: button\n", runner.Name())
 						status.Put("/data/victor/action.txt", runner.Name()+" cancelled: button\n")
 					}
@@ -393,6 +396,7 @@ func runDaemon() int {
 					break
 				}
 				if name == "stop" && runner.Cancel("voice stop") {
+					actSeq, actResult = actSeq+1, vct1.ResultCancelled
 					fmt.Printf("action %s cancelled: voice stop\n", runner.Name())
 					status.Put("/data/victor/action.txt", runner.Name()+" cancelled: voice stop\n")
 					break
@@ -411,10 +415,15 @@ func runDaemon() int {
 				// skill threshold aborted look_at_me on the first live test.
 				abortWhy := ""
 				switch {
-				case reason == veto.Battery || reason == veto.Fall || reason == veto.Pickup || reason == veto.Cliff:
+				case reason == veto.Battery || reason == veto.Fall || reason == veto.Pickup:
 					abortWhy = reason.String()
+				case reason == veto.Cliff && !runner.Reversing():
+					abortWhy = reason.String() // backing away from a front edge may pass (as the interlock allows)
 				case reason == veto.HeartbeatMiss && (!vin.HasHeartbeat || vin.HeartbeatAge > time.Second):
 					abortWhy = "heartbeat"
+				}
+				if abortWhy == "" && runner.Reversing() && !vin.OnCharger && veto.RearCliff(cliffs, cal.Thresh, cal.Ready()) {
+					abortWhy = fmt.Sprintf("rear cliff %v", cliffs) // nothing else guards the back
 				}
 				if abortWhy == "" && win.ProxValid && fr.ProxMM < wander.ObstacleMM && lastPWM[0] > 0 && lastPWM[1] < 0 {
 					abortWhy = fmt.Sprintf("obstacle %d mm", fr.ProxMM) // voice "forward"/"come here" toward a wall
@@ -435,7 +444,9 @@ func runDaemon() int {
 						}
 						ui.set("anim", "cant_help", face.ClipLen("cant_help")) // visible "I couldn't"
 					}
-					fmt.Printf("action %s done: %s\n", runner.Name(), out.Done)
+					actSeq++
+					actResult = action.Result(out.Done, abortWhy)
+					fmt.Printf("action %s done: %s result=%d\n", runner.Name(), out.Done, actResult)
 					status.Put("/data/victor/action.txt", runner.Name()+" "+out.Done+"\n")
 				}
 			}
@@ -469,6 +480,10 @@ func runDaemon() int {
 				if pwm[0] > 0 || pwm[1] < 0 || (pwm[0] == 0) != (pwm[1] == 0) {
 					pwm[0], pwm[1] = 0, 0
 				}
+			}
+			// edge behind: no pure reverse (wander's cliff back-off, voice "back up")
+			if pwm[0] < 0 && pwm[1] > 0 && !vin.OnCharger && veto.RearCliff(cliffs, cal.Thresh, cal.Ready()) {
+				pwm[0], pwm[1] = 0, 0
 			}
 			lastPWM = pwm
 			// Idle life: glances, head fidgets, look toward a sound. Head only;
@@ -554,6 +569,7 @@ func runDaemon() int {
 				s.Flags |= vct1.FlagSSHOn
 			}
 			s.ButtonPresses = btn.Presses
+			s.ActionSeq, s.ActionResult = actSeq, actResult
 			if have {
 				s.Flags &^= vct1.FlagButton // debounced level, not the raw sample
 				if btn.Pressed() {

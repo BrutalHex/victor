@@ -16,10 +16,13 @@
 package action
 
 import (
-	"github.com/BrutalHex/victor/robot/agent/internal/drivectl"
 	"math"
 	"os"
+	"strings"
 	"time"
+
+	"github.com/BrutalHex/victor/robot/agent/internal/drivectl"
+	"github.com/BrutalHex/victor/robot/agent/internal/vct1"
 )
 
 // Motor power is int16 = power * 0x7FFF (vector robot/hal hal_motors.cpp).
@@ -94,7 +97,7 @@ var Plans = map[string]Plan{
 	"forward": {Name: "forward", Steps: []step{{kind: stDrive, mm: 60, dur: 3 * time.Second}}},
 	// supervised drive check (hub POST /action, never voice): 10 cm forward
 	"forward_test":  {Name: "forward_test", Steps: []step{{kind: stDrive, mm: 100, dur: 5 * time.Second}}},
-	"backup":        {Name: "backup", Steps: []step{{kind: stDrive, mm: -50, dur: 3 * time.Second}}},
+	"backup":        {Name: "backup", Steps: []step{{kind: stDrive, mm: -120, dur: 4 * time.Second}}},
 	"turn_left":     {Name: "turn_left", Steps: []step{{kind: stTurn, deg: 90, dur: 4 * time.Second}}},
 	"turn_right":    {Name: "turn_right", Steps: []step{{kind: stTurn, deg: -90, dur: 4 * time.Second}}},
 	"turn_around":   {Name: "turn_around", Steps: []step{{kind: stTurn, deg: 180, dur: 6 * time.Second}}},
@@ -331,6 +334,48 @@ func (r *Runner) next(out Out) Out {
 	out.Active = true
 	out.PWM = [4]int16{}
 	return out
+}
+
+// Reversing: the current step drives backwards (main then checks the rear
+// cliff sensors and lets a front-edge veto pass, like the final interlock).
+func (r *Runner) Reversing() bool {
+	if !r.active || r.i >= len(r.plan.Steps) {
+		return false
+	}
+	st := r.plan.Steps[r.i]
+	return st.kind == stDrive && st.mm < 0
+}
+
+// Result maps a finished plan (Out.Done plus main's abort reason) to the
+// SENSOR outcome code the hub turns into a spoken "why".
+func Result(done, abortWhy string) uint8 {
+	switch {
+	case done == "":
+		return vct1.ResultNone
+	case strings.HasPrefix(abortWhy, "rear cliff"):
+		return vct1.ResultRearCliff
+	case strings.HasPrefix(abortWhy, "cliff"):
+		return vct1.ResultCliff
+	case strings.HasPrefix(abortWhy, "obstacle"):
+		return vct1.ResultObstacle
+	case abortWhy == "pickup" || abortWhy == "fall":
+		return vct1.ResultPickup
+	case abortWhy == "battery":
+		return vct1.ResultBattery
+	case abortWhy == "heartbeat":
+		return vct1.ResultHubGone
+	case strings.Contains(done, "timeout") && strings.HasPrefix(done, "aborted"):
+		return vct1.ResultTimeout
+	case strings.Contains(done, "on charger") || strings.Contains(done, "wheels held"):
+		return vct1.ResultCharger
+	case strings.Contains(done, "wheels disabled"):
+		return vct1.ResultDisabled
+	case strings.Contains(done, "stalled") || strings.Contains(done, "move timeout"):
+		return vct1.ResultStalled
+	case strings.HasPrefix(done, "ok") || done == "bump" || done == "nobump":
+		return vct1.ResultOK
+	}
+	return vct1.ResultOK
 }
 
 // Bumped reports whether the last fist bump was felt.

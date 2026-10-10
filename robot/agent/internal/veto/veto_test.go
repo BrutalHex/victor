@@ -107,3 +107,13 @@ func TestClassicalWinsOrder(t *testing.T) {
 		t.Fatal("battery must win over cliff")
 	}
 }
+
+func TestRearCliffOnlyBack(t *testing.T) {
+	th := [4]uint16{88, 50, 45, 54}
+	if RearCliff([4]uint16{10, 10, 300, 300}, th, true) {
+		t.Fatal("front edge is not a rear cliff")
+	}
+	if !RearCliff([4]uint16{300, 300, 30, 300}, th, true) || !RearCliff([4]uint16{300, 300, 300, 20}, [4]uint16{}, false) {
+		t.Fatal("rear edge missed")
+	}
+}

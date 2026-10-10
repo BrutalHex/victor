@@ -92,11 +92,11 @@ TRICKS = {
     "dance": True, "nod": False, "fistbump": False, "look_at_me": False, "look_up": False, "look_down": False,
     "come_here": True, "forward": True, "backup": True, "turn_left": True, "turn_right": True, "turn_around": True,
 }
-TRICK_TRAVEL = {"dance": 60 * math.pi / 180 * HALF_TRACK_MM, "come_here": 100, "forward": 60, "backup": 50,
+TRICK_TRAVEL = {"dance": 60 * math.pi / 180 * HALF_TRACK_MM, "come_here": 100, "forward": 60, "backup": 120,
                 "turn_left": 90 * math.pi / 180 * HALF_TRACK_MM, "turn_right": 90 * math.pi / 180 * HALF_TRACK_MM,
                 "turn_around": math.pi * HALF_TRACK_MM}
 TRICK_S = {"dance": 7.5, "nod": 0.9, "fistbump": 7.0, "look_at_me": 2.2, "look_up": 0.6, "look_down": 0.6,
-           "come_here": 2.0, "forward": 1.4, "backup": 1.3, "turn_left": 1.4, "turn_right": 1.4, "turn_around": 2.0}
+           "come_here": 2.0, "forward": 1.4, "backup": 1.9, "turn_left": 1.4, "turn_right": 1.4, "turn_around": 2.0}
 DO = ["drive", "turn", "head", "lift", "wait", "expression", "trick", "explore", "explore_stop", "stop", "volume"]
 
 # stock commands the model may pick as "intent" (single, hub-handled). Never

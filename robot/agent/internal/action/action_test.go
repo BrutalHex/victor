@@ -205,7 +205,7 @@ func TestVoiceMovesBreakAway(t *testing.T) {
 	for _, c := range []struct {
 		name   string
 		wantMM float64 // forward distance (drive) or arc per wheel (turn)
-	}{{"forward", 60}, {"backup", -50}, {"turn_left", 90 * math.Pi / 180 * halfTrackMM}, {"turn_right", 90 * math.Pi / 180 * halfTrackMM}} {
+	}{{"forward", 60}, {"backup", -120}, {"turn_left", 90 * math.Pi / 180 * halfTrackMM}, {"turn_right", 90 * math.Pi / 180 * halfTrackMM}} {
 		s := newSim(t)
 		s.brk = 0.45
 		s.run(c.name, false, 300, -1, -1)

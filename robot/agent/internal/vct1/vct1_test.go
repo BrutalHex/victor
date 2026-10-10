@@ -7,10 +7,10 @@ func TestRoundTrip(t *testing.T) {
 		Cliffs: [4]uint16{1, 2, 3, 4},
 		ProxMM: 120, ProxQuality: 9,
 		EncLift: 700, BattMV: 3900, ChargerMV: 5000, Touch: 11,
-		Flags: FlagOnCharger | FlagButton, ButtonPresses: 3,
+		Flags: FlagOnCharger | FlagButton, ButtonPresses: 3, ActionSeq: 5, ActionResult: ResultRearCliff,
 	}
 	payload := s.Marshal()
-	if len(payload) != SensorSize || SensorSize != 49 {
+	if len(payload) != SensorSize || SensorSize != 52 {
 		t.Fatalf("payload %d", len(payload))
 	}
 	buf := Encode(Header{Type: TypeSensor, Seq: 7, Tns: 99}, payload)
