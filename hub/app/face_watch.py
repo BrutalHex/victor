@@ -185,6 +185,8 @@ class Watcher:
             return {"name": hit["name"], "confidence": hit["conf"], "via": "cache:" + hit["via"],
                     "level": hit["level"], "score": None}
         m = self.local.match(emb)
+        print(f"face local {m['level']} cand={m['name']!r} score={m['score']} second={m['second']} purpose={purpose}",
+              flush=True)  # once per new face (repeats are cache hits); no image data
         out = {"name": None, "confidence": 0.0, "via": "local", "level": m["level"], "score": m["score"],
                "candidate": m["name"]}
         if m["level"] == "sure" and not (self.confirm_first and purpose == "greet"
