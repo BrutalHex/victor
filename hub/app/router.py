@@ -113,7 +113,7 @@ PROMPT = (
     "Examples: 'what do you think about dancing' -> chat. 'can you dance for me' -> intent_imperative_dance. "
     "'I turned left yesterday' -> chat. 'turn left' -> intent_imperative_turnleft. 'do you like taking photos' -> chat. "
     "'Wie spät ist es?' -> intent_clock_time. 'Ich habe gestern getanzt' -> chat. 'برقص' -> intent_imperative_dance. "
-    "'رقص دوست داری؟' -> chat. 'who am I' / 'do you know me' -> chat. Polite forms (please, could you, kannst du, "
+    "'رقص دوست داری؟' -> chat. 'is SSH on?' / 'Ist SSH an?' -> intent_system_ssh_status. 'who am I' / 'do you know me' -> chat. Polite forms (please, could you, kannst du, "
     "میشه) and filler words (by the way, eigentlich, mal, الان) do not change the decision. Questions a command answers "
     "(what time is it / Wie spät ist es eigentlich? / ساعت چنده, how old are you, how long is left on my timer) are commands.\n"
     "SSH may be transcribed as 'S S H', 'es es ha' or 'اس اس اچ'. Talking about SSH (opinions, how it works, "
@@ -123,13 +123,17 @@ PROMPT = (
 )
 
 
+# exact matches that are questions by nature keep the fast path despite a "?"
+QUESTION_INTENTS = {"intent_clock_time", "intent_clock_checktimer", "intent_character_age", "intent_system_ssh_status"}
+
+
 def fast(text: str) -> I.Intent | None:
     """Exact pattern match on a short utterance: no API call needed."""
     m = I.match(text)
     if m is None:
         return None
     t = I.normalise(text)
-    if len(t.split()) > FAST_MAX_WORDS or text.strip().endswith("?") and m.name != "intent_clock_time":
+    if len(t.split()) > FAST_MAX_WORDS or text.strip().endswith("?") and m.name not in QUESTION_INTENTS:
         return None
     return m
 

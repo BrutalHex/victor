@@ -1127,6 +1127,16 @@ class StockIntents(unittest.TestCase):
             self.assertEqual(self._acts(cmds), [b"ssh_status"], text)
             self.assertEqual(m.STATE["last_reply"], reply, text)
 
+    def test_ssh_status_question_skips_the_router(self):
+        # live 10 Oct: "Vector, is SSH on?" went to the router, which answered chat
+        m = self.m
+        self._sensor(False)
+        self._llm(None, 0.9, typ="chat")
+        for text in ("Vector, is SSH on?", "Vector, is SSH off?", "Vektor, ist SSH an?"):
+            cmds = self.turn(text)
+            self.assertEqual(self._acts(cmds), [b"ssh_status"], text)
+        self.assertEqual(self.chats, [])
+
     def test_ssh_ambiguous_sentence_never_disables(self):
         m = self.m
         self._sensor(True)
