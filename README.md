@@ -206,6 +206,78 @@ shows the last one under `last_intent`. Set `HUB_INTENTS=0` in `.env` to switch 
 - Explore / go explore / stop exploring: see "Autonomous wander" below.
 - Weather and knowledge questions stay with chat (web search). "What's my name?" keeps the face check.
 
+## Expressions and commands (one OpenAI call per turn)
+
+Everything that is not a short exact command goes to **one** OpenAI Responses API call
+(`hub/app/brain.py`, structured output + the `web_search` tool). It returns the spoken reply, the eye
+expression that fits it, and optionally an ordered motion plan, so Vector can do things like "drive in a
+square", "spin around twice", "go forward a bit, then turn left and look up", "zieh einen Kreis" or
+"دو بار دور خودت بچرخ". This replaced the old router call + chat call (one round trip fewer).
+
+Stays local, never sent to the model: the short exact commands in `intents.py` (fast path), the stop words
+"stop" / "halt" / "stopp" / "ایست" (and "be quiet", "وایسا", ...), anything mentioning SSH (old router +
+exact-phrase rules, unchanged), "Stop Vector" (sleep), and identity questions (face check).
+
+### Expressions
+
+Eye animations from the DDL eye poses / stock animations (`robot/agent/tools/ddl_faceclips.py`, clips
+`expr_*`). Each one eases in, holds about 2 s and settles back to normal awake eyes. Some add a small head
+gesture (head only, also on the charger; `HUB_EXPRESSION_GESTURES=0` turns them off).
+
+| name | used for | gesture |
+|---|---|---|
+| neutral | facts, numbers, the time | - |
+| happy, joy | good news, thanks, jokes | head bob |
+| excited | can't wait, great idea | nod |
+| love | "I love you", compliments | head up |
+| proud | praise, done it | head up |
+| sad | sad news, sympathy | head droops |
+| hurt | insulted, scolded | head droops |
+| angry, frustrated | annoyed / it didn't work | - |
+| surprised, awe | wow, unexpected, wonder | head up |
+| confused, curious, thinking | strange / interesting / tricky questions | - |
+| scared, worried | spooky, warnings | - |
+| sleepy | tired, bedtime | head droops |
+| bored, shy, disgusted, suspicious, determined | as named | shy: head down |
+
+The model picks one for the reply and optionally one for the end (e.g. a dance ends happy). The "thinking"
+squares while waiting for OpenAI are unchanged. Preview them: Face page (`/ui`) -> "expressions" buttons,
+or `curl -X POST localhost:8080/expression -d '{"name":"sad"}'` (`"gesture":true` adds the head move);
+`GET /expressions` lists names, commands and limits.
+
+### Commands the model can use
+
+| step | meaning | limits |
+|---|---|---|
+| `drive <mm>` | straight, + forward / - back | +-500 mm per step |
+| `turn <deg>` | in place, + left / - right | +-720 deg per step |
+| `head up/down/middle/nod`, `lift up/down` | | lift never on the charger |
+| `wait <ms>` | pause | <= 5 s |
+| `expression <name>` | change the eyes mid-plan | free (not counted) |
+| `trick <name>` | dance, nod, fistbump, look_at_me, look_up, look_down, come_here, forward, backup, turn_left/right/around | |
+| `circle <mm>` | hexagon "circle" of that diameter | uses all 12 steps |
+| `explore`, `explore_stop`, `stop`, `volume <1-5>` | handled on the hub | explore needs `explore.enabled` |
+
+Plus stock commands that need hub state: timers, photo, "my name is", go to / get off the charger, go to
+sleep, how old are you, fist bump.
+
+Per plan: <= 12 movement steps, <= 30 s (estimated on the hub, hard timeout on the robot), <= 2 m of wheel
+travel. The hub clamps every value; the agent (`internal/action/plan.go`) parses and clamps again and runs
+the plan under the on-robot veto: cliff / pickup / fall / low battery / hub gone abort it at once, a ToF
+obstacle < 100 mm aborts a forward drive, and on the charger the wheels and lift are held (Vector says
+he's on the charger). `touch /data/victor/voice-drive.disabled` still disables every voice wheel move.
+
+When he talks: `speak` = before (default for drives: the plan starts when the speech ends, so the mic hears
+"stop"), during (short wiggles / dances / head moves; long drives are forced to "before"), or after (move
+first, then "Done!").
+
+Cancel at once: say "stop" / "halt" / "stopp" / "ایست" (fast path, no model call), press the back button
+(the agent cancels the plan and wander on the press), or "Stop Vector".
+
+Dry run without moving: `curl -X POST localhost:8080/brain -d '{"text":"drive in a square"}'` returns the
+model's decision and the clamped plan. `docker exec -w /app hub python brain_eval.py` runs ~17 EN/DE/FA
+prompts (text only). `HUB_BRAIN=0` in `.env` (+ `make hub`) goes back to the old router + chat path.
+
 ## Back touch (petting)
 
 Stroke Vector's back: after ~0.4 s the eyes go to happy squints, growing to the "^ ^" bliss face the

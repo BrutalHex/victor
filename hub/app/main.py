@@ -23,6 +23,7 @@ from face_watch import Watcher
 from nv_budget import Budget
 import names as names_mod
 import intents as intents_mod
+import brain
 import router
 import voice as voice_mod
 import wake as wake_mod
@@ -218,6 +219,7 @@ def _button_events(sensor: dict) -> None:
 
 def button_press() -> str:
     """Backpack press: asleep -> wake (same cue as 'Hey Vector'). Awake: logged only."""
+    SCHED.cancel()  # the agent cancels a running plan on the press itself
     with LOCK:
         BUTTON["presses"] += 1
         BUTTON["last_at"] = time.time()
@@ -473,7 +475,7 @@ def reply_turn(pcm: bytes, text: str | None = None) -> tuple[str, str, bytes]:
     if text is None:
         text = VOICE.transcribe(pcm)
     TURN_PERSON["ctx"] = ""
-    TURN_OUT.update(show=b"", action="", intent="")
+    TURN_OUT.update(show=b"", action="", intent="", plan="", speak="", est=0.0, end=b"")
     VOICE.last_via = ""
     t_r = time.time()
     if text and SESSION.enabled:
@@ -499,6 +501,12 @@ def reply_turn(pcm: bytes, text: str | None = None) -> tuple[str, str, bytes]:
         print(f"ssh off confirmed by {text!r}", flush=True)
     elif text and INTENTS_ON and is_identity_question(text):
         intent, how = router.fast(text), "identity"  # face path; no router call
+    elif text and INTENTS_ON and brain.ON and VOICE.key and not brain.ssh_text(text):
+        # one OpenAI call (reply + expression + plan) unless a short exact command matches
+        intent = router.fast(text)
+        how = "fast" if intent is not None else "brain"
+        if intent is not None:
+            print(f"router fast intent={intent.name} text={text!r}", flush=True)
     elif text and INTENTS_ON:
         intent, how = router.route(VOICE.api, text, getattr(VOICE, "last_lang", ""), bool(VOICE.key))
     TURN_OUT["route"] = how
@@ -526,8 +534,16 @@ def reply_turn(pcm: bytes, text: str | None = None) -> tuple[str, str, bytes]:
                 VOICE.last_via = "unclear"
             else:
                 if text:
-                    print(f"intent none -> chat text={text!r} norm={intents_mod.normalise(text)!r}", flush=True)
-                reply = VOICE.chat(text) if text else ""
+                    print(f"intent none -> {how if how == 'brain' else 'chat'} text={text!r} norm={intents_mod.normalise(text)!r}", flush=True)
+                d = VOICE.think(text) if text and how == "brain" else None
+                if d is not None:
+                    reply = run_brain(d, text)
+                elif text and how == "brain":  # model call failed: the old router + chat path
+                    TURN_OUT["route"] = "brain-fallback"
+                    it, _ = router.route(VOICE.api, text, getattr(VOICE, "last_lang", ""), bool(VOICE.key))
+                    reply = run_intent(it) if it is not None else VOICE.chat(text)
+                else:
+                    reply = VOICE.chat(text) if text else ""
     finally:
         TURN_PERSON["ctx"] = ""
     t_chat = time.time()
@@ -549,6 +565,7 @@ def session_stop(text: str) -> tuple[str, str, bytes]:
     reply = intents_mod.say("session_stop", lang)
     SESSION.sleep("phrase")
     SSH_CONFIRM["until"] = 0.0
+    SCHED.cancel()
     TURN_OUT.update(show=b"anim|goodnight", action="stop", intent="session_stop")
     print(f"session stop by {text!r} lang={lang}", flush=True)
     return text, reply, VOICE.tts(reply)
@@ -556,7 +573,10 @@ def session_stop(text: str) -> tuple[str, str, bytes]:
 
 # ------------------------------------------------------------ stock commands
 INTENTS_ON = os.environ.get("HUB_INTENTS", "1").strip().lower() not in ("0", "false", "no", "off")
-TURN_OUT = {"show": b"", "action": "", "intent": ""}
+TURN_OUT = {"show": b"", "action": "", "intent": "", "plan": "", "speak": "", "est": 0.0, "end": b""}
+SCHED = brain.Scheduler()  # plan after speech / speech after plan; cancelled by stop
+PLAN_RUN = {"until": 0.0}  # a sent motion plan is expected to run until then (gestures wait)
+NO_SPEECH_INTENTS = {"intent_imperative_shutup"}
 PHOTO_DIR = os.environ.get("HUB_PHOTO_DIR") or "/app/data/photos"
 
 
@@ -764,8 +784,11 @@ def run_intent(intent) -> str:
         queue_cmd(CMD_ACTION, b"ssh_status")  # robot shows SSH ON / SSH OFF for 1.5 s
         reply = I.say("ssh_unknown", lang) if not sens else I.say("ssh_on" if sens.get("ssh_on") else "ssh_off", lang)
     elif n == "intent_explore_stop":
+        SCHED.cancel()
         action, reply = "explore_stop", I.say("explore_stop", lang)
     elif n == "intent_imperative_shutup":
+        SCHED.cancel()
+        PLAN_RUN["until"] = 0.0  # a plan still waiting for the speech to end never starts
         action, show = "stop", "shutup"
     elif n == "intent_system_sleep":
         show = "sleep|"
@@ -882,14 +905,109 @@ def run_turn(pcm: bytes, text: str | None = None) -> None:
             STATE["last_lang"] = getattr(VOICE, "last_lang", "")
             STATE["last_drop"] = getattr(VOICE, "last_drop", "")
         show, action = TURN_OUT["show"], TURN_OUT["action"]
+        plan, mode, est, end = TURN_OUT.get("plan", ""), TURN_OUT.get("speak", ""), TURN_OUT.get("est", 0.0), TURN_OUT.get("end", b"")
         if TURN_OUT["intent"]:
             why = "intent " + TURN_OUT["intent"]
-        TURN_OUT.update(show=b"", action="", intent="")
+        TURN_OUT.update(show=b"", action="", intent="", plan="", speak="", est=0.0, end=b"")
+        send_turn(audio, why, show, action, plan, mode, est, end)
+    print(f"voice transcript={text!r} lang={getattr(VOICE, 'last_lang', '')} reply={reply!r} speak={len(audio)}", flush=True)
+
+
+def send_turn(audio: bytes, why: str, show: bytes, action: str, plan: str = "", mode: str = "", est: float = 0.0,
+              end: bytes = b"") -> None:
+    """Finish a turn on the robot: speech + face, then the action/plan.
+    speak=before: the plan starts when the speech ends (the mic is open again,
+    so "stop" works); during: together; after: the plan first, speech after
+    its estimated length. Pending parts are dropped by SCHED.cancel()."""
+    speech_s = len(audio) / (2 * RATE)
+    if plan and est > 1.0:
+        PLAN_RUN["until"] = time.time() + est + (speech_s if mode == "before" else 0.0) + 1.0
+    if plan and mode == "after":
+        end_think(b"", why, show)
+        queue_cmd(CMD_ACTION, plan.encode())
+        if audio:
+            SCHED.later(est + 0.4, lambda: queue_cmd(CMD_SPEAK, VOLUME.apply(audio)))
+    else:
         end_think(audio, why, show)
-        LAST_TURN["t"] = time.time()
         if action:  # after idle/clip so the runner's own clip is not overwritten
             queue_cmd(CMD_ACTION, action.encode())
-    print(f"voice transcript={text!r} lang={getattr(VOICE, 'last_lang', '')} reply={reply!r} speak={len(audio)}", flush=True)
+        if plan and mode == "before" and speech_s > 0:
+            SCHED.later(speech_s + 0.3, lambda: queue_cmd(CMD_ACTION, plan.encode()))
+        elif plan:
+            queue_cmd(CMD_ACTION, plan.encode())
+    if end:  # closing expression as the reply ends (no plan to carry it)
+        SCHED.later(max(0.0, speech_s - 0.3), lambda: queue_cmd(CMD_FACEUI, end))
+    LAST_TURN["t"] = time.time()
+
+
+def run_brain(d: dict, text: str) -> str:
+    """Carry out one model decision (brain.py): stock intent, or reply +
+    expression + validated plan. Returns the reply to speak."""
+    I = intents_mod
+    lang = getattr(VOICE, "last_lang", "") or "en"
+    lang = lang if lang in ("en", "de", "fa") else "en"
+    reply = d.get("reply") or ""
+    expr, end = d.get("expression") or "", d.get("expression_end") or ""
+    acts = d.get("actions") or []
+    out = {"intent": d.get("intent"), "expression": expr or "neutral", "expression_end": end, "speak": d.get("speak"),
+           "actions": acts, "t": time.time()}
+    if d.get("intent") and not acts and not getattr(VOICE, "last_searched", False):  # a web search = a question
+        it = router.to_intent({"type": "command", "intent": d["intent"], "args": d.get("args") or {}, "confidence": 1.0},
+                              text, lang)
+        if it is not None:
+            stock = run_intent(it)
+            if not stock and it.name not in NO_SPEECH_INTENTS:
+                stock = reply
+            if not TURN_OUT.get("show") and brain.clip(expr) and it.name not in NO_SPEECH_INTENTS:
+                TURN_OUT["show"] = f"anim|{brain.clip(expr)}".encode()
+            out.update(reply=stock, via="intent")
+            with LOCK:
+                STATE["last_brain"] = out
+            print(f"brain intent {it.name} reply={stock!r}", flush=True)
+            return stock
+    on = _on_charger()
+    plan = brain.build_plan(acts, expr, end, on) if acts else None
+    if plan:
+        for kind, val in plan["hub"]:
+            if kind == "volume":
+                VOLUME.set(int(val))
+            elif kind == "stop":
+                SCHED.cancel()
+                PLAN_RUN["until"] = 0.0
+                queue_cmd(CMD_ACTION, b"stop")
+            elif kind == "explore_stop":
+                SCHED.cancel()
+                queue_cmd(CMD_ACTION, b"explore_stop")
+            elif kind == "explore":
+                with LOCK:
+                    sens = STATE.get("last_sensor") or {}
+                if on is not False:
+                    reply = I.say("on_charger", lang)
+                elif not sens.get("explore_enabled"):
+                    reply = I.say("explore_off", lang)
+                elif not plan["plan"]:
+                    TURN_OUT["action"] = "explore"
+        if plan["held"] and plan["wheels"] is False and any(n.endswith("held: on charger") for n in plan["notes"]):
+            reply = I.say("on_charger", lang)  # nothing of the move can happen on the charger
+        mode = d.get("speak") or "before"
+        if plan["wheels"] and plan["travel_mm"] > 300 and mode == "during":
+            mode = "before"  # long drives start after the speech, so the mic hears "stop"
+        TURN_OUT.update(plan=plan["plan"], speak=mode, est=float(plan["est_s"]))
+    if brain.clip(expr):
+        TURN_OUT["show"] = f"anim|{brain.clip(expr)}".encode()
+    if not (plan and plan["plan"]):
+        g = brain.gesture_plan(expr, on) if time.time() > PLAN_RUN["until"] else ""
+        if g:
+            TURN_OUT.update(plan=g, speak="during", est=1.0)
+        if brain.clip(end) and end != expr:
+            TURN_OUT["end"] = f"anim|{brain.clip(end)}".encode()
+    TURN_OUT["intent"] = TURN_OUT.get("intent") or ""
+    out.update(reply=reply, plan=(plan or {}).get("plan") or TURN_OUT.get("plan"), notes=(plan or {}).get("notes"),
+               est_s=(plan or {}).get("est_s"), travel_mm=(plan or {}).get("travel_mm"), via="brain")
+    with LOCK:
+        STATE["last_brain"] = out
+    print(f"brain {brain.summary(d, plan)}", flush=True)
+    return reply
 
 
 def speak_turn(text: str, why: str, show: bytes = b"") -> int:
@@ -1235,6 +1353,13 @@ class Status(BaseHTTPRequestHandler):
         if path == "/intents":
             self._json({"enabled": INTENTS_ON, "intents": intents_mod.status_table()})
             return
+        if path == "/expressions":
+            self._json({"brain": brain.ON, "expressions": {k: {"clip": v[0], "gesture": v[1], "use": v[2]}
+                                                            for k, v in brain.EXPRESSIONS.items()},
+                        "commands": brain.DO, "tricks": list(brain.TRICKS),
+                        "limits": {"steps": brain.MAX_STEPS, "drive_mm": brain.MAX_DRIVE_MM, "turn_deg": brain.MAX_TURN_DEG,
+                                   "wait_ms": brain.MAX_WAIT_MS, "travel_mm": brain.MAX_TRAVEL_MM, "plan_s": brain.MAX_PLAN_S}})
+            return
         if path == "/faces":
             self._json({"faces": FACE_DB.list()})
             return
@@ -1323,6 +1448,33 @@ class Status(BaseHTTPRequestHandler):
             queue_cmd(CMD_ACTION, name.encode())
             print(f"http action {name}", flush=True)
             self._json({"ok": True, "action": name})
+            return
+        if path == "/expression":
+            # preview one face expression (eyes only unless gesture=true: head only, never wheels)
+            name = brain.expression(data.get("name"))
+            if not name and str(data.get("name") or "").lower() != "neutral":
+                self._json({"ok": False, "error": "names: " + ", ".join(brain.NAMES)}, 400)
+                return
+            c = brain.clip(name)
+            queue_cmd(CMD_FACEUI, f"anim|{c}".encode() if c else b"idle|")
+            g = brain.gesture_plan(name) if data.get("gesture") else ""
+            if g:
+                queue_cmd(CMD_ACTION, g.encode())
+            print(f"http expression {name or 'neutral'} clip={c or '-'} gesture={g or '-'}", flush=True)
+            self._json({"ok": True, "expression": name or "neutral", "clip": c, "gesture": g})
+            return
+        if path == "/brain":
+            # dry run: what the model would say/show/do for a sentence (nothing is sent to the robot)
+            text = str(data.get("text") or "").strip()
+            if not text:
+                self._json({"ok": False, "error": "text"}, 400)
+                return
+            d = VOICE.think(text)
+            if d is None:
+                self._json({"ok": False, "error": "model call failed", "ms": VOICE.last_chat_ms}, 502)
+                return
+            plan = brain.build_plan(d["actions"], d["expression"], d["expression_end"], _on_charger()) if d["actions"] else None
+            self._json({"ok": True, "ms": VOICE.last_chat_ms, "searched": VOICE.last_searched, "decision": d, "plan": plan})
             return
         if path == "/say":
             text = str(data.get("text") or "")
@@ -1454,7 +1606,13 @@ unsure (hard budget below). You can also just tell Vector "my name is ..." / "ic
 <div class="row" id="seen"></div>
 <div class="row" id="budget"></div>
 <pre id="out"></pre><div id="list"></div>
+<h2>expressions</h2><p>Preview Vector's face expressions (eyes only; tick the box for the small head gesture, never wheels).</p>
+<label><input type="checkbox" id="gest"> with head gesture</label><div class="row" id="expr"></div>
 <script>
+fetch('/expressions').then(r=>r.json()).then(j=>{const d=document.getElementById('expr');
+ for(const [n,e] of Object.entries(j.expressions)){const b=document.createElement('button');b.textContent=n;b.title=e.use;
+  b.style.margin='2px';b.onclick=()=>fetch('/expression',{method:'POST',headers:{'Content-Type':'application/json'},
+  body:JSON.stringify({name:n,gesture:document.getElementById('gest').checked})});d.appendChild(b);}});
 function tick(){document.getElementById('live').src='/frame?kind=face&t='+Date.now();
  fetch('/status').then(r=>r.json()).then(j=>{const p=j.person||{};const s=j.session||{};
   document.getElementById('sess').textContent='voice session: '+(s.state||'?').toUpperCase()+' for '+s.for_s+'s'+
@@ -1487,6 +1645,39 @@ list();
 """
 
 
+SESSION_FILE = os.environ.get("HUB_SESSION_FILE") or "/app/data/session.json"
+SESSION_RESTORE_S = float(os.environ.get("HUB_SESSION_RESTORE_S", "900") or 0)
+
+
+def session_restore() -> bool:
+    """A hub restart (deploy) within HUB_SESSION_RESTORE_S of an awake session
+    comes back awake, so a rebuild never puts Vector to sleep mid-use."""
+    if not SESSION.enabled or SESSION_RESTORE_S <= 0:
+        return False
+    try:
+        d = json.load(open(SESSION_FILE))
+    except (OSError, ValueError):
+        return False
+    if d.get("state") == "awake" and 0 <= time.time() - float(d.get("t") or 0) < SESSION_RESTORE_S:
+        return SESSION.wake("restored after hub restart")
+    return False
+
+
+def session_save_loop() -> None:
+    last = None
+    while True:
+        st = SESSION.state
+        if st != last or st == "awake":
+            try:
+                os.makedirs(os.path.dirname(SESSION_FILE), exist_ok=True)
+                with open(SESSION_FILE, "w") as f:
+                    json.dump({"state": st, "t": time.time()}, f)
+                last = st
+            except OSError:
+                pass
+        time.sleep(5)
+
+
 def main() -> None:
     if os.environ.get("OPENAI_API_KEY"):
         print("openai key present on hub only", flush=True)
@@ -1501,6 +1692,8 @@ def main() -> None:
     tcp_port = int(os.environ.get("HUB_SKILL_PORT", "7443"))
     http_port = int(os.environ.get("HUB_HTTP_PORT", "8080"))
     threading.Thread(target=voice_loop, daemon=True).start()
+    session_restore()
+    threading.Thread(target=session_save_loop, daemon=True).start()
     if SESSION.enabled:
         print(f"wake word on: asleep until 'Hey Vector', awake until 'Stop Vector'; "
               f"idle timeout {SESSION.idle_s or 'off'}", flush=True)

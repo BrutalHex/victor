@@ -7,7 +7,7 @@ BOOT := deploy/ble-bootstrap
 
 test: ## Go agent + hub unit tests
 	cd $(AGENT) && $(GO) test ./...
-	cd hub/app && python3 -m unittest test_phase3.py test_faces.py -v
+	cd hub/app && python3 -m unittest test_phase3.py test_faces.py test_brain.py -v
 
 agent-arm: ## Cross-compile victor-agent for the robot (ARMv7)
 	mkdir -p $(AGENT)/dist

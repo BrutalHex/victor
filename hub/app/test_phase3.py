@@ -13,6 +13,7 @@ import tempfile
 import unittest
 import zlib
 
+os.environ.setdefault("HUB_BRAIN", "0")  # legacy router + chat path here; test_brain.py covers the one-call path
 os.environ.setdefault("HUB_FACE_DB", os.path.join(tempfile.gettempdir(), "victor-faces-test.db"))
 os.environ.setdefault("HUB_FACE_LOCAL", "0")  # these tests cover the NVIDIA-only path; test_faces.py the local one
 os.environ.setdefault("HUB_NVIDIA_BUDGET_FILE", os.path.join(tempfile.mkdtemp(), "nv.json"))

@@ -189,9 +189,9 @@ _DEF: list[tuple[str, str, str, dict[str, list[str]]]] = [
         "fa": [r"صدا (?:رو |را )?(?:روی |رو )?(?P<n>\w+) (?:بذار|بزار|کن)"],
     }),
     ("intent_imperative_shutup", "works", "stops actions; shutup clip; no speech", {
-        "en": [r"shut up", r"be quiet", r"quiet", r"stop(?: it| that| talking| moving)?", r"hush", r"silence"],
-        "de": [r"(?:sei |seid )?(?:still|ruhig|leise)", r"halt (?:die klappe|den mund)", r"ruhe", r"stopp?", r"hör auf"],
-        "fa": [r"ساکت(?: شو| باش)?", r"بسه", r"وایسا", r"تمومش کن", r"خفه شو"],
+        "en": [r"shut up", r"be quiet", r"quiet", r"stop(?: it| that| talking| moving| now)?", r"halt", r"freeze", r"hush", r"silence"],
+        "de": [r"(?:sei |seid )?(?:still|ruhig|leise)", r"halt (?:die klappe|den mund)", r"ruhe", r"stopp?(?: jetzt| sofort)?", r"halt", r"hör auf"],
+        "fa": [r"ساکت(?: شو| باش)?", r"بسه", r"وایسا", r"وایستا", r"ایست", r"توقف(?: کن)?", r"تمومش کن", r"خفه شو"],
     }),
     ("intent_system_sleep", "works", "sleeping face until spoken to or 'wake up'", {
         "en": [r"(?:go to sleep|go to bed|sleep|time to sleep|take a nap|nap)"],

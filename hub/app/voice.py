@@ -701,7 +701,7 @@ class Voice:
         raw = self.api.post(path, json.dumps(payload).encode(), "application/json", timeout)
         return json.loads(raw.decode())
 
-    def _chat_web(self, text: str) -> tuple[str, bool]:
+    def _web_tool(self) -> dict:
         tz_name = hub_tz()[1]
         tool: dict = {"type": "web_search", "search_context_size": "low"}
         loc = {"type": "approximate", "timezone": tz_name}
@@ -710,6 +710,41 @@ class Voice:
         if os.environ.get("HUB_COUNTRY", "").strip():
             loc["country"] = os.environ["HUB_COUNTRY"].strip()
         tool["user_location"] = loc
+        return tool
+
+    def think(self, text: str) -> dict | None:
+        """One Responses call: reply + expression + plan (brain.py), with web
+        search. None on any error (the caller falls back to router + chat)."""
+        import brain
+        if not self.key or not text:
+            return None
+        t0 = time.monotonic()
+        self.last_searched = False
+        self.last_via = ""
+        tool = self._web_tool() if self.web_search else None
+        payload = brain.payload(self.search_model, system_prompt(), _history(), text, tool)
+        try:
+            data = self._post("https://api.openai.com/v1/responses", payload, self.search_timeout)
+            raw, self.last_searched = _responses_text(data)
+        except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, OSError, KeyError, TypeError) as exc:
+            _http_error("brain", exc)
+            self.last_chat_ms = int((time.monotonic() - t0) * 1000)
+            return None
+        d = brain.parse(raw)
+        self.last_chat_ms = int((time.monotonic() - t0) * 1000)
+        if d is None:
+            print(f"voice brain unparsable ms={self.last_chat_ms} raw={raw[:200]!r}", flush=True)
+            return None
+        full = speakable(d["reply"])
+        d["reply"] = short_reply(full)
+        if len(d["reply"]) < len(full):
+            print(f"voice reply cut {len(full)} -> {len(d['reply'])} chars", flush=True)
+        self.last_via = "brain"
+        print(f"voice brain searched={self.last_searched} ms={self.last_chat_ms} {brain.summary(d, None)}", flush=True)
+        return d
+
+    def _chat_web(self, text: str) -> tuple[str, bool]:
+        tool = self._web_tool()
         payload = {
             "model": self.search_model,
             "instructions": system_prompt(),

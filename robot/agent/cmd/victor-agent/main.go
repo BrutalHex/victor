@@ -232,6 +232,7 @@ func runDaemon() int {
 	actCh := make(chan string, 4)
 	go cmdLoop(lnk, ui, proc, actCh)
 	runner := &action.Runner{Log: func(l string) { fmt.Println(l) }}
+	action.ValidClip = func(c string) bool { return face.ClipLen(c) > 0 }
 	pet := &petting{ui: ui}
 	life := idle.New(time.Now().UnixNano())
 	var snd idle.SoundDetector
@@ -283,6 +284,15 @@ func runDaemon() int {
 				if btn.Feed(fr.Button, time.Now()) {
 					fmt.Printf("button press n=%d\n", btn.Presses)
 					status.Put("/data/victor/button.txt", fmt.Sprintf("presses=%d at=%s\n", btn.Presses, time.Now().Format(time.RFC3339)))
+					// the back button cancels a running voice plan / explore at once
+					if runner.Cancel("button") {
+						fmt.Printf("action %s cancelled: button\n", runner.Name())
+						status.Put("/data/victor/action.txt", runner.Name()+" cancelled: button\n")
+					}
+					if wand.Active() {
+						wand.Stop("button")
+						status.Put("/data/victor/wander.txt", "stopped: button\n")
+					}
 				}
 				lo, hi := body.LiftRange()
 				// CHARGE-LATCH button gesture: off unless charge-latch.enabled
@@ -382,10 +392,15 @@ func runDaemon() int {
 				if name == "explore" || name == "explore_stop" || strings.HasPrefix(name, "ssh_") {
 					break
 				}
-				if runner.Start(name, time.Now()) {
+				if name == "stop" && runner.Cancel("voice stop") {
+					fmt.Printf("action %s cancelled: voice stop\n", runner.Name())
+					status.Put("/data/victor/action.txt", runner.Name()+" cancelled: voice stop\n")
+					break
+				}
+				if runner.StartText(name, time.Now()) {
 					fmt.Printf("action %s start charger=%v veto=%s\n", name, vin.OnCharger, reason)
 					status.Put("/data/victor/action.txt", name+" start\n")
-				} else {
+				} else if name != "stop" {
 					fmt.Printf("action %q unknown\n", name)
 				}
 			default:

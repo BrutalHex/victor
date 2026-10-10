@@ -8,6 +8,7 @@ import tempfile
 import unittest
 
 _TMP = tempfile.mkdtemp()
+os.environ.setdefault("HUB_BRAIN", "0")  # legacy router + chat path here; test_brain.py covers the one-call path
 os.environ.setdefault("HUB_FACE_DB", os.path.join(_TMP, "faces.db"))
 os.environ.setdefault("HUB_NVIDIA_BUDGET_FILE", os.path.join(_TMP, "nv.json"))
 os.environ.setdefault("HUB_GREET_FILE", os.path.join(_TMP, "greet.json"))

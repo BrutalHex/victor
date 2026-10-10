@@ -63,7 +63,8 @@ type step struct {
 type Plan struct {
 	Name           string
 	Steps          []step
-	AllowOnCharger bool // wheels may turn on the charger (leave_charger only)
+	AllowOnCharger bool          // wheels may turn on the charger (leave_charger only)
+	Timeout        time.Duration // 0 = planTimeout
 }
 
 // Plans the hub may name. Anything else is ignored.
@@ -190,7 +191,11 @@ func (r *Runner) Tick(in In) Out {
 	if in.Abort {
 		return r.finish("aborted: veto")
 	}
-	if in.Now.Sub(r.started) > planTimeout {
+	limit := r.plan.Timeout
+	if limit <= 0 {
+		limit = planTimeout
+	}
+	if in.Now.Sub(r.started) > limit {
 		return r.finish("aborted: timeout")
 	}
 	if r.i >= len(r.plan.Steps) {

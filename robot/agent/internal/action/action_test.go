@@ -56,7 +56,7 @@ func newSim(t *testing.T) *sim {
 
 // run ticks at 20 ms; the wheels move 0.3 counts per tick per 1000 PWM.
 func (s *sim) run(name string, onCharger bool, ticks int, abortAt int, bumpAt int) {
-	s.r.Start(name, s.now)
+	s.r.StartText(name, s.now)
 	for i := 0; i < ticks; i++ {
 		in := In{Now: s.now, OnCharger: onCharger, Abort: abortAt >= 0 && i >= abortAt, EncL: s.l, EncR: s.rr, EncLift: s.lift}
 		in.ProxValid, in.ProxMM = s.prox > 0, s.prox
