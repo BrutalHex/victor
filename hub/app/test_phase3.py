@@ -1881,6 +1881,15 @@ class WakeRobust(unittest.TestCase):
         from session import Session
         self.assertIn("Hey Vector", lang.stt_prompt(["en", "de", "fa"], wake=True))
         self.assertNotIn("Hey Vector", lang.stt_prompt(["en", "de", "fa"]))
+        import voice
+        v = voice.Voice()
+        self.assertFalse(v.asleep_prompt)  # off: it made STT write "Hey Vector" for room noise
+        sent = []
+        v.key, v.noise = "k", 0.0
+        v.api.post = lambda path, body, ctype, t: sent.append(body) or b'{"text": "hi"}'
+        v.transcribe(voice.tone(300, 800), asleep=True)
+        self.assertNotIn(b"Hey Vector", sent[0])
+        self.assertIn(b"named Vector", sent[0])
         saved = (m.SESSION, m.VOICE.transcribe, m.VOICE.last_raw, m.cue_wake)
         try:
             m.SESSION = Session(enabled=True, idle_s=0)

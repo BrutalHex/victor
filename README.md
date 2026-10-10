@@ -118,7 +118,8 @@ face, so the only cost of background talk is one transcription call.
   down. The hub sends `session|awake` / `session|asleep` on every change and every 10 s.
 - Asleep the noise gate is looser (a quick, quiet "Hey Vector" from across the room is short and has little steady
   voicing): `HUB_ASLEEP_MIN_SNR` (3.5), `HUB_ASLEEP_MIN_VOICED` (4), `HUB_ASLEEP_MIN_FRAMES` (8). Asleep clips are
-  levelled up before STT and the STT prompt mentions "Hey Vector"; hub log lines `asleep WAKE|ignore|empty` show the
+  levelled up before STT (`HUB_ASLEEP_LEVEL=0` turns that off). `HUB_ASLEEP_PROMPT=1` adds "they say Hey Vector" to
+  the STT prompt; it is off because in a replay it made STT write "Hey Vector" for plain room noise. Hub log lines `asleep WAKE|ignore|empty` show the
   transcript and the gate numbers.
 - A garbled 1-2 word transcript while awake ("Mof Berlin.") gets "Sorry?" instead of a chat answer.
 - **Backpack button**: one press while asleep wakes him the same way (same cue). A press while awake gives the

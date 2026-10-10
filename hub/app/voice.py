@@ -480,6 +480,11 @@ class Voice:
         self.last_reject = ""
         self.robot_noise_frames = 0
         self.asleep = False  # main sets it: wake word on and the session closed
+        # Asleep STT tweaks. A "Hey Vector" line in the STT prompt made the model
+        # write "Hey Vector" for plain room noise (offline replay 10 Oct: 16 false
+        # wakes on 4 min of noise), so it is off by default.
+        self.asleep_prompt = _env_on("HUB_ASLEEP_PROMPT", "0")
+        self.asleep_level = _env_on("HUB_ASLEEP_LEVEL", "1")
         self.last_raw = ""
 
     def push(self, pcm: bytes, robot_noise: bool = False) -> bytes | None:
@@ -610,7 +615,7 @@ class Voice:
             self.last_drop = f"quiet rms={level} floor={floor:.0f}"
             print(f"voice drop {self.last_drop}", flush=True)
             return ""
-        if asleep:
+        if asleep and self.asleep_level:
             clip = level_for_stt(clip)
         text = self._stt(pcm, clip, self.stt_language, asleep)
         if not text:
@@ -640,7 +645,7 @@ class Voice:
         t0 = time.time()
         fields = {"model": self.stt_model, "language": language, "response_format": "json"}
         # name hint always (also on a pinned language): "Vector", not "Victor"
-        fields["prompt"] = langmod.stt_prompt(self.langs, wake=asleep)
+        fields["prompt"] = langmod.stt_prompt(self.langs, wake=asleep and self.asleep_prompt)
         body, ctype = multipart(fields, _wav_wrap(clip))
         connects = self.api.connects
         try:
