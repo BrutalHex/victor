@@ -273,9 +273,9 @@ _DEF: list[tuple[str, str, str, dict[str, list[str]]]] = [
         "fa": [r"(?:ssh|s s h|es es ha|اس ?اس ?اچ|اس ?اس ?اج) (?:رو |را )?(?:خاموش|غیرفعال|غیر فعال) (?:کن|بکن)", r"(?:ssh|s s h|es es ha|اس ?اس ?اچ|اس ?اس ?اج) (?:رو |را )?ببند"],
     }),
     ("intent_system_ssh_status", "works", "says whether SSH is on (and shows the SSH face)", {
-        "en": [r"is (?:the )?(?:ssh|s s h|es es ha|اس ?اس ?اچ|اس ?اس ?اج) (?:on|off|enabled|disabled|open|running|active)", r"(?:what is |what's )?(?:the )?(?:ssh|s s h|es es ha|اس ?اس ?اچ|اس ?اس ?اج) status",
+        "en": [r"is (?:the )?(?:ssh|s s h|es es ha|اس ?اس ?اچ|اس ?اس ?اج) (?:on|off|up|down|enabled|disabled|open|running|active|working|available)", r"(?:what is |what's )?(?:the )?(?:ssh|s s h|es es ha|اس ?اس ?اچ|اس ?اس ?اج) status",
                r"is (?:the )?(?:ssh|s s h|es es ha|اس ?اس ?اچ|اس ?اس ?اج) (?:switched|turned) (?:on|off)"],
-        "de": [r"ist (?:das )?(?:ssh|s s h|es es ha|اس ?اس ?اچ|اس ?اس ?اج) (?:an|aus|aktiv|eingeschaltet|ausgeschaltet|offen)", r"(?:ssh|s s h|es es ha|اس ?اس ?اچ|اس ?اس ?اج) status"],
+        "de": [r"ist (?:das )?(?:ssh|s s h|es es ha|اس ?اس ?اچ|اس ?اس ?اج) (?:an|aus|aktiv|eingeschaltet|ausgeschaltet|offen)", r"(?:ssh|s s h|es es ha|اس ?اس ?اچ|اس ?اس ?اج) status", r"läuft (?:das )?(?:ssh|s s h|es es ha)"],
         "fa": [r"(?:ssh|s s h|es es ha|اس ?اس ?اچ|اس ?اس ?اج) (?:روشنه|روشن است|روشن هست|خاموشه|خاموش است|فعاله|فعال است)", r"وضعیت (?:ssh|s s h|es es ha|اس ?اس ?اچ|اس ?اس ?اج)"],
     }),
     ("intent_explore_stop", "works", "ends a wander session (stop / shut up also do)", {

@@ -113,7 +113,7 @@ PROMPT = (
     "Examples: 'what do you think about dancing' -> chat. 'can you dance for me' -> intent_imperative_dance. "
     "'I turned left yesterday' -> chat. 'turn left' -> intent_imperative_turnleft. 'do you like taking photos' -> chat. "
     "'Wie spät ist es?' -> intent_clock_time. 'Ich habe gestern getanzt' -> chat. 'برقص' -> intent_imperative_dance. "
-    "'رقص دوست داری؟' -> chat. 'is SSH on?' / 'Ist SSH an?' -> intent_system_ssh_status. 'who am I' / 'do you know me' -> chat. Polite forms (please, could you, kannst du, "
+    "'رقص دوست داری؟' -> chat. 'is SSH on?' / 'is SSH up?' / 'Ist SSH an?' / 'Läuft SSH?' -> intent_system_ssh_status. 'who am I' / 'do you know me' -> chat. Polite forms (please, could you, kannst du, "
     "میشه) and filler words (by the way, eigentlich, mal, الان) do not change the decision. Questions a command answers "
     "(what time is it / Wie spät ist es eigentlich? / ساعت چنده, how old are you, how long is left on my timer) are commands.\n"
     "SSH may be transcribed as 'S S H', 'es es ha' or 'اس اس اچ'. Talking about SSH (opinions, how it works, "

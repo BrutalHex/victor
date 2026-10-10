@@ -1132,7 +1132,7 @@ class StockIntents(unittest.TestCase):
         m = self.m
         self._sensor(False)
         self._llm(None, 0.9, typ="chat")
-        for text in ("Vector, is SSH on?", "Vector, is SSH off?", "Vektor, ist SSH an?"):
+        for text in ("Vector, is SSH on?", "Vector, is SSH off?", "Vektor, ist SSH an?", "Vector, is SSH up?", "Vektor, läuft SSH?"):
             cmds = self.turn(text)
             self.assertEqual(self._acts(cmds), [b"ssh_status"], text)
         self.assertEqual(self.chats, [])
