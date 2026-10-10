@@ -50,7 +50,9 @@ MIN_UTTERANCE_BYTES = int(RATE * 0.4) * 2
 START_VOICED = int(os.environ.get("HUB_VAD_START_VOICED", "0"))  # voiced frames needed among the onset frames
 MIN_SPEECH_FRAMES = int(os.environ.get("HUB_VAD_MIN_SPEECH_FRAMES", "8"))  # 160 ms above threshold
 MIN_VOICED_RATIO = float(os.environ.get("HUB_VAD_VOICED_RATIO", "0.3"))
-MIN_VOICED_RUN = int(os.environ.get("HUB_VAD_VOICED_RUN", "7"))  # 140 ms of continuous voicing (a vowel)
+# 100 ms of continuous voicing. 7 (140 ms) dropped quick awake phrases from the laptop speaker
+# ("Hey Vector", "Stop Vector", "What time is it?": runs 5-6 at SNR 9-15, live 10 Oct 13:53-13:55).
+MIN_VOICED_RUN = int(os.environ.get("HUB_VAD_VOICED_RUN", "5"))
 MIN_SNR = float(os.environ.get("HUB_VAD_MIN_SNR", "6"))  # mean speech-frame rms / floor
 # Short, loud, mostly unvoiced words ("Stop.") have little voicing: allow them
 # when clearly loud. Noise turns peaked at SNR 17.6 with 3 voiced frames.
