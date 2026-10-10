@@ -28,6 +28,12 @@ def norm(text: str) -> str:
     return re.sub(r"\s+", " ", t).strip()
 
 
+# A bare name (no greeting) only wakes when it stands alone: "Vector, what
+# time is it?", "Vector!", "Vector". "Victor Hugo wrote..." (live TV test,
+# 10 Oct) runs straight into the next word and is not a wake.
+_BARE = re.compile(rf"^\W*(?:(?:oh|so|ok|okay|well|um|uh|خب)\W+)?{NAME}\s*(?:[,!.?،:;؛]|$)")
+
+
 def match_wake(text: str, bare: bool = True) -> tuple[bool, str]:
     """(hit, rest). Hits: the name opening the sentence after an optional
     greeting ("Vector, ...", "Hey Victor ...", "Hallo Vektor", "سلام وکتور"),
@@ -35,7 +41,7 @@ def match_wake(text: str, bare: bool = True) -> tuple[bool, str]:
     bare=False requires the greeting. rest = what followed (normalised)."""
     t = norm(text)
     m = _WAKE_START.match(t)
-    if m and (bare or m.group("greet")):
+    if m and (m.group("greet") or (bare and _BARE.match(unicodedata.normalize("NFC", text or "").lower()))):
         pass
     else:
         m = _WAKE_ANY.search(t)

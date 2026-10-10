@@ -1700,7 +1700,8 @@ class WakeSession(unittest.TestCase):
                   "هی وکتور", "سلام وکتور", "Hey Vector, what time is it?", "Vector, look at me", "Okay Vector"):
             self.assertTrue(wake.match_wake(t)[0], t)
         for t in ("The vector points north.", "Hey, what time is it?", "Victoria station is closed",
-                  "Hey Peter", "I like vectors", "Der Vektor zeigt nach oben", "سلام، ساعت چنده؟", ""):
+                  "Hey Peter", "I like vectors", "Der Vektor zeigt nach oben", "سلام، ساعت چنده؟", "",
+                  "Victor Hugo wrote Les Misérables in 1862.", "Viktor Orbán sagte heute", "ویکتور هوگو نویسنده است"):
             self.assertFalse(wake.match_wake(t)[0], t)
         self.assertFalse(wake.match_wake("Vector, look at me", bare=False)[0])
         self.assertEqual(wake.match_wake("Hey Victor, what time is it?")[1], "what time is it")
