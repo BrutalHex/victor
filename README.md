@@ -112,6 +112,9 @@ face, so the only cost of background talk is one transcription call.
   Cue: eyes look up at you (`lookatme`) plus a soft two-note chime (`HUB_WAKE_CHIME=0` mutes the chime).
   "Hey Vector, what time is it?" answers at once from the same transcript.
 - **Backpack button**: one press while asleep wakes him the same way (same cue). A press while awake is only logged.
+  The agent debounces the button (40 ms; a level stuck "pressed" gives one press, never a stream), logs
+  `button press n=N`, writes `/data/victor/button.txt`, and sends the running count in SENSOR; the hub logs
+  `button_press -> wake` and shows `session.button` in `/status`. A press never touches SSH (the latch is off).
 - Awake: every utterance runs the normal pipeline (commands, chat with web search, "what's my name?" face check,
   SSH by voice with its rules); the session's turns are kept as chat history and cleared when it ends.
 - Sleep: "Stop Vector" / "Vector, stop" / "Stop listening", "Vektor stopp" / "Hör auf zuzuhören", "وکتور بسه" /
