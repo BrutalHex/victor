@@ -12,6 +12,8 @@ cat /etc/victor-release 2>/dev/null || echo "FAIL: /etc/victor-release missing (
 chk "slot $(tr " " "\n" </proc/cmdline | sed -n s/^androidboot.slot_suffix=//p)" true
 chk "ssh.enabled=1" "grep -qx 1 /data/victor/ssh.enabled"
 chk "ble.disabled flag" "test -f /data/victor/ble.disabled"
+# SSH is toggled by voice only (owner request, 10 Oct 2026): the CHARGE-LATCH button gesture stays off
+chk "button gesture off (no charge-latch.enabled)" "test ! -e /data/victor/charge-latch.enabled"
 for u in ankibluetoothd vic-switchboard btproperty; do
   chk "$u masked/inactive" "! systemctl is-active -q $u.service"
 done

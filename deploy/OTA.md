@@ -43,10 +43,10 @@ no loop mount), then verifies the result before packing:
 
 | Requirement | How |
 |---|---|
-| SSH ON at first boot | SSH unit enabled + unmasked (`sshd.socket`, else `dropbear.service`/`.socket`, same order as the agent's `sshctl`). `victor-firstboot` writes `/data/victor/ssh.enabled=1` **only if missing**, so the CHARGE-LATCH state persists across reboots and later OTAs |
+| SSH ON at first boot | SSH unit enabled + unmasked (`sshd.socket`, else `dropbear.service`/`.socket`, same order as the agent's `sshctl`). `victor-firstboot` writes `/data/victor/ssh.enabled=1` **only if missing**, so the SSH state set by voice persists across reboots and later OTAs |
 | Your key | `keys/ssh_root_key.pub` (or `--pubkey`) into `/usr/share/victor/authorized_keys`, root's `~/.ssh/authorized_keys` (0600, root) and, at boot, any `AuthorizedKeysFile` on `/data`. Private keys are refused |
 | BLE off on the running image | `ankibluetoothd`, `btproperty`, `vic-switchboard`, `bluetooth` masked (`-> /dev/null`) in the image; `victor-ble-mask` also runs `rfkill block bluetooth` and writes `/data/victor/ble.disabled`. Recoveryfs is a different partition and keeps BLE |
-| CHARGE-LATCH + SSH watchdog | `/usr/bin/victor-agent` (enabled service). Agent owns the spine on first boot (`/data/victor/anki.masked`) so it can see the button and lift; `--no-own-spine` opts out. Watchdog: SSH off >= 24 h (persisted via the flag mtime) AND hub heartbeat missing 10 min AND on charger -> SSH on, face `SSH AUTO` |
+| Voice SSH toggle + SSH watchdog | `/usr/bin/victor-agent` (enabled service) runs the hub's `ssh_on` / `ssh_off` / `ssh_status` voice actions (owner's request, 10 Oct 2026; the CHARGE-LATCH button gesture is off unless `/data/victor/charge-latch.enabled` exists). Agent owns the spine on first boot (`/data/victor/anki.masked`); `--no-own-spine` opts out. Watchdog: SSH off >= 24 h (persisted via the flag mtime) AND hub heartbeat missing 10 min AND on charger -> SSH on, face `SSH AUTO` |
 | Hub hostname | `/data/victor/hub.env` seeded with `HUB_HOST=robot.mohammadabbasi.com`; `--hub-ip IP` also writes the managed `/etc/hosts` block. Existing `hub.env` is kept |
 | `/data` rw,exec | `/etc/fstab` `/data` line rewritten to `rw,exec`; firstboot also remounts |
 | No OpenAI key | Build fails if your `.env` `OPENAI_API_KEY` (or any `OPENAI_API_KEY=value` / `sk-proj-` key) is anywhere in the system image; firstboot strips `OPENAI*` lines from `hub.env` |
@@ -146,17 +146,17 @@ Back to the previous slot (no BLE needed while SSH works):
 ./deploy/prove-phase0.sh
 ```
 
-Then on the charger do CHARGE-LATCH (double-click, lift up >= 400 ms, lift down,
-triple-click): face shows `SSH OFF`, port 22 closes, telemetry keeps flowing.
-Repeat to turn SSH back on.
+Then say "Vector, disable SSH": Vector says "SSH is off", the face shows `SSH OFF`,
+port 22 closes, telemetry keeps flowing. "Vector, enable SSH" turns it back on
+("Is SSH on?" asks). German and Persian work too (README "First flash and SSH").
 
 ## Rollback / unbrick
 
 - Recovery is never overwritten. Hold the button ~15 s on the charger -> recovery
   (BLE works there) -> `first-flash ... --ota-file dist/rollback.ota` (or a
   previous good `victor.ota`).
-- SSH locked out but robot boots: CHARGE-LATCH on the charger, or wait for the
-  watchdog (24 h off + hub silent 10 min + on charger -> `SSH AUTO`).
+- SSH locked out but robot boots: say "Vector, enable SSH" (the hub must be up),
+  or wait for the watchdog (24 h off + hub silent 10 min + on charger -> `SSH AUTO`).
 - Give the body back to stock Anki: `./deploy/restore-anki.sh` (the flag stays removed across reboots).
 
 ## Image recognition

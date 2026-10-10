@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -177,6 +178,7 @@ func runDaemon() int {
 	if err := ssh.Apply(); err != nil {
 		fmt.Fprintf(os.Stderr, "ssh apply: %v\n", err)
 	}
+	sshOn.Store(ssh.Enabled())
 	if blemask.Disabled() {
 		_ = blemask.Apply()
 	}
@@ -273,8 +275,12 @@ func runDaemon() int {
 					}
 				}
 				lo, hi := body.LiftRange()
-				if m.Feed(latch.Sample{T: time.Since(start), Button: fr.Button, OnCharger: fr.OnCharger(), Driving: fr.Driving(), LiftNorm: fr.LiftNorm(lo, hi)}) == latch.ToggleSSH {
+				// CHARGE-LATCH button gesture: off unless charge-latch.enabled
+				// exists (SSH is voice-only since 10 Oct 2026; the button reads
+				// "pressed" on every frame here). Code kept, not fed.
+				if buttonLatch(m, latch.Sample{T: time.Since(start), Button: fr.Button, OnCharger: fr.OnCharger(), Driving: fr.Driving(), LiftNorm: fr.LiftNorm(lo, hi)}, sshctl.LatchEnabled()) {
 					on, err := ssh.Toggle()
+					sshOn.Store(on)
 					fmt.Printf("CHARGE-LATCH ssh.enabled=%v err=%v\n", on, err)
 					showFaceUI(on, false, ui)
 					body.SetSSHLED(on)
@@ -353,6 +359,8 @@ func runDaemon() int {
 						status.Put("/data/victor/wander.txt", "start\n")
 					}
 					break
+				case "ssh_on", "ssh_off", "ssh_status":
+					go voiceSSH(name, ssh, body, ui, status)
 				case "explore_stop", "stop":
 					if wand.Active() {
 						wand.Stop("voice " + name)
@@ -360,7 +368,7 @@ func runDaemon() int {
 						status.Put("/data/victor/wander.txt", "stopped: voice\n")
 					}
 				}
-				if name == "explore" || name == "explore_stop" {
+				if name == "explore" || name == "explore_stop" || strings.HasPrefix(name, "ssh_") {
 					break
 				}
 				if runner.Start(name, time.Now()) {
@@ -516,6 +524,9 @@ func runDaemon() int {
 			if wand.Active() {
 				s.Flags |= vct1.FlagWandering
 			}
+			if sshOn.Load() {
+				s.Flags |= vct1.FlagSSHOn
+			}
 			lnk.QueueMedia(hub.SendSensor(s))
 			if gotSpine {
 				status.Put("/data/victor/spine.ok", "1\n")
@@ -658,6 +669,7 @@ func watchdog(ssh *sshctl.Controller, hub *telem.Hub, body *spine.Body, ui *uiSt
 		}
 		if sshctl.WatchdogDue(offFor, hub.HeartbeatMissing(10*time.Minute), onCharger) {
 			_ = ssh.Set(true)
+			sshOn.Store(true)
 			showFaceUI(true, true, ui)
 			if body != nil {
 				body.SetSSHLED(true)
@@ -878,6 +890,42 @@ func cmdLoop(lnk *link.Client, ui *uiState, proc *audio.Processor, actCh chan<- 
 }
 
 func showFace(sshOn, auto bool) { showFaceUI(sshOn, auto, nil) }
+
+// sshOn mirrors ssh.enabled for the sensor flag (no file read per tick).
+var sshOn atomic.Bool
+
+// buttonLatch feeds the CHARGE-LATCH FSM only when the gesture is re-armed.
+// Disabled (default), the button never reaches the FSM and never toggles SSH.
+func buttonLatch(m *latch.Machine, s latch.Sample, enabled bool) bool {
+	if !enabled {
+		return false
+	}
+	return m.Feed(s) == latch.ToggleSSH
+}
+
+// voiceSSH runs a hub voice action: ssh_on / ssh_off set ssh.enabled and
+// start/stop the listener via sshctl (the same Set the latch used: never
+// touches victor-agent or the hub sockets; persists across reboot);
+// ssh_status only reports. Result -> sensor FlagSSHOn, face, LED, status file.
+func voiceSSH(name string, ssh *sshctl.Controller, body *spine.Body, ui *uiState, status *statusfile.Writer) {
+	on, statusOnly, ok := sshctl.VoiceAction(name)
+	if !ok {
+		return
+	}
+	var err error
+	if !statusOnly {
+		err = ssh.Set(on)
+	}
+	en := ssh.Enabled()
+	sshOn.Store(en)
+	act := ssh.Active()
+	fmt.Printf("voice %s ssh.enabled=%v listener=%v err=%v\n", name, en, act, err)
+	status.Put("/data/victor/ssh-voice.txt", fmt.Sprintf("%s enabled=%v listener=%v err=%v\n", name, en, act, err))
+	showFaceUI(en, false, ui)
+	if body != nil {
+		body.SetSSHLED(en)
+	}
+}
 
 func showFaceUI(sshOn, auto bool, ui *uiState) {
 	text := "SSH OFF"

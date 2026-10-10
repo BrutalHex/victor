@@ -1080,6 +1080,95 @@ class StockIntents(unittest.TestCase):
         self.m.run_turn(b"\x00" * 100)
         return self.m.pop_cmds()
 
+    # ---- SSH by voice (owner's request 10 Oct 2026: voice only, no face check)
+    def _sensor(self, ssh_on):
+        with self.m.LOCK:
+            self.m.STATE["last_sensor"] = {"on_charger": True, "ssh_on": ssh_on, "cliffs": [300] * 4}
+
+    def _llm(self, intent, conf, typ="command"):
+        import router
+        saved = (router.classify, self.m.VOICE.key)
+        d = {"type": typ, "intent": intent, "args": {"duration": None, "level": None, "name": None}, "confidence": conf}
+        router.classify = lambda api, text: (d, 5)
+        self.m.VOICE.key = "k"
+        self.addCleanup(lambda: (setattr(router, "classify", saved[0]), setattr(self.m.VOICE, "key", saved[1])))
+
+    def _acts(self, cmds):
+        return [p for k, p in cmds if k == self.m.CMD_ACTION]
+
+    def test_ssh_enable_three_languages(self):
+        m = self.m
+        self._sensor(True)
+        for text, reply in (("Vector, enable SSH", "SSH is on."), ("Vektor, SSH an", "SSH ist an."),
+                            ("Schalte SSH ein", "SSH ist an."), ("اس اس اچ رو روشن کن", "اس اس اچ روشنه."),
+                            ("Hey Vector, turn on SSH", "SSH is on.")):
+            cmds = self.turn(text)
+            self.assertEqual(self._acts(cmds), [b"ssh_on"], text)
+            self.assertEqual(m.STATE["last_reply"], reply, text)
+        self.assertEqual(self.chats, [])
+        self.assertEqual(self.posts, [])  # no face check
+
+    def test_ssh_disable_exact_phrases_three_languages(self):
+        m = self.m
+        self._sensor(False)
+        for text, reply in (("Vector, disable SSH", "SSH is off."), ("turn off SSH", "SSH is off."),
+                            ("Vektor, SSH aus", "SSH ist aus."), ("mach das SSH aus", "SSH ist aus."),
+                            ("اس اس اچ رو خاموش کن", "اس اس اچ خاموشه.")):
+            cmds = self.turn(text)
+            self.assertEqual(self._acts(cmds), [b"ssh_off"], text)
+            self.assertEqual(m.STATE["last_reply"], reply, text)
+
+    def test_ssh_status(self):
+        m = self.m
+        for on, text, reply in ((True, "Is SSH on?", "SSH is on."), (False, "Ist SSH an?", "SSH ist aus."),
+                                (True, "وضعیت اس اس اچ", "اس اس اچ روشنه.")):
+            self._sensor(on)
+            cmds = self.turn(text)
+            self.assertEqual(self._acts(cmds), [b"ssh_status"], text)
+            self.assertEqual(m.STATE["last_reply"], reply, text)
+
+    def test_ssh_ambiguous_sentence_never_disables(self):
+        m = self.m
+        self._sensor(True)
+        self._llm("intent_system_ssh_disable", 0.95)  # even a confident router
+        cmds = self.turn("I think SSH is off by default on most robots")
+        self.assertNotIn(b"ssh_off", self._acts(cmds))
+        self.assertEqual(m.STATE["last_reply"], "Did you want me to turn SSH off? Say yes.")
+        self._llm(None, 0.9, typ="chat")
+        cmds = self.turn("no")
+        self.assertNotIn(b"ssh_off", self._acts(cmds))
+        cmds = self.turn("yes")  # the question was already answered: no late yes
+        self.assertNotIn(b"ssh_off", self._acts(cmds))
+
+    def test_ssh_off_confirmation_flow(self):
+        m = self.m
+        self._sensor(False)
+        self._llm("intent_system_ssh_disable", 0.8)  # explicit words, but below 0.85
+        cmds = self.turn("hmm I would like you to turn the SSH off now")
+        self.assertEqual(self._acts(cmds), [])
+        self.assertIn("SSH off", m.STATE["last_reply"])
+        cmds = self.turn("Yes.")
+        self.assertEqual(self._acts(cmds), [b"ssh_off"])
+        self.assertEqual(m.STATE["last_reply"], "SSH is off.")
+        # a yes after the window does nothing
+        self._llm("intent_system_ssh_disable", 0.5)
+        self.turn("maybe switch SSH off later")
+        m.SSH_CONFIRM["until"] = time.time() - 1
+        self._llm(None, 0.9, typ="chat")
+        self.assertEqual(self._acts(self.turn("yes")), [])
+        # confident + explicit: no question needed
+        self._llm("intent_system_ssh_disable", 0.9)
+        self.assertEqual(self._acts(self.turn("hmm I would like you to turn the SSH off now")), [b"ssh_off"])
+
+    def test_ssh_robot_not_confirming_says_so(self):
+        m = self.m
+        old = m.SSH_WAIT_S
+        m.SSH_WAIT_S = 0.6
+        self.addCleanup(lambda: setattr(m, "SSH_WAIT_S", old))
+        self._sensor(True)  # robot keeps reporting ON
+        self.turn("Vector, disable SSH")
+        self.assertEqual(m.STATE["last_reply"], "I couldn't change SSH.")
+
     def test_action_sent_after_reply_no_chat_no_face_call(self):
         m = self.m
         cmds = self.turn("Look at me")

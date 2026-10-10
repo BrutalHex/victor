@@ -24,7 +24,17 @@ The robot reaches the development machine as `robot.mohammadabbasi.com`, resolve
 
 BLE is used **once**: pair on the charger, push Wi-Fi, start the first OTA (`deploy/ble-bootstrap`). After SSH answers, BLE is disabled on the running image.
 
-Later debug access is **CHARGE-LATCH** (robot on charger: double-click button, raise and lower the lift, triple-click). That toggles port 22. Face shows `SSH ON` / `SSH OFF`. Hub telemetry stays up while SSH is closed.
+Later debug access is **by voice** (changed at the owner's request on 10 Oct 2026; no face check, it does not matter whether Vector sees you):
+
+| | English | German | Persian |
+|---|---|---|---|
+| on | "Vector, enable SSH" / "turn on SSH" / "SSH on" | "SSH an" / "schalte SSH ein" / "aktiviere SSH" | "اس اس اچ رو روشن کن" |
+| off | "Vector, disable SSH" / "turn off SSH" / "SSH off" | "SSH aus" / "mach SSH aus" / "deaktiviere SSH" | "اس اس اچ رو خاموش کن" |
+| status | "Is SSH on?" / "SSH status" | "Ist SSH an?" | "وضعیت اس اس اچ" |
+
+Vector answers "SSH is on" / "SSH is off" (in your language) once the robot confirms it, and the face shows `SSH ON` / `SSH OFF` for 1.5 s. Turning SSH **off** needs one of the exact phrases, or the OpenAI router at >= 0.85 with "SSH" and an off verb in the sentence; anything less and Vector asks "Did you want me to turn SSH off?" and only a "yes" within ~10 s does it, so a misheard sentence can't lock you out. Hub telemetry stays up while SSH is closed. The agent sets `/data/victor/ssh.enabled` and starts/stops `sshd.socket` (or `dropbear`); the state persists across reboots.
+
+The old CHARGE-LATCH button gesture is off (this body reports the backpack button as pressed on every frame); `touch /data/victor/charge-latch.enabled` re-arms it. Safety net unchanged: SSH off >= 24 h AND hub heartbeat missing 10 min AND on the charger -> SSH turns itself on (face `SSH AUTO`).
 
 ## Edge model
 
@@ -65,7 +75,7 @@ make release       # build victor.ota + rollback.ota from the robot, flash via r
 make help          # all targets
 ```
 
-First boot leaves SSH on so `ble-bootstrap` can finish. After that, CHARGE-LATCH owns port 22.
+First boot leaves SSH on so `ble-bootstrap` can finish. After that, voice owns port 22 (see "First flash and SSH").
 
 Operator HTTP: `http://robot.mohammadabbasi.com:8080/status`, `/faces`, `/ui`. OpenAI key stays in `.env` on the hub.
 
@@ -113,13 +123,13 @@ shows the last one under `last_intent`. Set `HUB_INTENTS=0` in `.env` to switch 
 
 Stroke Vector's back: after ~0.4 s the eyes go to happy squints, growing to the "^ ^" bliss face the
 longer you pet, with a soft purr when the speaker is free. Letting go plays the "get out" face. The
-agent writes the live sensor to `/data/victor/touch.txt`. Touch never reaches the charge latch.
+agent writes the live sensor to `/data/victor/touch.txt`. Touch never toggles SSH.
 
 ## Idle life
 
 While nothing else is going on (no turn, action, petting or veto), the agent glances its eyes around every
 5-12 s, sometimes nudges its head up or down, and glances (eyes + head up) toward a sudden sound. Head only:
-no wheels, no lift (the lift is part of the SSH latch gesture). `touch /data/victor/idle-life.disabled`
+no wheels, no lift (the lift was part of the old SSH latch gesture). `touch /data/victor/idle-life.disabled`
 on the robot turns it off. Idle life pauses while a wander session runs.
 
 ## Autonomous wander

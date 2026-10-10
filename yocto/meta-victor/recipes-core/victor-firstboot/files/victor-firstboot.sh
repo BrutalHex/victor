@@ -4,7 +4,7 @@
 #
 # First boot of our OTA: SSH ON so ble-bootstrap can finish, BLE masked,
 # /data rw,exec, hub hostname robot.mohammadabbasi.com. After that the files
-# in /data/victor are the source of truth (CHARGE-LATCH owns ssh.enabled), so
+# in /data/victor are the source of truth (voice SSH toggle owns ssh.enabled), so
 # nothing here overwrites an existing flag.
 # No OpenAI key ever lives on the robot.
 D=/data/victor
@@ -21,7 +21,7 @@ done
 mount -o remount,rw,exec /data 2>/dev/null || true
 mkdir -p "$D"
 
-# SSH ON on first boot; latch state persists afterwards.
+# SSH ON on first boot; voice-set state persists afterwards.
 [ -f "$D/ssh.enabled" ] || echo 1 > "$D/ssh.enabled"
 # Running image never advertises BLE (recoveryfs keeps it for unbrick).
 [ -f "$D/ble.disabled" ] || echo 1 > "$D/ble.disabled"

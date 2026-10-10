@@ -111,7 +111,7 @@ isfile /usr/bin/victor-agent 755
 cmp -s <(d "cat /usr/bin/victor-agent") "${ROOT}/robot/agent/dist/victor-agent" || fail "agent binary differs"
 [[ "$(d 'cat /usr/bin/victor-agent' | od -An -tx1 -j18 -N2 | tr -d ' \n')" == 2800 ]] || fail "agent not ARM"
 for f in victor-set-hub-ip victor-firstboot victor-ble-mask; do isfile "/usr/bin/$f" 755; done
-pass "agent (CHARGE-LATCH + SSH watchdog) + scripts installed, root:root 0755"
+pass "agent (voice SSH toggle + SSH watchdog) + scripts installed, root:root 0755"
 
 for u in victor-agent victor-firstboot victor-ble-mask; do
   isfile "/lib/systemd/system/$u.service" 644
@@ -148,7 +148,8 @@ pass "boot-successful (A/B mark_successful) no longer requires the masked ankibl
 [[ -n "$(st /lib/systemd/system/mm-anki-camera.service)" ]] || fail "camera unit removed"
 [[ "$(linkof /etc/systemd/system/mm-anki-camera.service)" != /dev/null ]] || fail "camera unit masked"
 grep -q 'camera units untouched (mm-anki-camera.service)' "$T/build.log" || fail "packer did not check camera units"
-LC_ALL=C grep -aq '/dev/video0' <(d 'cat /usr/bin/victor-agent') || fail "agent lacks V4L2 camera path"
+# the agent reads frames via the Anki camera daemon socket (not V4L2) since the ION-buffer camera path
+LC_ALL=C grep -aq '/var/run/mm-anki-camera/camera-server' <(d 'cat /usr/bin/victor-agent') || fail "agent lacks the mm-anki-camera client path"
 LC_ALL=C grep -aq 'internal/camera' <(d 'cat /usr/bin/victor-agent') || fail "agent lacks camera package"
 d 'cat /usr/share/victor/hub.env.default' | grep -qx 'HUB_GRPC_PORT=7443' || fail "hub media port"
 pass "image recognition (robot side): camera unit kept, agent has camera + VCT1 VIDEO, hub endpoint set"
@@ -254,16 +255,16 @@ grep -qx 'HUB_HOST=robot.mohammadabbasi.com' "$V/hub.env" || fail "hub.env"
 grep -Eq '^192\.168\.0\.202 +robot\.mohammadabbasi\.com hub$' "$FB/etc/hosts" || fail "firstboot hosts"
 [[ "$(cat "$FB/data/ssh/authorized_keys")" == "$K" ]] || fail "AuthorizedKeysFile on /data"
 [[ "$(cat "$FB/home/root/.ssh/authorized_keys")" == "$K" ]] || fail "home authorized_keys"
-# second boot: CHARGE-LATCH turned SSH off, operator restored Anki, someone put a key in hub.env
+# second boot: voice turned SSH off, operator restored Anki, someone put a key in hub.env
 echo 0 > "$V/ssh.enabled"
 rm -f "$V/anki.masked"
 echo "OPENAI_API_KEY=$FAKE_KEY" >> "$V/hub.env"
 VICTOR_DATA_WAIT=0 sh "$FB/firstboot" || fail "firstboot exit (2nd)"
-[[ "$(cat "$V/ssh.enabled")" == 0 ]] || fail "latch state did not persist across reboot"
+[[ "$(cat "$V/ssh.enabled")" == 0 ]] || fail "SSH off state did not persist across reboot"
 [[ ! -f "$V/anki.masked" ]] || fail "anki.masked re-created after restore-anki"
 grep -q OPENAI "$V/hub.env" && fail "OpenAI key left in hub.env"
 [[ "$(grep -c . "$FB/data/ssh/authorized_keys")" == 1 ]] || fail "authorized_keys duplicated"
-pass "firstboot: SSH ON once, latch persists across reboot, hosts/hub.env/keys seeded, OpenAI stripped"
+pass "firstboot: SSH ON once, SSH state persists across reboot, hosts/hub.env/keys seeded, OpenAI stripped"
 
 echo
 echo "OTA packer test passed ($(wc -c < "$OTA") byte dummy .ota; nothing flashed)."

@@ -12,7 +12,7 @@ Vendor kernel + our rootfs + `victor-agent`. Do not flash Ubuntu onto the APQ800
 
 ## First boot of our OTA
 
-- SSH ON (`/data/victor/ssh.enabled=1`, seeded only if missing so CHARGE-LATCH state persists) so `ble-bootstrap` can finish
+- SSH ON (`/data/victor/ssh.enabled=1`, seeded only if missing so the voice-set SSH state persists) so `ble-bootstrap` can finish
 - BLE units masked (`victor-ble-mask`)
 - `/data` mounted `rw,exec`
 - `hub.env` defaults to `HUB_HOST=robot.mohammadabbasi.com`

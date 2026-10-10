@@ -182,6 +182,8 @@ const (
 	FlagExploreEnabled uint16 = 1 << 4
 	// FlagWandering: an autonomous wander session is running.
 	FlagWandering uint16 = 1 << 5
+	// FlagSSHOn: ssh.enabled is on (voice "is SSH on?" and the voice toggle's confirmation).
+	FlagSSHOn uint16 = 1 << 6
 )
 
 // AudioPacket is 16 kHz s16le mono. 20 ms = 320 samples = 640 bytes.

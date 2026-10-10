@@ -293,7 +293,15 @@ def reply_turn(pcm: bytes) -> tuple[str, str, bytes]:
     VOICE.last_via = ""
     t_r = time.time()
     intent, how = (None, "off")
-    if text and INTENTS_ON and is_identity_question(text):
+    confirm = SSH_CONFIRM["until"] > time.time()
+    if text:
+        SSH_CONFIRM["until"] = 0.0  # one answer only (an empty/noise turn keeps the window)
+    if text and INTENTS_ON and confirm and intents_mod.is_yes(text):
+        # the spoken yes to "Did you want me to turn SSH off?"
+        intent, how = intents_mod.Intent(name="intent_system_ssh_disable", lang=SSH_CONFIRM["lang"], arg="confirmed",
+                                         text=intents_mod.normalise(text)), "confirm"
+        print(f"ssh off confirmed by {text!r}", flush=True)
+    elif text and INTENTS_ON and is_identity_question(text):
         intent, how = router.fast(text), "identity"  # face path; no router call
     elif text and INTENTS_ON:
         intent, how = router.route(VOICE.api, text, getattr(VOICE, "last_lang", ""), bool(VOICE.key))
@@ -455,6 +463,46 @@ def _lang(intent) -> str:
     return lang if lang in ("en", "de", "fa") else intent.lang
 
 
+# ------------------------------------------------------------ SSH by voice
+# Owner's request (10 Oct 2026): SSH on the robot is toggled by voice only, no face
+# check. Turning it OFF needs an exact phrase ("disable SSH", "SSH aus", ...) or the
+# router >= 0.85 with SSH + an off verb in the transcript; anything else makes Vector
+# ask "Did you want me to turn SSH off?" and only a yes within SSH_CONFIRM_S does it.
+SSH_CONFIRM_S = 14.0  # ~2 s of the question being spoken + ~10 s to answer
+SSH_CONFIRM = {"until": 0.0, "lang": "en"}
+SSH_DISABLE_MIN_CONF = 0.85
+SSH_WAIT_S = 4.0
+
+
+def ssh_disable_ok(norm_text: str, raw_text: str = "") -> bool:
+    text = raw_text or norm_text
+    exact = intents_mod.match(text)
+    if exact is not None and exact.name == "intent_system_ssh_disable":
+        return True
+    return (router.LAST.get("how") == "llm" and float(router.LAST.get("conf") or 0) >= SSH_DISABLE_MIN_CONF
+            and intents_mod.ssh_off_explicit(text))
+
+
+def _ssh_set(on: bool, lang: str) -> str:
+    """Ask the agent to switch SSH, wait for its sensor flag to agree, say the result."""
+    queue_cmd(CMD_ACTION, b"ssh_on" if on else b"ssh_off")
+    print(f"ssh voice -> {'on' if on else 'off'}", flush=True)
+    deadline = time.time() + SSH_WAIT_S
+    time.sleep(0.4)  # let the agent apply it before trusting a flag that already matches
+    while time.time() < deadline:
+        with LOCK:
+            sens = STATE.get("last_sensor") or {}
+        if sens and bool(sens.get("ssh_on")) == on:
+            return I_say("ssh_on" if on else "ssh_off", lang)
+        time.sleep(0.1)
+    print("ssh voice: robot did not confirm", flush=True)
+    return I_say("ssh_fail", lang)
+
+
+def I_say(key: str, lang: str) -> str:
+    return intents_mod.say(key, lang)
+
+
 def run_intent(intent) -> str:
     """Execute one stock command. Returns the spoken reply ("" = stock had none);
     face clip / action go to TURN_OUT. Robot motion is only ever a named action
@@ -485,6 +533,20 @@ def run_intent(intent) -> str:
             reply = I.say("explore_off", lang)
         else:
             action, reply = "explore", I.say("explore", lang)
+    elif n == "intent_system_ssh_enable":
+        reply = _ssh_set(True, lang)
+    elif n == "intent_system_ssh_disable":
+        if intent.arg == "confirmed" or ssh_disable_ok(intent.text or "", getattr(intent, "raw", "")):
+            reply = _ssh_set(False, lang)
+        else:
+            SSH_CONFIRM.update(until=time.time() + SSH_CONFIRM_S, lang=lang)
+            reply = I.say("ssh_confirm", lang)
+            print(f"ssh off needs a yes (router conf={router.LAST.get('conf')} how={router.LAST.get('how')})", flush=True)
+    elif n == "intent_system_ssh_status":
+        with LOCK:
+            sens = STATE.get("last_sensor")
+        queue_cmd(CMD_ACTION, b"ssh_status")  # robot shows SSH ON / SSH OFF for 1.5 s
+        reply = I.say("ssh_unknown", lang) if not sens else I.say("ssh_on" if sens.get("ssh_on") else "ssh_off", lang)
     elif n == "intent_explore_stop":
         action, reply = "explore_stop", I.say("explore_stop", lang)
     elif n == "intent_imperative_shutup":

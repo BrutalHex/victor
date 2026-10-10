@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -37,7 +38,7 @@ func (c *Controller) Enabled() bool {
 }
 
 func (c *Controller) Set(on bool) error {
-	if err := os.MkdirAll("/data/victor", 0755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(c.Flag), 0755); err != nil {
 		return err
 	}
 	val := "0"
@@ -106,6 +107,41 @@ func (c *Controller) Apply() error {
 		return run("systemctl", "stop", c.Dropbear)
 	}
 	return fmt.Errorf("no sshd.socket or dropbear.service")
+}
+
+// Active reports whether the SSH listener unit is actually running
+// (sshd.socket listening, or dropbear.service active).
+func (c *Controller) Active() bool {
+	for _, u := range []string{c.Socket, c.Dropbear} {
+		if unitExists(u) {
+			return exec.Command("systemctl", "is-active", "--quiet", u).Run() == nil
+		}
+	}
+	return false
+}
+
+// LatchFlag re-arms the old CHARGE-LATCH button gesture. Default absent = off:
+// since 10 Oct 2026 SSH is toggled by voice only (owner's request); the button
+// field reads "pressed" on every frame on this robot, so it must not toggle.
+var LatchFlag = "/data/victor/charge-latch.enabled"
+
+func LatchEnabled() bool {
+	_, err := os.Stat(LatchFlag)
+	return err == nil
+}
+
+// VoiceAction maps hub action names to the requested SSH state.
+// ok=false: not an SSH action. status=true: report only, change nothing.
+func VoiceAction(name string) (on, status, ok bool) {
+	switch name {
+	case "ssh_on":
+		return true, false, true
+	case "ssh_off":
+		return false, false, true
+	case "ssh_status":
+		return false, true, true
+	}
+	return false, false, false
 }
 
 func unitExists(name string) bool {

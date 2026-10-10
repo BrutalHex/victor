@@ -68,6 +68,9 @@ DESC = {
     "intent_play_keepaway": "play keepaway",
     "intent_play_popawheelie": "pop a wheelie",
     "intent_play_blackjack": "play blackjack",
+    "intent_system_ssh_enable": "turn the robot's SSH (remote login, port 22) on / enable SSH",
+    "intent_system_ssh_disable": "turn the robot's SSH off / disable SSH (ONLY an explicit request to switch it off now)",
+    "intent_system_ssh_status": "ask whether SSH is on or off",
     "intent_explore_stop": "stop exploring / stop wandering around",
     "intent_explore_start": "go explore / wander / drive around on your own",
     "intent_imperative_eyecolor": "change your eye colour",
@@ -113,6 +116,8 @@ PROMPT = (
     "'رقص دوست داری؟' -> chat. 'who am I' / 'do you know me' -> chat. Polite forms (please, could you, kannst du, "
     "میشه) and filler words (by the way, eigentlich, mal, الان) do not change the decision. Questions a command answers "
     "(what time is it / Wie spät ist es eigentlich? / ساعت چنده, how old are you, how long is left on my timer) are commands.\n"
+    "SSH may be transcribed as 'S S H', 'es es ha' or 'اس اس اچ'. Talking about SSH (opinions, how it works, "
+    "'SSH is off by default') is chat, not intent_system_ssh_disable.\n"
     "Fill args only for the commands that name them, else null. confidence = how sure you are (0..1).\n"
     "Commands:\n" + "\n".join(f"- {k}: {v}" for k, v in DESC.items())
 )
@@ -176,13 +181,18 @@ def classify(api, text: str) -> tuple[dict | None, int]:
     return d, int((time.monotonic() - t0) * 1000)
 
 
+LAST = {"conf": 0.0, "how": ""}  # last decision, for the SSH-off gate in main
+
+
 def route(api, text: str, lang: str, has_key: bool = True) -> tuple[I.Intent | None, str]:
     """-> (intent or None for chat, how) and logs the decision."""
+    LAST.update(conf=0.0, how="")
     if not text:
         return None, "empty"
     f = fast(text)
     if f is not None:
         print(f"router fast intent={f.name} text={text!r}", flush=True)
+        LAST.update(conf=1.0, how="fast")
         return f, "fast"
     if not ON or not has_key:
         m = I.match(text)
@@ -193,6 +203,10 @@ def route(api, text: str, lang: str, has_key: bool = True) -> tuple[I.Intent | N
         print(f"router fallback patterns intent={m.name if m else None} ms={ms}", flush=True)
         return m, "fallback"
     it = to_intent(d, text, lang)
+    try:
+        LAST.update(conf=float(d.get("confidence") or 0), how="llm")
+    except (TypeError, ValueError):
+        LAST.update(conf=0.0, how="llm")
     print(f"router llm type={d.get('type')} intent={d.get('intent')} args={json.dumps(d.get('args'), ensure_ascii=False)} "
           f"conf={d.get('confidence')} -> {it.name if it else 'chat'} ms={ms} text={text!r}", flush=True)
     return it, "llm"

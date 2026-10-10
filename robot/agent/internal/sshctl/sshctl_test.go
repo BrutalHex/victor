@@ -57,3 +57,57 @@ func TestEnabledDefaultsOnAndPersists(t *testing.T) {
 		t.Fatal("OffSince should read flag mtime")
 	}
 }
+
+func TestVoiceActions(t *testing.T) {
+	for name, want := range map[string][3]bool{
+		"ssh_on": {true, false, true}, "ssh_off": {false, false, true}, "ssh_status": {false, true, true},
+		"ssh_toggle": {false, false, false}, "explore": {false, false, false}, "": {false, false, false},
+	} {
+		on, st, ok := VoiceAction(name)
+		if [3]bool{on, st, ok} != want {
+			t.Errorf("%q -> %v %v %v", name, on, st, ok)
+		}
+	}
+}
+
+// Voice off persists (flag file) and the 24 h watchdog still re-enables.
+func TestVoiceOffPersistsAndWatchdogStillWorks(t *testing.T) {
+	dir := t.TempDir()
+	c := &Controller{Flag: filepath.Join(dir, "ssh.enabled"), Socket: "victor-test-none.socket", Dropbear: "victor-test-none.service"}
+	if !c.Enabled() {
+		t.Fatal("missing flag must mean SSH ON (first boot)")
+	}
+	_ = c.Set(false) // no units on the test box: Apply errors, the flag is still written
+	again := &Controller{Flag: c.Flag}
+	if again.Enabled() {
+		t.Fatal("voice off did not persist")
+	}
+	old := time.Now().Add(-25 * time.Hour)
+	if err := os.Chtimes(c.Flag, old, old); err != nil {
+		t.Fatal(err)
+	}
+	off := OffFor(time.Now(), time.Time{}, again.OffSince())
+	if !WatchdogDue(off, true, true) {
+		t.Fatalf("watchdog not due after %v off", off)
+	}
+	if WatchdogDue(off, false, true) || WatchdogDue(off, true, false) {
+		t.Fatal("watchdog rule changed")
+	}
+	_ = again.Set(true)
+	if !(&Controller{Flag: c.Flag}).Enabled() {
+		t.Fatal("voice on did not persist")
+	}
+}
+
+func TestLatchDisabledByDefault(t *testing.T) {
+	old := LatchFlag
+	defer func() { LatchFlag = old }()
+	LatchFlag = filepath.Join(t.TempDir(), "charge-latch.enabled")
+	if LatchEnabled() {
+		t.Fatal("latch must default off")
+	}
+	_ = os.WriteFile(LatchFlag, nil, 0644)
+	if !LatchEnabled() {
+		t.Fatal("flag file should re-arm it")
+	}
+}

@@ -15,7 +15,7 @@
 #
 # The sysfs is copied, then overlaid (debugfs, no root, no loop mount) with
 # everything GROK_INSTRUCTIONS.md needs on first boot:
-#   /usr/bin/victor-agent              CHARGE-LATCH FSM, SSH latch + watchdog,
+#   /usr/bin/victor-agent              voice SSH toggle (latch gesture off) + watchdog,
 #                                      telemetry, BLE mask, /etc/hosts block
 #   victor-agent / victor-firstboot / victor-ble-mask units, enabled
 #   SSH unit enabled (sshd.socket or dropbear), never masked
@@ -25,8 +25,8 @@
 #   /etc/fstab /data -> rw,exec ; /etc/hosts hub block if --hub-ip
 #   /etc/victor-release                version + git commit
 # victor-firstboot (every boot, before ssh + agent) seeds /data/victor:
-# ssh.enabled=1 and ble.disabled=1 only if missing (latch state persists),
-# hub.env, anki.masked (agent owns the spine so CHARGE-LATCH works), and
+# ssh.enabled=1 and ble.disabled=1 only if missing (SSH state persists),
+# hub.env, anki.masked (agent owns the spine), and
 # copies the public key into root's authorized_keys.
 # The packer fails if the OpenAI key from .env (or any OPENAI_API_KEY=value /
 # sk-proj- key) is found anywhere in the system image.

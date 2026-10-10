@@ -256,6 +256,28 @@ _DEF: list[tuple[str, str, str, dict[str, list[str]]]] = [
     ("intent_play_blackjack", "not feasible yet", "game not ported", {
         "en": [r"(?:let's |lets )?play (?:blackjack|cards|a game)"], "de": [r"(?:lass uns )?(?:blackjack|karten) spielen", r"spiel(?:en wir)? blackjack"], "fa": [r"(?:بیا )?(?:بلک ?جک|ورق) بازی کنیم"],
     }),
+    # SSH by voice only (owner's request, 10 Oct 2026). Disabling has an extra gate in
+    # main.ssh_disable_ok: exact pattern, or router >= 0.85 + explicit off verb; else Vector asks.
+    ("intent_system_ssh_enable", "works", "voice SSH on (robot listener on port 22); no face check", {
+        "en": [r"(?:enable|turn on|switch on|open|start|activate) (?:the )?(?:ssh|s s h|es es ha|اس ?اس ?اچ|اس ?اس ?اج)(?: access| server)?",
+               r"turn (?:the )?(?:ssh|s s h|es es ha|اس ?اس ?اچ|اس ?اس ?اج) on", r"switch (?:the )?(?:ssh|s s h|es es ha|اس ?اس ?اچ|اس ?اس ?اج) on", r"(?:ssh|s s h|es es ha|اس ?اس ?اچ|اس ?اس ?اج) on"],
+        "de": [r"(?:ssh|s s h|es es ha|اس ?اس ?اچ|اس ?اس ?اج) (?:an|ein|einschalten|anschalten|aktivieren)", r"(?:schalt|schalte|mach|mache) (?:das )?(?:ssh|s s h|es es ha|اس ?اس ?اچ|اس ?اس ?اج) (?:an|ein)",
+               r"aktivier(?:e)? (?:das )?(?:ssh|s s h|es es ha|اس ?اس ?اچ|اس ?اس ?اج)"],
+        "fa": [r"(?:ssh|s s h|es es ha|اس ?اس ?اچ|اس ?اس ?اج) (?:رو |را )?(?:روشن|فعال|باز) (?:کن|بکن)", r"(?:ssh|s s h|es es ha|اس ?اس ?اچ|اس ?اس ?اج) (?:رو |را )?روشن"],
+    }),
+    ("intent_system_ssh_disable", "works", "voice SSH off; needs a clear match or a spoken yes", {
+        "en": [r"(?:disable|turn off|switch off|close|stop|deactivate|shut off|shut down) (?:the )?(?:ssh|s s h|es es ha|اس ?اس ?اچ|اس ?اس ?اج)(?: access| server)?",
+               r"turn (?:the )?(?:ssh|s s h|es es ha|اس ?اس ?اچ|اس ?اس ?اج) off", r"switch (?:the )?(?:ssh|s s h|es es ha|اس ?اس ?اچ|اس ?اس ?اج) off", r"(?:ssh|s s h|es es ha|اس ?اس ?اچ|اس ?اس ?اج) off"],
+        "de": [r"(?:ssh|s s h|es es ha|اس ?اس ?اچ|اس ?اس ?اج) (?:aus|ausschalten|abschalten|deaktivieren)", r"(?:schalt|schalte|mach|mache) (?:das )?(?:ssh|s s h|es es ha|اس ?اس ?اچ|اس ?اس ?اج) aus",
+               r"deaktivier(?:e)? (?:das )?(?:ssh|s s h|es es ha|اس ?اس ?اچ|اس ?اس ?اج)"],
+        "fa": [r"(?:ssh|s s h|es es ha|اس ?اس ?اچ|اس ?اس ?اج) (?:رو |را )?(?:خاموش|غیرفعال|غیر فعال) (?:کن|بکن)", r"(?:ssh|s s h|es es ha|اس ?اس ?اچ|اس ?اس ?اج) (?:رو |را )?ببند"],
+    }),
+    ("intent_system_ssh_status", "works", "says whether SSH is on (and shows the SSH face)", {
+        "en": [r"is (?:the )?(?:ssh|s s h|es es ha|اس ?اس ?اچ|اس ?اس ?اج) (?:on|off|enabled|disabled|open|running|active)", r"(?:what is |what's )?(?:the )?(?:ssh|s s h|es es ha|اس ?اس ?اچ|اس ?اس ?اج) status",
+               r"is (?:the )?(?:ssh|s s h|es es ha|اس ?اس ?اچ|اس ?اس ?اج) (?:switched|turned) (?:on|off)"],
+        "de": [r"ist (?:das )?(?:ssh|s s h|es es ha|اس ?اس ?اچ|اس ?اس ?اج) (?:an|aus|aktiv|eingeschaltet|ausgeschaltet|offen)", r"(?:ssh|s s h|es es ha|اس ?اس ?اچ|اس ?اس ?اج) status"],
+        "fa": [r"(?:ssh|s s h|es es ha|اس ?اس ?اچ|اس ?اس ?اج) (?:روشنه|روشن است|روشن هست|خاموشه|خاموش است|فعاله|فعال است)", r"وضعیت (?:ssh|s s h|es es ha|اس ?اس ?اچ|اس ?اس ?اج)"],
+    }),
     ("intent_explore_stop", "works", "ends a wander session (stop / shut up also do)", {
         "en": [r"stop (?:exploring|wandering|driving around|driving)", r"(?:that's enough|enough) exploring", r"don't explore"],
         "de": [r"hör auf (?:zu erkunden|herumzufahren|zu fahren)", r"nicht mehr (?:erkunden|herumfahren)", r"erkunden (?:stopp|beenden|aus)"],
@@ -422,6 +444,13 @@ R = {
                 "fa": "باشه، می‌رم بگردم! بگو وایسا تا وایسم."},
     "explore_off": {"en": "Exploring is switched off on me right now.", "de": "Erkunden ist bei mir gerade ausgeschaltet.",
                     "fa": "گشتن الان روی من خاموشه."},
+    "ssh_on": {"en": "SSH is on.", "de": "SSH ist an.", "fa": "اس اس اچ روشنه."},
+    "ssh_off": {"en": "SSH is off.", "de": "SSH ist aus.", "fa": "اس اس اچ خاموشه."},
+    "ssh_confirm": {"en": "Did you want me to turn SSH off? Say yes.", "de": "Soll ich SSH ausschalten? Sag ja.",
+                    "fa": "می‌خوای اس اس اچ رو خاموش کنم؟ بگو آره."},
+    "ssh_cancel": {"en": "Okay, SSH stays on.", "de": "Okay, SSH bleibt an.", "fa": "باشه، اس اس اچ روشن می‌مونه."},
+    "ssh_fail": {"en": "I couldn't change SSH.", "de": "Ich konnte SSH nicht umschalten.", "fa": "نتونستم اس اس اچ رو عوض کنم."},
+    "ssh_unknown": {"en": "I can't tell right now.", "de": "Das weiß ich gerade nicht.", "fa": "الان نمی‌دونم."},
     "explore_stop": {"en": "Okay, I'll stop.", "de": "Okay, ich halte an.", "fa": "باشه، وایمیستم."},
     "cube": {"en": "I can't play with my cube yet.", "de": "Mit meinem Würfel kann ich noch nicht spielen.", "fa": "هنوز نمی‌تونم با مکعبم بازی کنم."},
     "cant": {"en": "Sorry, I can't do that yet.", "de": "Das kann ich leider noch nicht.", "fa": "متأسفم، هنوز این کار رو بلد نیستم."},
@@ -500,3 +529,24 @@ def status_table() -> list[dict]:
     rows = [{"intent": n, "status": s, "note": note} for n, (s, note) in STATUS.items()]
     rows += [{"intent": n, "status": "chat", "note": note} for n, note in PASS_THROUGH.items()]
     return rows
+
+
+# ---------------------------------------------------------------- SSH by voice
+SSH_WORD = re.compile(r"(?:\bssh\b|\bs s h\b|\bes es ha\b|اس ?اس ?اچ|اس ?اس ?اج)")
+_SSH_OFF_VERB = re.compile(
+    r"(?:\bdisable\b|\bdeactivate\b|\b(?:turn|switch|shut)\b(?: \w+){0,2} (?:off|down)\b|\bclose\b|"
+    r"ausschalten|abschalten|deaktivier|\b(?:schalt|schalte|mach|mache)\b.*\baus\b|"
+    r"خاموش (?:کن|بکن)|غیر ?فعال (?:کن|بکن)|ببند)"
+)
+_YES = re.compile(r"(?:yes|yeah|yep|yup|sure|do it|correct|yes please|ja|jawohl|genau|ja bitte|mach das|بله|آره|اره|آری|باشه|اوهوم)")
+
+
+def ssh_off_explicit(text: str) -> bool:
+    """The transcript itself names SSH and an off verb (not just 'SSH is off ...')."""
+    t = normalise(text)
+    return bool(SSH_WORD.search(t) and _SSH_OFF_VERB.search(t))
+
+
+def is_yes(text: str) -> bool:
+    t = normalise(text)
+    return bool(t) and len(t.split()) <= 4 and bool(_YES.fullmatch(t) or _YES.match(t) and len(t.split()) <= 2)
