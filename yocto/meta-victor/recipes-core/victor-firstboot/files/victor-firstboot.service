@@ -1,8 +1,12 @@
 [Unit]
-Description=Victor first boot: SSH ON, BLE mask flag, /data exec
+Description=Victor first boot: SSH ON, BLE mask flag, /data exec, hub hostname
 DefaultDependencies=no
-After=local-fs.target
-Before=victor-agent.service victor-ble-mask.service dropbear.service sshd.socket
+# Vector mounts /data from mount-data.service (dm-crypt userdata), after
+# basic.target. Do NOT order this Before=sshd.socket: that would be a cycle
+# (sshd.socket < sockets.target < basic.target < mount-data). SSH is enabled
+# in the image anyway; victor-agent applies the latch state when it starts.
+After=local-fs.target mount-data.service data.mount
+Before=victor-agent.service victor-ble-mask.service
 
 [Service]
 Type=oneshot

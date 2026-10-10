@@ -22,6 +22,7 @@ const (
 	CmdFaceUI  uint8 = 1
 	CmdSpeak   uint8 = 2
 	CmdDisplay uint8 = 3
+	CmdAction  uint8 = 4 // payload: action name (internal/action Plans)
 
 	maxMedia = 1 << 20
 	maxCmd   = 2 << 20

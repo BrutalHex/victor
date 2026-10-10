@@ -178,11 +178,27 @@ const (
 	FlagPickedUp  uint16 = 1 << 1
 	FlagOnCharger uint16 = 1 << 2
 	FlagFalling   uint16 = 1 << 3
+	// FlagExploreEnabled: /data/victor/explore.enabled exists on the robot.
+	FlagExploreEnabled uint16 = 1 << 4
+	// FlagWandering: an autonomous wander session is running.
+	FlagWandering uint16 = 1 << 5
 )
 
 // AudioPacket is 16 kHz s16le mono. 20 ms = 320 samples = 640 bytes.
 func EncodeAudio(seq uint32, pcm []byte) []byte {
-	return Encode(Header{Type: TypeAudio, Flags: AudioRate16k, Seq: seq, Tns: NowTns()}, pcm)
+	return EncodeAudioFlags(seq, pcm, false)
+}
+
+// FlagRobotNoise marks an audio packet recorded while the robot's own motors
+// ran (hub VAD: no floor update, louder threshold).
+const FlagRobotNoise uint8 = 1 << 2
+
+func EncodeAudioFlags(seq uint32, pcm []byte, robotNoise bool) []byte {
+	f := AudioRate16k
+	if robotNoise {
+		f |= FlagRobotNoise
+	}
+	return Encode(Header{Type: TypeAudio, Flags: f, Seq: seq, Tns: NowTns()}, pcm)
 }
 
 func EncodeVideo(seq uint32, jpeg []byte, flags uint8) []byte {

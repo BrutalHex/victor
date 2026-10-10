@@ -7,9 +7,10 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 # shellcheck disable=SC1091
 source "${ROOT}/deploy/lib.sh"
 
-PIN="${VECTOR_BLE_PIN:-${PIN:-}}"
-SSID="${WIFI_SSID:-}"
-PASS="${WIFI_PASSWORD:-}"
+# FLASH_* (set by `make flash`) win over .env, which lib.sh has just loaded.
+PIN="${FLASH_PIN:-${VECTOR_BLE_PIN:-${PIN:-}}}"
+SSID="${FLASH_WIFI_SSID:-${WIFI_SSID:-}}"
+PASS="${FLASH_WIFI_PASSWORD:-${WIFI_PASSWORD:-}}"
 URL="${OTA_URL:-}"
 NAME="${VECTOR_BLE_NAME:-}"
 OTA_FILE="${OTA_FILE:-}"
@@ -59,7 +60,7 @@ cleanup() {
 trap cleanup EXIT
 
 if [[ -n "$OTA_FILE" && -z "$URL" ]]; then
-  HOST_IP="$(hostname -I | awk '{print $1}')"
+  HOST_IP="${OTA_HOST_IP:-$(hostname -I | awk '{print $1}')}"
   DIR="$(cd "$(dirname "$OTA_FILE")" && pwd)"
   BASE="$(basename "$OTA_FILE")"
   python3 -m http.server "$HTTP_PORT" --bind 0.0.0.0 --directory "$DIR" &
@@ -74,7 +75,8 @@ if [[ -z "$URL" || "$URL" == https://* ]]; then
 fi
 
 echo "waiting for Vector BLE advertisement (recovery + double-press)..."
-"$BIN" first-flash --pin "$PIN" --name "$NAME" --ssid "$SSID" --password "$PASS" --url "$URL" --env-out "${ROOT}/.env"
+# Password goes via the environment, not argv (keeps it out of ps).
+WIFI_PASSWORD="$PASS" "$BIN" first-flash --pin "$PIN" --name "$NAME" --ssid "$SSID" --url "$URL" --env-out "${ROOT}/.env"
 
 echo "waiting for reboot and SSH on port 22..."
 IP="${ROBOT_SSH_IP:-}"

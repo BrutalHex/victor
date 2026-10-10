@@ -9,6 +9,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/BrutalHex/victor/robot/agent/internal/rotlog"
 	"github.com/BrutalHex/victor/robot/agent/internal/vct1"
 )
 
@@ -20,15 +21,22 @@ type Hub struct {
 	GRPCPort   int
 	LogPath    string
 
-	seq      uint32
-	aseq     uint32
-	vseq     uint32
-	lastOK   atomic.Int64
-	udp      *net.UDPConn
-	aud      *net.UDPConn
-	vid      *net.UDPConn
-	mu       sync.Mutex
+	seq     uint32
+	aseq    uint32
+	vseq    uint32
+	lastOK  atomic.Int64
+	udp     *net.UDPConn
+	aud     *net.UDPConn
+	vid     *net.UDPConn
+	mu      sync.Mutex
+	log     *rotlog.Log
+	lastLog time.Time
 }
+
+// LogEvery is the telemetry.log line interval: the control loop sends a
+// sensor packet every 20 ms, the local log keeps 2 lines/s (≈1.5 h in the
+// 1 MiB cap) so it stays a "telemetry survives SSH off" trace, not a firehose.
+const LogEvery = 500 * time.Millisecond
 
 func (h *Hub) LastOK() time.Time {
 	n := h.lastOK.Load()
@@ -79,6 +87,7 @@ func (h *Hub) Start() error {
 	}
 	if h.LogPath != "" {
 		_ = os.MkdirAll(filepath.Dir(h.LogPath), 0755)
+		h.log = rotlog.New(h.LogPath)
 	}
 	return nil
 }
@@ -96,15 +105,12 @@ func (h *Hub) SendSensor(s vct1.Sensor) []byte {
 	}, s.Marshal())
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	if h.LogPath != "" {
+	if h.log != nil && time.Since(h.lastLog) >= LogEvery {
+		h.lastLog = time.Now()
 		line := fmt.Sprintf("%d seq=%d batt=%d charger=%d flags=%d lift=%d cliffs=%d,%d,%d,%d prox=%d\n",
 			time.Now().UnixNano(), seq, s.BattMV, s.ChargerMV, s.Flags, s.EncLift,
 			s.Cliffs[0], s.Cliffs[1], s.Cliffs[2], s.Cliffs[3], s.ProxMM)
-		f, err := os.OpenFile(h.LogPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-		if err == nil {
-			_, _ = f.WriteString(line)
-			_ = f.Close()
-		}
+		_ = h.log.WriteLine(line)
 	}
 	if h.udp != nil {
 		_, _ = h.udp.Write(buf)
@@ -112,12 +118,15 @@ func (h *Hub) SendSensor(s vct1.Sensor) []byte {
 	return buf
 }
 
-func (h *Hub) SendAudio(pcm []byte) []byte {
+func (h *Hub) SendAudio(pcm []byte) []byte { return h.SendAudioFlags(pcm, false) }
+
+// SendAudioFlags sends one audio packet; robotNoise sets vct1.FlagRobotNoise.
+func (h *Hub) SendAudioFlags(pcm []byte, robotNoise bool) []byte {
 	if len(pcm) == 0 {
 		return nil
 	}
 	seq := atomic.AddUint32(&h.aseq, 1)
-	buf := vct1.EncodeAudio(seq, pcm)
+	buf := vct1.EncodeAudioFlags(seq, pcm, robotNoise)
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if h.aud != nil {
