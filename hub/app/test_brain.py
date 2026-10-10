@@ -400,7 +400,7 @@ class MoveBack(unittest.TestCase):
     the language filter and 'just back.' was called unclear."""
 
     PHRASES = ["move back", "go back", "back up", "backwards", "please move back", "Please move back.", "step back",
-               "reverse", "fahr zurück", "geh zurück", "rückwärts", "برو عقب", "عقب برو", "برگرد عقب"]
+               "reverse", "just back.", "Hey guys, so move back.", "fahr zurück", "geh zurück", "rückwärts", "برو عقب", "عقب برو", "برگرد عقب"]
 
     def setUp(self):
         import main
@@ -456,7 +456,7 @@ class MoveBack(unittest.TestCase):
 
     def test_long_persian_moves_reach_the_brain(self):
         import router
-        for q in ("به سمت راست حرکت کن", "سیصد و شصت درجه بچرخ", "Hey guys, so move back."):
+        for q in ("به سمت راست حرکت کن", "سیصد و شصت درجه بچرخ"):
             self.assertIsNone(router.fast(q))  # > 4 words: the model plans it (turn -90 / turn 360 / drive -120)
 
 

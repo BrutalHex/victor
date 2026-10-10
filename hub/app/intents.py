@@ -27,7 +27,7 @@ _POLITE = re.compile(
     r"لطفا|لطفاً|میشه|می شه|میتونی|می تونی)\b"
 )
 _TAIL = re.compile(r"[\s,]*(?:vector|victor|vektor|viktor|ویکتور|وکتور)$")
-_FILLER_LEAD = re.compile(r"^(?:(?:ok|okay|so|now|um|uh|and|also|hey|alright|all right|also|jetzt|und|also|خب|حالا|الان|و)\s+)+")
+_FILLER_LEAD = re.compile(r"^(?:(?:ok|okay|so|now|um|uh|and|also|hey|hi|just|guys|you guys|alright|all right|jetzt|und|einfach|leute|خب|حالا|الان|و)\s+)+")
 _FILLER_TAIL = re.compile(r"(?:\s+(?:now|again|for me|right now|real quick|jetzt|nochmal|mal|الان|دوباره))+$")
 
 
