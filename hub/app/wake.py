@@ -74,7 +74,7 @@ _STOP_CORE = (
     r"(?:you can |du kannst )?(?:stop listening|aufhören zuzuhören)",
     rf"(?:{NAME}\s+)?hör(?:e)? auf (?:zuzuhören|zu zuhören|zu hören|mir zuzuhören)",
     rf"(?:{NAME}\s+)?nicht mehr zuhören",
-    rf"{NAME}\s+(?:بسه|بس کن|استاپ|استپ|توقف)",
+    rf"{NAME}\s+(?:دیگه\s+)?(?:بسه|بس کن|استاپ|استپ|توقف|گوش نکن)",
     rf"(?:بسه|استاپ|استپ)\s+{NAME}",
     rf"(?:{NAME}\s+)?(?:دیگه )?گوش نده",
 )

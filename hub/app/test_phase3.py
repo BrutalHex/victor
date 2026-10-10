@@ -1649,7 +1649,8 @@ class WakeSession(unittest.TestCase):
         m = self.m
         for text, lang in (("Stop Vector", "en"), ("Vector, stop.", "en"), ("Stop listening.", "en"),
                            ("Okay, stop Victor, thanks.", "en"), ("Vektor stopp!", "de"),
-                           ("Hör auf zuzuhören.", "de"), ("وکتور بسه", "fa"), ("وکتور استاپ", "fa")):
+                           ("Hör auf zuzuhören.", "de"), ("وکتور بسه", "fa"), ("وکتور استاپ", "fa"),
+                           ("وکتور، دیگه بسه.", "fa")):
             self.hear("Hey Vector")
             self.hear("Tell me a joke")
             replies, cmds = self.hear(text)
