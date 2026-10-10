@@ -367,21 +367,35 @@ class Volume:
             print(f"volume save failed {exc!r}", flush=True)
         return self.level
 
+    def _lut(self, g: float) -> list[int]:
+        """|sample| 0..32768 -> output magnitude for gain g (pure Python, no numpy in the voice thread)."""
+        import math
+        k = self.KNEE
+        out = []
+        for i in range(32769):
+            a = i / 32768.0 * g
+            if g > 1.0:
+                if a > k:
+                    a = k + (1 - k) * math.tanh((a - k) / (1 - k))
+                a *= 0.97
+            out.append(min(32767, int(round(a * 32768.0))))
+        return out
+
     def apply(self, pcm: bytes) -> bytes:
         g = self.GAINS.get(self.level, 1.0)
         if g == 1.0 or not pcm:
             return pcm
-        import numpy as np
-        x = np.frombuffer(pcm[: len(pcm) // 2 * 2], dtype="<i2").astype(np.float64) / 32768.0 * g
-        if g > 1.0:
-            k = self.KNEE
-            a = np.abs(x)
-            over = a > k
-            # smooth knee: k + (1-k)*tanh((a-k)/(1-k)) stays below 1.0 and is continuous in value and slope
-            a[over] = k + (1 - k) * np.tanh((a[over] - k) / (1 - k))
-            x = np.sign(x) * a * 0.97
-        y = np.clip(np.round(x * 32768.0), -32768, 32767).astype("<i2")
-        return y.tobytes()
+        if not hasattr(self, "_luts"):
+            self._luts = {}
+        lut = self._luts.get(g)
+        if lut is None:
+            lut = self._luts[g] = self._lut(g)
+        from array import array
+        x = array("h")
+        x.frombytes(pcm[: len(pcm) // 2 * 2])
+        for i, v in enumerate(x):
+            x[i] = lut[v] if v >= 0 else -lut[-v]
+        return x.tobytes()
 
 
 VOLUME = Volume()
@@ -546,7 +560,17 @@ def run_intent(intent) -> str:
 def voice_loop() -> None:
     """One OpenAI turn at a time. Mic stays closed until the reply is queued."""
     while True:
-        run_turn(UTTERANCES.get())
+        pcm = UTTERANCES.get()
+        try:
+            run_turn(pcm)
+        except Exception as exc:  # noqa: BLE001 - one bad turn must never kill the voice thread
+            print(f"voice loop turn crashed {exc!r}", flush=True)
+            try:
+                with LOCK:
+                    STATE["voice_busy"] = False
+                    STATE["thinking"] = False
+            except Exception:  # noqa: BLE001
+                pass
 
 
 def run_turn(pcm: bytes) -> None:
