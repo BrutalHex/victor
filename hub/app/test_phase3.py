@@ -1356,6 +1356,8 @@ class Router(unittest.TestCase):
     def test_args_reach_the_intent(self):
         _, _, _, it = self.route("could you set a timer for five minutes", self.cmd("intent_clock_settimer_extend", duration="five minutes"))
         self.assertEqual((it.name, it.arg), ("intent_clock_settimer_extend", "five minutes"))
+        _, _, _, it = self.route("could you set a timer for five minutes", self.cmd("intent_clock_settimer_extend", duration='5 minutes},'))
+        self.assertEqual(it.arg, "5 minutes")  # live 10 Oct: stray JSON punctuation
         _, _, _, it = self.route("ich heiße Mohammad", self.cmd("intent_names_username_extend", name="Mohammad"), "de")
         self.assertEqual((it.arg.lower(), it.lang), ("mohammad", "de"))
         self.assertIsNone(self.route("my name is", self.cmd("intent_names_username_extend", name=None))[0])

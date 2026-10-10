@@ -10,6 +10,7 @@ to the pattern match it would have had before).
 from __future__ import annotations
 
 import json
+import re
 import os
 import time
 
@@ -110,7 +111,8 @@ PROMPT = (
     "'I turned left yesterday' -> chat. 'turn left' -> intent_imperative_turnleft. 'do you like taking photos' -> chat. "
     "'Wie spät ist es?' -> intent_clock_time. 'Ich habe gestern getanzt' -> chat. 'برقص' -> intent_imperative_dance. "
     "'رقص دوست داری؟' -> chat. 'who am I' / 'do you know me' -> chat. Polite forms (please, could you, kannst du, "
-    "میشه) are still commands.\n"
+    "میشه) and filler words (by the way, eigentlich, mal, الان) do not change the decision. Questions a command answers "
+    "(what time is it / Wie spät ist es eigentlich? / ساعت چنده, how old are you, how long is left on my timer) are commands.\n"
     "Fill args only for the commands that name them, else null. confidence = how sure you are (0..1).\n"
     "Commands:\n" + "\n".join(f"- {k}: {v}" for k, v in DESC.items())
 )
@@ -140,7 +142,7 @@ def to_intent(d: dict, text: str, lang: str) -> I.Intent | None:
         return None
     if conf < MIN_CONF:
         return None
-    a = d.get("args") or {}
+    a = {k: re.sub(r"[{}\[\]\"]+", " ", str(v)).strip(" ,.") if v else v for k, v in (d.get("args") or {}).items()}
     arg = ""
     if name == "intent_clock_settimer_extend":
         arg = str(a.get("duration") or "")

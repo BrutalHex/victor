@@ -27,6 +27,8 @@ CASES = [
     ("Ich habe gestern getanzt", "de", None),
     ("dreh dich nach links", "de", "intent_imperative_turnleft"),
     ("Wie spät ist es eigentlich?", "de", "intent_clock_time"),
+    ("Weißt du, wie spät es gerade ist?", "de", "intent_clock_time"),
+    ("Was hältst du vom Tanzen?", "de", None),
     ("Was ist die Hauptstadt von Frankreich?", "de", None),
     ("mach mal ein Foto", "de", "intent_photo_take_extend"),
     ("برای من برقص", "fa", "intent_imperative_dance"),
