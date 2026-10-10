@@ -1833,14 +1833,15 @@ class WakeRobust(unittest.TestCase):
         import wake
         for t in ("Hey Vecta.", "Hey Becca.", "Evektor.", "Hey Vic tor, what time is it?", "Hej Vecter",
                   "Okay Vectar, look at me", "Эй, Вектор!", "Привет, Вектор.", "Vecta.", "Heyvector", "Hey, Vektar!",
-                  "Hi, Vector.", "Hey Becker."):
+                  "Hi, Vector.", "Hey Becker.", "E-Vektor.", "شون، وکتور", "Eh, Victor!"):
             self.assertTrue(wake.match_wake(t)[0], t)
         self.assertEqual(wake.match_wake("Hey Vic tor, what time is it?")[1], "what time is it")
         for t in ("Hey Becca, are you coming tonight?", "Hey, have you seen the director?", "Hi Viktoria",
                   "Hey victory is ours", "Hey, Wecker stellen", "Hey big guy", "Hey, better luck next time",
                   "Hey factor that in", "Effector", "Hey buddy", "Hey Becky, come here", "Our sector manager, Victor, called today.",
                   "Hallo Victoria, wie geht es dir?", "Yajin", "I think you know.", "Hey, vectors are cool",
-                  "Victor Hugo wrote Les Misérables in 1862.", "The Vector points to the north."):
+                  "Victor Hugo wrote Les Misérables in 1862.", "The Vector points to the north.", "The vector.",
+                  "Ein Vektor.", "Victor Hugo.", "Dear Victor, thanks for the letter"):
             self.assertFalse(wake.match_wake(t)[0], t)
 
     def _vad(self, asleep, frames=12, voiced=5, run=2, snr=4.5):

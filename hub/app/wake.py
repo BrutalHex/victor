@@ -65,6 +65,10 @@ _FORMS = ("vector", "victor", "vektor", "viktor", "wektor", "вектор", "в�
 _NOT_NAME = {"victoria", "viktoria", "victory", "vectors", "vektoren", "victors", "factor", "faktor", "sector",
              "sektor", "hector", "rector", "rektor", "doctor", "doktor", "actor", "vecto", "viktorija",
              "wecker", "vetter", "better", "letter", "dekor", "decor", "victim", "victims", "vista", "viktim"}
+# "Victor Hugo"-style: a first word that makes "<word> <name>" a statement, not a call
+_NOT_FIRST = {"the", "a", "an", "my", "your", "his", "her", "our", "their", "this", "that", "der", "die", "das",
+              "ein", "eine", "mein", "dein", "sein", "is", "was", "and", "or", "not", "kein", "von", "of", "by", "from",
+              "with", "mit", "to", "for", "für", "in", "on", "at", "about", "über", "و", "این", "آن", "با", "از", "به"}
 _FIRST = set("vwbfeiy") | {"в", "و", "ب", "ف"}
 
 
@@ -140,6 +144,10 @@ def _fuzzy_wake(raw: str, t: str, bare: bool) -> tuple[bool, str]:
         return True, " ".join(w[1:])
     # the name alone as the whole utterance ("Vecta.", "Wektor!")
     if bare and len(w) == 1 and name_like(w[0], strict=True):
+        return True, ""
+    # two words ending on the name: "E-Vektor.", "Eh Vector!", "شون، وکتور" (a cut or
+    # misheard greeting). Only the exact name here, and nothing may follow it.
+    if bare and len(w) == 2 and re.fullmatch(NAME, w[1]) and len(w[0]) <= 5 and w[0] not in _NOT_FIRST:
         return True, ""
     return False, ""
 
