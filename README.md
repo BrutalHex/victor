@@ -178,10 +178,11 @@ Runs on the robot (`robot/agent/internal/wander`), never from the hub. It drives
 `/data/victor/explore.enabled` exists on the robot (default: absent) AND someone says "explore" / "go explore"
 (German "erkunde", "fahr herum"; Persian "برو بگرد") while Vector is off the charger.
 
-- ~40 mm/s legs of 15-40 cm, then a 2-4 s pause with a short head look-around; ends after 10 minutes.
-- Obstacle (ToF) closer than 100 mm ahead: stop and turn away 90-150 degrees. Wheels stalled 1.5 s: same.
-- Front cliff: stop at once; the only motion then allowed is a slow reverse of 4 cm while both rear cliff sensors
-  see floor, then a turn. Cliffs front and rear: halt until someone restarts it.
+- ~120 mm/s (VECTOR_EXPLORE_MMPS, capped at 140; slows from ~30 cm before an obstacle and for the end of a leg) legs of 15-40 cm, then a 2-4 s pause with a short head look-around; ends after 10 minutes.
+- Obstacle (ToF) closer than 100 mm ahead: stop and turn away 90-150 degrees (turns at VECTOR_TURN_DPS, default 180 deg/s). Wheels stalled 1.5 s: same.
+- Cliff sensors are checked every 20 ms control tick. Front cliff: brake in reverse on that same tick (front sensor
+  overrun <= ~25 mm even at the 140 mm/s cap, unit-tested with a braking model); the only motion then allowed is a
+  60 mm/s reverse of ~5 cm (stopping distance + 3 cm) while both rear cliff sensors see floor, then a turn. Cliffs front and rear: halt until someone restarts it.
 - Picked up, falling, low battery, put on the charger, hub gone > 1 s: the session ends.
 - Refuses to start on the charger, without cliff calibration (`/data/victor/cliffs.cal`), or at an edge.
 - Stop by voice ("stop", "shut up", "stop exploring"), by picking him up, or `rm /data/victor/explore.enabled`.

@@ -1,6 +1,7 @@
 package wander
 
 import (
+	"github.com/BrutalHex/victor/robot/agent/internal/drivectl"
 	"math"
 	"testing"
 	"time"
@@ -23,6 +24,22 @@ type sim struct {
 	// only starts at |power| >= brk, then rolls at (|p|-0.15)*160 mm/s.
 	brk        float64
 	movL, movR bool
+	// inertia: real wheel speed follows the command, slowing at only
+	// drivectl.BrakeMMps2 and speeding up at <= 1500 mm/s^2.
+	inertia bool
+	vL, vR  float64
+}
+
+func follow(v, want, dt float64) float64 {
+	a := 1500.0
+	if math.Abs(want) < math.Abs(v) || want*v < 0 {
+		a = drivectl.BrakeMMps2
+	}
+	if d := want - v; math.Abs(d) <= a*dt {
+		return want
+	} else {
+		return v + math.Copysign(a*dt, d)
+	}
 }
 
 func (s *sim) wheel(pwm int16, moving *bool) float64 {
@@ -61,6 +78,10 @@ func (s *sim) step(o Out) In {
 	l, r := s.wheel(o.PWM[0], &s.movL), -s.wheel(o.PWM[1], &s.movR)
 	if s.stuck {
 		l, r = 0, 0
+	}
+	if s.inertia {
+		s.vL, s.vR = follow(s.vL, l, dt), follow(s.vR, r, dt)
+		l, r = s.vL, s.vR
 	}
 	s.encLf += l * dt / mmPerTick
 	s.encRf -= r * dt / mmPerTick
@@ -150,8 +171,12 @@ func TestSlowDriveOpenFloor(t *testing.T) {
 	if s.x < 150 {
 		t.Fatalf("barely moved: %.0f mm", s.x)
 	}
-	if maxV > 65 {
-		t.Fatalf("too fast: %.0f mm/s", maxV)
+	cr := drivectl.Cfg.Explore
+	if maxV > cr*1.3 {
+		t.Fatalf("too fast: %.0f mm/s (cruise %.0f)", maxV, cr)
+	}
+	if maxV < cr*0.75 {
+		t.Fatalf("still slow: %.0f mm/s (cruise %.0f)", maxV, cr)
 	}
 }
 
@@ -199,7 +224,7 @@ func TestCliffStopsThenOnlyReverses(t *testing.T) {
 	if !sawCliff || !backed {
 		t.Fatalf("cliff=%v backed=%v", sawCliff, backed)
 	}
-	if maxFront > s.edgeAt+5 { // one 20 ms tick at 40 mm/s is ~1 mm
+	if maxFront > s.edgeAt+5 { // one 20 ms tick at 120 mm/s is ~2.4 mm
 		t.Fatalf("front sensor went %.1f mm past the edge", maxFront-s.edgeAt)
 	}
 }
@@ -314,7 +339,7 @@ func TestBreakawayFloorDrivesAndTurns(t *testing.T) {
 	if math.Hypot(s.x, s.y) < 150 {
 		t.Fatalf("barely moved: x=%.0f y=%.0f", s.x, s.y)
 	}
-	if maxV > 75 {
+	if maxV > drivectl.Cfg.Explore*1.3 {
 		t.Fatalf("too fast after breakaway: %.0f mm/s", maxV)
 	}
 }
@@ -350,5 +375,87 @@ func TestSingleNoisyProxReturnIgnored(t *testing.T) {
 			t.Fatalf("turned on an isolated noisy return at tick %d", i)
 		}
 		in = s.step(o)
+	}
+}
+
+// At full cruise with a body that cannot stop instantly, the front cliff
+// sensor may not overrun the edge by more than CliffMarginMM, the reverse
+// starts on the very tick the edge is seen, and the back-off clears it.
+func TestCliffStopWithinBrakingDistanceAtCruise(t *testing.T) {
+	for _, cruise := range []float64{80, 120, drivectl.MaxMMps} {
+		old := drivectl.Cfg
+		drivectl.Cfg.Explore = cruise
+		s := newSim()
+		s.inertia = true
+		s.edgeAt = 400 // long run-up: reaches full cruise first
+		w := New(4)
+		drivectl.Cfg = old
+		w.Start(s.in, true)
+		maxFront, vAtEdge, kicked := 0.0, -1.0, false
+		lastX := s.x
+		run(t, w, s, 20, func(i int, o Out) {
+			if f := s.x + 30*math.Cos(s.head*math.Pi/180); f > maxFront {
+				maxFront = f
+			}
+			if s.in.Cliffs[0] < 40 && vAtEdge < 0 {
+				vAtEdge = (s.x - lastX) / 0.02
+				kicked = o.PWM[0] < 0 && o.PWM[1] > 0
+			}
+			lastX = s.x
+		})
+		if vAtEdge < 0 {
+			t.Fatalf("cruise %.0f: never reached the edge", cruise)
+		}
+		if !kicked {
+			t.Fatalf("cruise %.0f: no reverse brake on the cliff tick", cruise)
+		}
+		over := maxFront - s.edgeAt
+		if over > drivectl.CliffMarginMM || over > drivectl.StopMM(vAtEdge)+3 {
+			t.Fatalf("cruise %.0f: hit edge at %.0f mm/s, front sensor overran %.1f mm (model %.1f, margin %.0f)",
+				cruise, vAtEdge, over, drivectl.StopMM(vAtEdge), drivectl.CliffMarginMM)
+		}
+		t.Logf("cruise %.0f: %.0f mm/s at the edge, overran %.1f mm (model %.1f)", cruise, vAtEdge, over, drivectl.StopMM(vAtEdge))
+		if vAtEdge < cruise*0.6 {
+			t.Fatalf("cruise %.0f: only %.0f mm/s at the edge (test not at speed)", cruise, vAtEdge)
+		}
+		if s.in.Cliffs[0] < 40 {
+			t.Fatalf("cruise %.0f: still over the edge after back-off", cruise)
+		}
+	}
+}
+
+// Speed scales with ToF distance: arriving at the obstacle distance slowly,
+// never touching the wall even with inertia.
+func TestSlowsAsObstacleNears(t *testing.T) {
+	s := newSim()
+	s.inertia = true
+	s.wallAt = 700
+	w := New(3)
+	w.Start(s.in, true)
+	lastX, turned := s.x, false
+	run(t, w, s, 20, func(i int, o Out) {
+		v := (s.x - lastX) / 0.02
+		lastX = s.x
+		if turned || o.State == Turn {
+			turned = true
+			return
+		}
+		if s.in.ProxValid && s.in.ProxMM < ObstacleMM+40 && v > 70 {
+			t.Fatalf("%.0f mm/s at %d mm from the wall", v, s.in.ProxMM)
+		}
+	})
+	if !turned {
+		t.Fatal("never turned at the wall")
+	}
+	if s.wallAt-s.x < 40 {
+		t.Fatalf("got within %.0f mm of the wall", s.wallAt-s.x)
+	}
+}
+
+func TestBackMMCoversStoppingDistance(t *testing.T) {
+	for _, v := range []float64{40, 120, drivectl.MaxMMps} {
+		if BackMM(v) < drivectl.StopMM(v)+30 || BackMM(v) < 40 {
+			t.Fatalf("%.0f: back %f", v, BackMM(v))
+		}
 	}
 }

@@ -19,6 +19,18 @@ DEST="${ROBOT_SSH_USER}@${ROBOT_SSH_IP}"
 
 robot_scp "$BIN" "${DEST}:/data/victor/victor-agent.new"
 
+# Drive speeds from .env (numbers only) -> /data/victor/drive.env, read by the
+# agent at start and clamped there to its safe range. No other .env value
+# goes to the robot. Unset = agent defaults (120 mm/s, 180 deg/s).
+DRV=""
+for k in VECTOR_EXPLORE_MMPS VECTOR_DRIVE_MMPS VECTOR_TURN_DPS VECTOR_ACCEL_MMPS2; do
+  v="${!k:-}"
+  [[ -z "$v" ]] && continue
+  if [[ "$v" =~ ^[0-9]+([.][0-9]+)?$ ]]; then DRV+="$k=$v\n"; else echo "ignoring non-numeric $k" >&2; fi
+done
+robot_ssh "printf '${DRV}' > /data/victor/drive.env"
+echo "drive.env: $(printf "${DRV}" | tr '\n' ' ')"
+
 if robot_ssh 'test -f /etc/victor-release'; then
   robot_ssh 'set -e
 chmod +x /data/victor/victor-agent.new

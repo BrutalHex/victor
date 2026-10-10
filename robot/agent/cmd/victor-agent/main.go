@@ -23,6 +23,7 @@ import (
 	"github.com/BrutalHex/victor/robot/agent/internal/button"
 	"github.com/BrutalHex/victor/robot/agent/internal/camera"
 	"github.com/BrutalHex/victor/robot/agent/internal/cliffcal"
+	"github.com/BrutalHex/victor/robot/agent/internal/drivectl"
 	"github.com/BrutalHex/victor/robot/agent/internal/face"
 	"github.com/BrutalHex/victor/robot/agent/internal/hosts"
 	"github.com/BrutalHex/victor/robot/agent/internal/idle"
@@ -173,6 +174,9 @@ func runDaemon() int {
 	_ = os.MkdirAll("/data/victor", 0755)
 	_ = os.MkdirAll("/run/victor", 0755)
 	loadHubEnv()
+	drivectl.Cfg = drivectl.FromEnv(os.Getenv)
+	fmt.Printf("drive speeds explore=%.0f drive=%.0f mm/s turn=%.0f deg/s accel=%.0f mm/s2 (cap %.0f)\n",
+		drivectl.Cfg.Explore, drivectl.Cfg.Drive, drivectl.Cfg.TurnDPS, drivectl.Cfg.Accel, drivectl.MaxMMps)
 	_ = hosts.Apply("/etc/hosts", os.Getenv("HUB_IP"), env("HUB_HOST", *hubHost))
 
 	ssh := sshctl.New()
@@ -400,7 +404,7 @@ func runDaemon() int {
 				if abortWhy == "" && win.ProxValid && fr.ProxMM < wander.ObstacleMM && lastPWM[0] > 0 && lastPWM[1] < 0 {
 					abortWhy = fmt.Sprintf("obstacle %d mm", fr.ProxMM) // voice "forward"/"come here" toward a wall
 				}
-				ain := action.In{Now: time.Now(), OnCharger: vin.OnCharger, Abort: abortWhy != ""}
+				ain := action.In{Now: time.Now(), OnCharger: vin.OnCharger, Abort: abortWhy != "", ProxValid: win.ProxValid, ProxMM: fr.ProxMM}
 				if have {
 					ain.EncL, ain.EncR, ain.EncLift = fr.Motors[0].Pos, fr.Motors[1].Pos, fr.Motors[2].Pos
 				}
@@ -969,8 +973,16 @@ func showFaceUI(sshOn, auto bool, ui *uiState) {
 	fmt.Printf("face %s\n", text)
 }
 
+// loadHubEnv reads /data/victor/hub.env and then /data/victor/drive.env
+// (VECTOR_*_MMPS speed settings pushed by deploy/sync-agent.sh from .env).
 func loadHubEnv() {
-	b, err := os.ReadFile("/data/victor/hub.env")
+	for _, f := range []string{"/data/victor/hub.env", "/data/victor/drive.env"} {
+		loadEnvFile(f)
+	}
+}
+
+func loadEnvFile(path string) {
+	b, err := os.ReadFile(path)
 	if err != nil {
 		return
 	}

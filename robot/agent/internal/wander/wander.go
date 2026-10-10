@@ -9,9 +9,16 @@
 //   - Cliff wins: front cliff -> stop; the only motion then allowed is a
 //     short slow reverse while both rear cliff sensors see floor, then a turn.
 //   - Pickup, fall, low battery, hub-gone -> stop and end the session.
-//   - ToF obstacle closer than ObstacleMM ahead -> stop, turn away.
+//   - ToF obstacle closer than ObstacleMM ahead -> stop, turn away; the
+//     cruise speed is scaled down with the ToF distance from
+//     ObstacleMM+drivectl.SlowSpanMM on, so he arrives slowly.
 //   - Stall (wheels commanded, encoders not moving) -> treat as a bump.
-//   - ~40 mm/s, short legs, pauses with look-around, session time cap.
+//   - cruise drivectl.Cfg.Explore (default 120 mm/s, VECTOR_EXPLORE_MMPS,
+//     hard cap drivectl.MaxMMps so the cliff stop stays within
+//     drivectl.CliffMarginMM), accel ramp, slows for the end of each leg;
+//     short legs, pauses with look-around, session time cap.
+//   - Cliff check every control tick; on a front cliff while driving the
+//     same tick already brakes in reverse, then backs off BackMM().
 //   - Head moves only during pauses; never the lift (SSH latch gesture).
 package wander
 
@@ -26,15 +33,18 @@ import (
 var EnableFlag = "/data/victor/explore.enabled"
 
 const (
-	full       = 32767.0
-	SpeedMMps  = 40.0
+	full = 32767.0
+	// SpeedMMps was the fixed 40 mm/s cruise until 10 Oct 2026; now
+	// drivectl.Cfg.Explore (default 120).
 	ObstacleMM = 100
 	// obstacleHold: a close return must persist this long (>= 2 ToF samples at
 	// ~17 Hz) before it counts; single noisy returns are ignored.
 	obstacleHold = 120 * time.Millisecond
-	backMM       = 40.0
+	backMinMM    = 40.0
+	backMMps     = 60.0 // reverse away from an edge gently
+	brakePower   = 0.30 // reverse kick on the tick a front cliff is seen
 	mmPerTick    = 0.96 * 29.0 * 0.25 * math.Pi / 172.3
-	halfTrackMM  = 24.0
+	halfTrackMM  = drivectl.HalfTrackMM
 	SessionMax   = 10 * time.Minute
 	headPWM      = int16(8192) // 0.25 power
 	// CliffMin mirrors veto: an uncalibrated channel below this is a cliff.
@@ -89,12 +99,18 @@ type W struct {
 	turnDir  float64
 	pauseFor time.Duration
 	look     int
+	sp       drivectl.Speeds
 	Why      string // last stop / refusal reason
 }
 
 func New(seed int64) *W {
-	return &W{rng: rand.New(rand.NewSource(seed)), state: Off, ctl: drivectl.New(SpeedMMps)}
+	sp := drivectl.Cfg
+	return &W{rng: rand.New(rand.NewSource(seed)), state: Off, ctl: drivectl.New(sp.Explore), sp: sp}
 }
+
+// BackMM is the reverse after a front cliff: at least the stopping distance
+// at cruise plus a clear 30 mm (and never under 40 mm).
+func BackMM(cruise float64) float64 { return math.Max(backMinMM, drivectl.StopMM(cruise)+30) }
 
 func FlagOn() bool {
 	_, err := os.Stat(EnableFlag)
@@ -141,6 +157,14 @@ func (w *W) enter(s State, in In) {
 	w.state, w.since = s, in.Now
 	w.encL0, w.encR0 = in.EncL, in.EncR
 	w.ctl.Reset(in.Now)
+	switch s {
+	case Turn:
+		w.ctl.SetTarget(w.sp.TurnMMps())
+	case Backoff:
+		w.ctl.SetTarget(math.Min(w.sp.Explore, backMMps))
+	default:
+		w.ctl.Target = w.sp.Explore
+	}
 	w.obsSince = time.Time{}
 }
 
@@ -230,10 +254,16 @@ func (w *W) Tick(in In) Out {
 			out.State, out.Event = Halt, "halt: cliff front and rear"
 			return out
 		}
+		wasDriving := w.state == Drive
 		w.enter(Backoff, in)
-		w.target = -backMM
+		w.target = -BackMM(w.sp.Explore)
 		out.State, out.Event = Backoff, "cliff: backing off"
-		return out // zero this tick
+		if wasDriving {
+			// brake now (pure reverse is the one motion the veto passes at a cliff)
+			out.PWM = wheels(-brakePower, -brakePower)
+			out.Moving = true
+		}
+		return out
 	}
 	el := in.Now.Sub(w.since)
 	switch w.state {
@@ -265,12 +295,15 @@ func (w *W) Tick(in In) Out {
 			out.State = w.state
 			return out
 		}
-		if done >= w.target || el > time.Duration(w.target/SpeedMMps*2.5*float64(time.Second)) {
+		if done >= w.target || el > time.Duration((w.target/w.sp.Explore*3+2)*float64(time.Second)) {
 			w.enter(Pause, in)
 			w.pauseFor = 2*time.Second + time.Duration(w.rng.Intn(2000))*time.Millisecond
 			out.State, out.Event = Pause, "pause"
 			return out
 		}
+		// speed scaled to the ToF distance and to the rest of the leg
+		v := drivectl.Approach(w.sp.Explore, in.ProxValid, float64(in.ProxMM), ObstacleMM)
+		w.ctl.SetTarget(math.Min(v, drivectl.Ending(w.sp.Explore, w.target-done)))
 		p := w.ctl.Update(in.Now, done)
 		if w.ctl.Stalled() {
 			out.Event = w.startTurn(in, "stall")
@@ -287,6 +320,7 @@ func (w *W) Tick(in In) Out {
 			out.State, out.Event = Halt, "halt: rear cliff"
 			return out
 		}
+		w.ctl.SetTarget(drivectl.Ending(math.Min(w.sp.Explore, backMMps), done-w.target))
 		if done <= w.target || el > 3*time.Second {
 			out.Event = w.startTurn(in, "after cliff")
 			out.State = w.state
@@ -309,6 +343,7 @@ func (w *W) Tick(in In) Out {
 		}
 		// +deg = left: right wheel forward, left wheel back. Speed control on
 		// wheel travel (arc mm), same breakaway controller as driving.
+		w.ctl.SetTarget(drivectl.Ending(w.sp.TurnMMps(), (math.Abs(w.target)-math.Abs(deg))*math.Pi/180*halfTrackMM))
 		p := w.ctl.Update(in.Now, deg*math.Pi/180*halfTrackMM)
 		out.PWM = wheels(-s*p, s*p)
 		out.Moving = true

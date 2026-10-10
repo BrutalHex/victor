@@ -23,6 +23,8 @@ type sim struct {
 	// |power| >= brk and keeps rolling while |power| > 0.15.
 	brk        float64
 	movL, movR bool
+	prox       uint16 // > 0: fixed valid ToF reading
+	maxV       float64
 }
 
 func (s *sim) wheel(pwm int16, moving *bool) int32 {
@@ -57,6 +59,7 @@ func (s *sim) run(name string, onCharger bool, ticks int, abortAt int, bumpAt in
 	s.r.Start(name, s.now)
 	for i := 0; i < ticks; i++ {
 		in := In{Now: s.now, OnCharger: onCharger, Abort: abortAt >= 0 && i >= abortAt, EncL: s.l, EncR: s.rr, EncLift: s.lift}
+		in.ProxValid, in.ProxMM = s.prox > 0, s.prox
 		o := s.r.Tick(in)
 		s.outs = append(s.outs, o)
 		if o.Clip != "" {
@@ -70,7 +73,11 @@ func (s *sim) run(name string, onCharger bool, ticks int, abortAt int, bumpAt in
 				s.maxW = -w
 			}
 		}
-		s.l += s.wheel(o.PWM[0], &s.movL)
+		dl := s.wheel(o.PWM[0], &s.movL)
+		if v := math.Abs(float64(dl)) * mmPerTick / 0.02; v > s.maxV {
+			s.maxV = v
+		}
+		s.l += dl
 		s.rr += s.wheel(o.PWM[1], &s.movR)
 		if bumpAt >= 0 && i == bumpAt {
 			s.lift += 40
@@ -214,5 +221,31 @@ func TestVoiceMovesBreakAway(t *testing.T) {
 		if math.Abs(got) > math.Abs(c.wantMM)+25 {
 			t.Fatalf("%s overshot: %.1f", c.name, got)
 		}
+	}
+}
+
+// Voice moves run at the configured speed (default 120 mm/s, was 40) and
+// slow down when the ToF sees something ahead.
+func TestDriveSpeedAndObstacleSlowdown(t *testing.T) {
+	s := newSim(t)
+	s.brk = 0.45
+	s.run("forward_test", false, 250, -1, -1)
+	if s.maxV < 70 || s.maxV > drivectl.Cfg.Drive*1.3 {
+		t.Fatalf("open floor max %.0f mm/s (drive %.0f)", s.maxV, drivectl.Cfg.Drive)
+	}
+	near := newSim(t)
+	near.brk = 0.45
+	near.prox = obstacleMM + 20
+	near.run("forward_test", false, 250, -1, -1)
+	if near.maxV > 60 || near.maxV >= s.maxV {
+		t.Fatalf("near obstacle %.0f mm/s (open %.0f)", near.maxV, s.maxV)
+	}
+	// backing up ignores the front ToF
+	back := newSim(t)
+	back.brk = 0.45
+	back.prox = obstacleMM + 20
+	back.run("backup", false, 250, -1, -1)
+	if back.done != "ok" {
+		t.Fatalf("backup %q", back.done)
 	}
 }

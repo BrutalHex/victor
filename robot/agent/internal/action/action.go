@@ -5,8 +5,12 @@
 //   - any cliff / pickup / fall / battery / heartbeat veto aborts the action
 //     and zeroes every motor at once;
 //   - wheels never turn on the charger, except the "leave_charger" action;
-//   - wheel moves are encoder-limited (a few cm) at creep power, with a
-//     timeout, and /data/victor/voice-drive.disabled turns all wheel moves off;
+//   - wheel moves are encoder-limited (a few cm) with a timeout, at
+//     drivectl.Cfg.Drive (default 120 mm/s, VECTOR_DRIVE_MMPS) / TurnDPS,
+//     ramped up after breakaway and slowed for the end of the move and,
+//     driving forward, for a ToF obstacle ahead (main also aborts below
+//     wander.ObstacleMM); /data/victor/voice-drive.disabled turns all wheel
+//     moves off;
 //   - the lift never moves on the charger (it is part of the CHARGE-LATCH
 //     phrase there, which stays purely human).
 package action
@@ -26,8 +30,8 @@ const (
 	liftUpPower   = 0.55
 	liftDownPower = -0.4                                 // stock lift calibration power
 	mmPerTick     = 0.96 * 29.0 * 0.25 * math.Pi / 172.3 // wheel encoder count -> mm (HAL scale)
-	halfTrackMM   = 24.0
-	creepMMps     = 40.0
+	halfTrackMM   = drivectl.HalfTrackMM
+	obstacleMM    = 100 // mirrors wander.ObstacleMM (main aborts below it)
 	planTimeout   = 15 * time.Second
 	liftHold      = int16(4915) // 0.15 power keeps the lift up for a bump
 )
@@ -106,6 +110,8 @@ type In struct {
 	EncL      int32 // motors[0] position
 	EncR      int32 // motors[1] position
 	EncLift   int32 // motors[2] position
+	ProxValid bool  // fresh ToF reading
+	ProxMM    uint16
 }
 
 // Out for this tick.
@@ -196,9 +202,14 @@ func (r *Runner) Tick(in In) Out {
 		r.stepAt = in.Now
 		r.encL0, r.encR0, r.lift0 = in.EncL, in.EncR, in.EncLift
 		if r.ctl == nil {
-			r.ctl = drivectl.New(creepMMps)
+			r.ctl = drivectl.New(drivectl.Cfg.Drive)
 		}
 		r.ctl.Reset(in.Now)
+		if st.kind == stTurn {
+			r.ctl.Target = drivectl.Cfg.TurnMMps()
+		} else {
+			r.ctl.Target = drivectl.Cfg.Drive
+		}
 		out.Clip = st.clip
 		// skip steps that are not allowed right now
 		switch st.kind {
@@ -272,7 +283,17 @@ func (r *Runner) Tick(in In) Out {
 			r.note("move timeout (stalled?)")
 			return r.next(out)
 		}
-		// shared breakaway + speed controller (internal/drivectl)
+		// shared breakaway + speed controller (internal/drivectl): slow for the
+		// end of the move and, driving forward, for an obstacle ahead
+		cruise := drivectl.Cfg.Drive
+		if st.kind == stTurn {
+			cruise = drivectl.Cfg.TurnMMps()
+		}
+		v := drivectl.Ending(cruise, math.Abs(target)-math.Abs(done))
+		if st.kind == stDrive && target > 0 {
+			v = math.Min(v, drivectl.Approach(cruise, in.ProxValid, float64(in.ProxMM), obstacleMM))
+		}
+		r.ctl.SetTarget(v)
 		pw := r.ctl.Update(in.Now, done)
 		if r.ctl.Stalled() {
 			r.note("move stalled (no wheel motion at full breakaway power)")
