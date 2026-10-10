@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import base64
 import json
+import math
 import os
 import struct
 import time
@@ -102,8 +103,9 @@ class VoiceVAD(unittest.TestCase):
         v = Voice()
         v.key = "should-not-be-used"
         v.cal_frames = CAL_FRAMES
+        v.noise = 30.0
         loud = tone(440, 20)
-        for _ in range(5):
+        for _ in range(20):  # 400 ms of voice: more than MIN_SPEECH_FRAMES
             self.assertIsNone(v.push(loud))
         self.assertTrue(v.active)
         quiet = b"\x00\x00" * 320
@@ -135,6 +137,112 @@ class VoiceVAD(unittest.TestCase):
         out = pcm16k(pcm, 24000)
         self.assertEqual(len(out), (len(pcm) // 2) * 16000 // 24000 * 2)
         self.assertEqual(pcm16k(tone(440, 20), 16000), tone(440, 20))
+
+
+class NoiseTurns(unittest.TestCase):
+    """Empty turns from noise: onset needs voicing, an utterance needs 300 ms
+    of speech with voiced frames, the floor is a percentile of quiet frames,
+    and robot-motor frames neither feed it nor open turns at normal level."""
+
+    @staticmethod
+    def pk(a):
+        return struct.pack(f"<{len(a)}h", *[max(-32768, min(32767, int(x))) for x in a])
+
+    def hiss(self, level, n=320, seed=[0]):
+        import random
+        seed[0] += 1
+        r = random.Random(seed[0])
+        return self.pk([r.gauss(0, level) for _ in range(n)])
+
+    def armed(self):
+        v = Voice()
+        v.key = ""
+        for _ in range(CAL_FRAMES + 30):
+            v.push(self.hiss(30))
+        return v
+
+    def run_frames(self, v, frames, robot_noise=False):
+        out = []
+        for f in frames:
+            got = v.push(f, robot_noise)
+            if got:
+                out.append(got)
+        return out
+
+    def test_voiced_detector(self):
+        from voice import voiced
+        self.assertTrue(voiced(tone(180, 20)))
+        self.assertFalse(voiced(self.hiss(3000)))
+        click = [0] * 320
+        click[5], click[6] = 25000, -20000
+        self.assertFalse(voiced(self.pk(click)))
+
+    def test_quiet_room_floor_and_no_turns(self):
+        v = self.armed()
+        self.assertLess(v.noise, 60)
+        quiet = [self.hiss(30) for _ in range(3000)]  # 60 s
+        self.assertEqual(self.run_frames(v, quiet), [])
+
+    def test_knocks_and_hiss_bursts_open_no_turn(self):
+        v = self.armed()
+        frames = []
+        for _ in range(20):
+            frames += [self.hiss(2500) for _ in range(8)]  # 160 ms broadband burst
+            frames += [self.hiss(30) for _ in range(60)]
+        self.assertEqual(self.run_frames(v, frames), [])
+        self.assertGreater(v.rejected["utterance"], 0)
+
+    def test_short_voiced_blip_is_not_a_turn(self):
+        v = self.armed()
+        frames = [tone(200, 20) for _ in range(6)] + [self.hiss(30) for _ in range(60)]  # 120 ms
+        self.assertEqual(self.run_frames(v, frames), [])
+        self.assertEqual(v.rejected["utterance"], 1)
+
+    def test_speech_like_utterance_opens(self):
+        v = self.armed()
+        frames = [tone(160 + 10 * (i % 5), 20) for i in range(40)] + [self.hiss(30) for _ in range(40)]
+        got = self.run_frames(v, frames)
+        self.assertEqual(len(got), 1)
+        self.assertGreater(v.utt["speech_rms"], 200)
+        self.assertEqual(v.utt["voiced"], v.utt["speech_frames"])
+
+    def test_floor_ignores_spikes_and_robot_noise(self):
+        v = self.armed()
+        f0 = v.noise
+        frames = []
+        for i in range(500):
+            frames.append(self.hiss(500) if i % 4 == 0 else self.hiss(30))  # 25 % spiky frames
+        self.run_frames(v, frames)
+        self.assertLess(v.noise, f0 * 1.5)
+        self.run_frames(v, [self.hiss(400) for _ in range(500)], robot_noise=True)
+        self.assertLess(v.noise, f0 * 1.5)  # motor frames never feed the floor
+
+    def test_robot_noise_needs_louder_voice(self):
+        v = self.armed()
+        mid = [self.pk([5000 * math.sin(2 * math.pi * 170 * i / 16000) for i in range(320)]) for _ in range(30)]
+        quiet = [self.hiss(30) for _ in range(40)]
+        self.assertEqual(self.run_frames(v, mid + quiet, robot_noise=True), [])  # a voiced whine while the head moves
+        self.assertEqual(len(self.run_frames(v, mid + quiet)), 1)  # same level with motors off is a turn
+        loud = [tone(170, 20) for _ in range(30)]
+        self.assertEqual(len(self.run_frames(v, loud + quiet, robot_noise=True)), 1)  # a shouted "stop" still opens
+
+    def test_quiet_unvoiced_burst_rejected_loud_short_word_kept(self):
+        v = self.armed()
+        # 0.5 s of mid-level hiss (a chair, a door): no voicing, SNR ~6 -> not a turn
+        self.assertEqual(self.run_frames(v, [self.hiss(250) for _ in range(25)] + [self.hiss(30) for _ in range(40)]), [])
+        # a loud short word with only a little voicing ("Stop.") still opens
+        word = [self.hiss(1500) for _ in range(8)] + [tone(180, 20) for _ in range(5)] + [self.hiss(1500) for _ in range(4)]
+        self.assertEqual(len(self.run_frames(v, word + [self.hiss(30) for _ in range(40)])), 1)
+
+    def test_drop_check_uses_speech_frames_and_same_floor(self):
+        v = self.armed()
+        v.key = "k"
+        seen = []
+        v._stt = lambda pcm, clip, language: seen.append(1) or "hello there"
+        v.utt = {"bytes": 64000, "speech_rms": 40, "floor": 60.0}
+        self.assertEqual(v.transcribe(b"\x00\x00" * 32000), "")
+        self.assertTrue(v.last_drop.startswith("quiet"))
+        self.assertEqual(seen, [])
 
 
 class CRC(unittest.TestCase):
@@ -911,6 +1019,11 @@ class StockIntents(unittest.TestCase):
         ("Vektor, schau mich an.", "intent_imperative_lookatme", "de"),
         ("ویکتور بیا اینجا", "intent_imperative_come", "fa"),
         ("And dance for me.", "intent_imperative_dance", "en"),
+        ("Go explore", "intent_explore_start", "en"),
+        ("Vector, explore the room.", "intent_explore_start", "en"),
+        ("Fahr herum", "intent_explore_start", "de"),
+        ("برو بگرد", "intent_explore_start", "fa"),
+        ("Stop exploring", "intent_explore_stop", "en"),
     ]
     CHAT = ["What's my name?", "اسم من چیه؟", "Wie heiße ich?", "What's the weather like today?",
             "Tell me a joke", "hello how are you doing today", "Can you tell me about the time of the Romans?",
@@ -1056,6 +1169,22 @@ class StockIntents(unittest.TestCase):
             m.FACE_ID.identify = saved
         self.assertEqual(self.chats[-2:], ["What's my name?", "اسم من چیه؟"])
         self.assertEqual(len(calls), 2)  # one identify call per identity question, none for the time
+
+    def test_explore_needs_flag_and_floor(self):
+        m = self.m
+        self.turn("Go explore")  # on the charger
+        self.assertIn("charger", m.STATE["last_reply"])
+        with m.LOCK:
+            m.STATE["last_sensor"] = {"on_charger": False, "explore_enabled": False}
+        cmds = self.turn("Go explore")
+        self.assertNotIn(m.CMD_ACTION, [k for k, _ in cmds])
+        self.assertIn("switched off", m.STATE["last_reply"])
+        with m.LOCK:
+            m.STATE["last_sensor"] = {"on_charger": False, "explore_enabled": True}
+        self.assertEqual(self.turn("Go explore")[-1], (m.CMD_ACTION, b"explore"))
+        self.assertEqual(self.turn("Stop")[-1], (m.CMD_ACTION, b"stop"))
+        self.assertEqual(self.turn("Stop exploring")[-1], (m.CMD_ACTION, b"explore_stop"))
+        self.assertEqual(self.chats, [])
 
     def test_disabled_by_env_flag(self):
         m = self.m

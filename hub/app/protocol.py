@@ -14,6 +14,7 @@ TYPE_UIACK = 4
 
 FLAG_NAV = 1 << 0
 FLAG_FACE = 1 << 1
+FLAG_ROBOT_NOISE = 1 << 2  # audio: recorded while the robot's own motors ran
 HEADER = struct.Struct("<4sBBIQI")  # magic, type, flags, seq, t_ns, len
 
 
@@ -68,4 +69,6 @@ def unpack_sensor(payload: bytes) -> dict:
         "flags": flags,
         "on_charger": bool(flags & 4),
         "button": bool(flags & 1),
+        "explore_enabled": bool(flags & 16),  # /data/victor/explore.enabled on the robot
+        "wandering": bool(flags & 32),
     }

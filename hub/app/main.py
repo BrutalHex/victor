@@ -20,7 +20,7 @@ from faces import FaceDB
 from face_id import NO_CONTEXT, FaceID, is_identity_question, person_context
 import intents as intents_mod
 import voice as voice_mod
-from protocol import FLAG_FACE, TYPE_AUDIO, TYPE_SENSOR, TYPE_VIDEO, decode, unpack_sensor
+from protocol import FLAG_FACE, FLAG_ROBOT_NOISE, TYPE_AUDIO, TYPE_SENSOR, TYPE_VIDEO, decode, unpack_sensor
 from safety import classical_vote
 from voice import MIN_UTTERANCE_BYTES, Voice, _wav_wrap, speech_like, tone
 
@@ -150,7 +150,7 @@ def _ingest_vct1(buf: bytes, src: str = "") -> None:
             if REC["active"]:
                 REC["buf"] += payload
                 return
-        _on_audio(payload)
+        _on_audio(payload, bool(hdr.flags & FLAG_ROBOT_NOISE))
         return
     if hdr.type == TYPE_VIDEO:
         with LOCK:
@@ -179,15 +179,16 @@ def _enqueue_utterance(utt: bytes) -> None:
                 return
 
 
-def _on_audio(pcm: bytes) -> None:
+def _on_audio(pcm: bytes, robot_noise: bool = False) -> None:
     with LOCK:
         busy = bool(STATE.get("voice_busy"))
     if busy:
         return
-    utt = VOICE.push(pcm)
+    utt = VOICE.push(pcm, robot_noise)
     with LOCK:
         STATE["audio_rms"] = getattr(VOICE, "last_rms", 0)
         STATE["noise_rms"] = int(getattr(VOICE, "noise", 0))
+        STATE["vad"] = {"rejected": dict(VOICE.rejected), "robot_noise_frames": VOICE.robot_noise_frames}
     if not utt:
         return
     if len(utt) < MIN_UTTERANCE_BYTES:
@@ -442,6 +443,17 @@ def run_intent(intent) -> str:
             reply = I.say("not_on_charger", lang)
         else:
             action, reply = "leave_charger", I.say("leave", lang)
+    elif n == "intent_explore_start":
+        with LOCK:
+            sens = STATE.get("last_sensor") or {}
+        if _on_charger() is not False:
+            reply = I.say("on_charger", lang)
+        elif not sens.get("explore_enabled"):
+            reply = I.say("explore_off", lang)
+        else:
+            action, reply = "explore", I.say("explore", lang)
+    elif n == "intent_explore_stop":
+        action, reply = "explore_stop", I.say("explore_stop", lang)
     elif n == "intent_imperative_shutup":
         action, show = "stop", "shutup"
     elif n == "intent_system_sleep":

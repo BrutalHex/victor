@@ -43,6 +43,22 @@ END_FRAMES = int(os.environ.get("HUB_VAD_END_FRAMES", "35"))
 PREROLL_FRAMES = 10  # 200 ms kept from before the onset so the first word is whole
 CAL_FRAMES = 50  # 1s at 20 ms packets; learn the room before arming
 MIN_UTTERANCE_BYTES = int(RATE * 0.4) * 2
+# Utterance gate, checked when the VAD closes (before any thinking face or STT).
+# Tuned on recordings from this room (2026-10-10, vad_replay.py): 6/6 noise
+# turns had STT "" with voiced runs 1-9 frames at SNR 4-12; 8/8 one-word to
+# full-sentence commands from the laptop speaker had runs 7-29 at SNR 16-21.
+START_VOICED = int(os.environ.get("HUB_VAD_START_VOICED", "0"))  # voiced frames needed among the onset frames
+MIN_SPEECH_FRAMES = int(os.environ.get("HUB_VAD_MIN_SPEECH_FRAMES", "8"))  # 160 ms above threshold
+MIN_VOICED_RATIO = float(os.environ.get("HUB_VAD_VOICED_RATIO", "0.3"))
+MIN_VOICED_RUN = int(os.environ.get("HUB_VAD_VOICED_RUN", "7"))  # 140 ms of continuous voicing (a vowel)
+MIN_SNR = float(os.environ.get("HUB_VAD_MIN_SNR", "6"))  # mean speech-frame rms / floor
+# Short, loud, mostly unvoiced words ("Stop.") have little voicing: allow them
+# when clearly loud. Noise turns peaked at SNR 17.6 with 3 voiced frames.
+LOUD_SNR = float(os.environ.get("HUB_VAD_LOUD_SNR", "15"))
+LOUD_MIN_VOICED = 5
+ROBOT_NOISE_BOOST = float(os.environ.get("HUB_VAD_ROBOT_NOISE_BOOST", "3.0"))
+FLOOR_FRAMES = 500  # 10 s of quiet frames
+FLOOR_PCT = 0.3
 MAX_SAMPLES = RATE * 6
 
 
@@ -71,6 +87,35 @@ def speech_like(pcm: bytes) -> bool:
     if rumble > mid * 4:
         return False
     return True
+
+
+def voiced(pcm: bytes, min_r: float = 0.45) -> bool:
+    """Periodicity check: normalised autocorrelation peak for an 80-400 Hz
+    pitch on the 8 kHz-decimated frame. Speech vowels score ~0.6-0.95; clicks,
+    knocks, hiss and broadband gear noise stay low."""
+    n = len(pcm) // 2
+    if n < 200:
+        return False
+    s = struct.unpack_from(f"<{n}h", pcm)
+    x = [(s[i] + s[i + 1]) * 0.5 for i in range(0, n - 1, 2)]
+    m = sum(x) / len(x)
+    x = [v - m for v in x]
+    e0 = sum(v * v for v in x)
+    if e0 <= 0:
+        return False
+    best = 0.0
+    import operator
+    for lag in range(20, min(101, len(x) // 2)):
+        a, b = x[:-lag], x[lag:]
+        num = sum(map(operator.mul, a, b))
+        if num <= 0:
+            continue
+        den = math.sqrt(sum(map(operator.mul, a, a)) * sum(map(operator.mul, b, b)))
+        if den > 0 and num / den > best:
+            best = num / den
+            if best >= min_r:
+                return True
+    return False
 
 
 def rms(pcm: bytes) -> int:
@@ -371,37 +416,66 @@ class Voice:
         self.noise = 200.0
         self.cal_frames = 0
         self.preroll: list[bytes] = []
+        self.floor_ring: list[int] = []
+        self.floor_tick = 0
+        self.onset_voiced = 0
+        self.sp_frames = self.sp_voiced = self.sp_energy = 0
+        self.sp_run = self.sp_run_max = 0
+        self.utt: dict = {}
+        self.rejected = {"onset": 0, "utterance": 0}
+        self.last_reject = ""
+        self.robot_noise_frames = 0
 
-    def push(self, pcm: bytes) -> bytes | None:
-        """Return captured PCM when an utterance closes. Does not call OpenAI."""
+    def push(self, pcm: bytes, robot_noise: bool = False) -> bytes | None:
+        """Return captured PCM when an utterance closes. Does not call OpenAI.
+
+        robot_noise: the agent flagged this packet as recorded while its own
+        motors were running. Those frames never feed the noise floor and need
+        ROBOT_NOISE_BOOST x the threshold (a loud "stop" still gets through).
+        """
         if not pcm:
             return None
         energy = rms(pcm)
         self.last_rms = energy
+        if robot_noise:
+            self.robot_noise_frames += 1
         if self.cal_frames < CAL_FRAMES:
             self.cal_frames += 1
-            self.noise = (0.90 * self.noise) + (0.10 * float(energy))
+            if not robot_noise:
+                self._floor_add(energy)
             return None
         thresh = max(VAD_RMS, self.noise * VAD_RATIO)
+        if robot_noise:
+            thresh *= ROBOT_NOISE_BOOST
         if not self.active:
             self.preroll.append(pcm)
             if len(self.preroll) > PREROLL_FRAMES:
                 self.preroll.pop(0)
         if energy >= thresh:
+            v = voiced(pcm)
             self.voiced += 1
+            self.onset_voiced += 1 if v else 0
             self.silence = 0
-            if not self.active and self.voiced >= START_FRAMES:
+            if self.active:
+                self.buf += pcm
+                self._speech(energy, v)
+            elif self.voiced >= START_FRAMES:
+                if START_VOICED and self.onset_voiced < START_VOICED:
+                    # loud but not voice-like (click, knock, gear whine): no turn
+                    self.rejected["onset"] += 1
+                    self.voiced, self.onset_voiced = 0, 0
+                    return None
                 self.active = True
                 if self.key:
                     self.api.warm()  # TLS while the user is still talking
                 self.buf = bytearray(b"".join(self.preroll))
                 self.preroll = []
-            elif self.active:
-                self.buf += pcm
+                self.sp_frames, self.sp_voiced, self.sp_energy = self.voiced, self.onset_voiced, energy * self.voiced
+                self.sp_run = self.sp_run_max = self.onset_voiced if v else 0
         else:
-            self.voiced = 0
-            if not self.active:
-                self.noise = (0.97 * self.noise) + (0.03 * float(energy))
+            self.voiced, self.onset_voiced = 0, 0
+            if not self.active and not robot_noise:
+                self._floor_add(energy)
             if self.active:
                 self.silence += 1
                 self.buf += pcm
@@ -411,12 +485,45 @@ class Voice:
             return self._take()
         return None
 
-    def _take(self) -> bytes:
+    def _speech(self, energy: int, is_voiced: bool) -> None:
+        self.sp_frames += 1
+        self.sp_voiced += 1 if is_voiced else 0
+        self.sp_energy += energy
+        self.sp_run = self.sp_run + 1 if is_voiced else 0
+        self.sp_run_max = max(self.sp_run_max, self.sp_run)
+
+    def _floor_add(self, energy: int) -> None:
+        """Robust noise floor: FLOOR_PCT percentile of the last FLOOR_FRAMES
+        quiet frames (speech, our own motors and capture never count)."""
+        self.floor_ring.append(energy)
+        if len(self.floor_ring) > FLOOR_FRAMES:
+            self.floor_ring.pop(0)
+        self.floor_tick += 1
+        if len(self.floor_ring) >= 25 and (self.floor_tick % 10 == 0 or len(self.floor_ring) < 60):
+            ordered = sorted(self.floor_ring)
+            self.noise = float(ordered[int(len(ordered) * FLOOR_PCT)])
+
+    def _take(self) -> bytes | None:
         pcm = bytes(self.buf)
+        frames, nv = self.sp_frames, self.sp_voiced
+        self.utt = {"bytes": len(pcm), "speech_frames": frames, "voiced": nv, "voiced_run": self.sp_run_max,
+                    "speech_rms": int(self.sp_energy / frames) if frames else 0, "floor": self.noise}
         self.buf.clear()
         self.active = False
         self.silence = 0
         self.voiced = 0
+        self.onset_voiced = 0
+        self.sp_frames = self.sp_voiced = self.sp_energy = 0
+        self.sp_run = self.sp_run_max = 0
+        snr = self.utt["speech_rms"] / max(self.noise, 1.0)
+        self.utt["snr"] = round(snr, 1)
+        voice_ok = nv >= MIN_VOICED_RATIO * frames and self.utt["voiced_run"] >= MIN_VOICED_RUN and snr >= MIN_SNR
+        loud_ok = snr >= LOUD_SNR and nv >= LOUD_MIN_VOICED
+        if frames < MIN_SPEECH_FRAMES or not (voice_ok or loud_ok):
+            self.rejected["utterance"] += 1
+            self.last_reject = f"speech_frames={frames} voiced={nv} run={self.utt['voiced_run']} snr={snr:.1f}"
+            print(f"voice skip noise {self.last_reject} rms={self.utt['speech_rms']} floor={self.noise:.0f}", flush=True)
+            return None
         self.thinking = True
         return pcm
 
@@ -429,6 +536,10 @@ class Voice:
             return ""
         clip = trim_silence(pcm) if self.stt_trim else pcm
         level, floor = rms(clip), float(getattr(self, "noise", 0.0))
+        utt = getattr(self, "utt", {}) or {}
+        if utt.get("bytes") == len(pcm) and utt.get("speech_rms"):
+            # same frames the VAD called speech, against the same floor
+            level, floor = int(utt["speech_rms"]), float(utt["floor"])
         secs = len(clip) / (2 * RATE)
         if floor > 0 and level < self.drop_ratio * floor:
             self.last_drop = f"quiet rms={level} floor={floor:.0f}"

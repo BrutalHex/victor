@@ -256,8 +256,16 @@ _DEF: list[tuple[str, str, str, dict[str, list[str]]]] = [
     ("intent_play_blackjack", "not feasible yet", "game not ported", {
         "en": [r"(?:let's |lets )?play (?:blackjack|cards|a game)"], "de": [r"(?:lass uns )?(?:blackjack|karten) spielen", r"spiel(?:en wir)? blackjack"], "fa": [r"(?:بیا )?(?:بلک ?جک|ورق) بازی کنیم"],
     }),
-    ("intent_explore_start", "not feasible yet", "free roaming stays behind the explore flag", {
-        "en": [r"(?:go )?explor(?:e|ing)(?: around)?", r"start exploring"], "de": [r"erkunde(?: die gegend)?", r"geh erkunden"], "fa": [r"برو (?:بگرد|گشت بزن)", r"اکتشاف کن"],
+    ("intent_explore_stop", "works", "ends a wander session (stop / shut up also do)", {
+        "en": [r"stop (?:exploring|wandering|driving around|driving)", r"(?:that's enough|enough) exploring", r"don't explore"],
+        "de": [r"hör auf (?:zu erkunden|herumzufahren|zu fahren)", r"nicht mehr (?:erkunden|herumfahren)", r"erkunden (?:stopp|beenden|aus)"],
+        "fa": [r"(?:دیگه )?(?:نگرد|گشت نزن)", r"گشتن (?:رو |را )?(?:تموم|بس) کن"],
+    }),
+    ("intent_explore_start", "works off the charger (needs explore.enabled)", "slow wander on the robot: cliff stop wins, obstacle <100 mm turn, 10 min cap", {
+        "en": [r"(?:go |start |let's |lets )?explor(?:e|ing)(?: around| the room| a bit)?", r"(?:go |start )?(?:wander|drive|roam|look) around(?: a bit)?",
+               r"go (?:on an )?adventure"],
+        "de": [r"(?:geh |fang an zu )?erkunde[n]?(?: die gegend| den raum)?", r"(?:fahr|fahre) (?:herum|rum|umher)", r"geh auf (?:entdeckungstour|erkundung)"],
+        "fa": [r"برو (?:بگرد|گشت بزن|بچرخ|اکتشاف کن)", r"اکتشاف کن", r"(?:یه )?دوری بزن"],
     }),
     ("intent_imperative_eyecolor", "not feasible yet", "eye colour not configurable yet", {
         "en": [r"(?:change|switch) (?:your )?eye colou?r(?: to \w+)?"], "de": [r"(?:änder|wechsel) (?:deine )?augenfarbe"], "fa": [r"رنگ چشم(?:ات|هات|ت)(?:و|رو)? عوض کن"],
@@ -410,6 +418,11 @@ R = {
     "enroll_fail": {"en": "Nice to meet you, {n}. I couldn't see your face, please look at me and say it again.",
                     "de": "Hallo {n}. Ich konnte dein Gesicht nicht sehen, schau mich an und sag es nochmal.",
                     "fa": "سلام {n}. صورتت رو ندیدم، به من نگاه کن و دوباره بگو."},
+    "explore": {"en": "Okay, exploring! Say stop to stop me.", "de": "Okay, ich erkunde! Sag stopp, um mich anzuhalten.",
+                "fa": "باشه، می‌رم بگردم! بگو وایسا تا وایسم."},
+    "explore_off": {"en": "Exploring is switched off on me right now.", "de": "Erkunden ist bei mir gerade ausgeschaltet.",
+                    "fa": "گشتن الان روی من خاموشه."},
+    "explore_stop": {"en": "Okay, I'll stop.", "de": "Okay, ich halte an.", "fa": "باشه، وایمیستم."},
     "cube": {"en": "I can't play with my cube yet.", "de": "Mit meinem Würfel kann ich noch nicht spielen.", "fa": "هنوز نمی‌تونم با مکعبم بازی کنم."},
     "cant": {"en": "Sorry, I can't do that yet.", "de": "Das kann ich leider noch nicht.", "fa": "متأسفم، هنوز این کار رو بلد نیستم."},
 }
@@ -479,7 +492,7 @@ DRIVE = {
 }
 CUBE = {"intent_play_rollcube", "intent_imperative_findcube", "intent_imperative_fetchcube",
         "intent_play_pickupcube", "intent_play_keepaway", "intent_play_popawheelie"}
-CANT = {"intent_play_blackjack", "intent_explore_start", "intent_imperative_eyecolor",
+CANT = {"intent_play_blackjack", "intent_imperative_eyecolor",
         "intent_message_recordmessage_extend", "intent_message_playmessage_extend", "intent_amazon_signin"}
 
 

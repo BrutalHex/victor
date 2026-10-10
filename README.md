@@ -105,7 +105,8 @@ shows the last one under `last_intent`. Set `HUB_INTENTS=0` in `.env` to switch 
   get off the charger. On the charger only "get off the charger" drives; the lift never moves there.
   `touch /data/victor/voice-drive.disabled` on the robot stops every voice-driven wheel move.
 - Not yet (Vector says so politely): go to your charger (needs charger vision), cube games
-  (cube needs BLE), blackjack, explore, eye colour, messages, Alexa.
+  (cube needs BLE), blackjack, eye colour, messages, Alexa.
+- Explore / go explore / stop exploring: see "Autonomous wander" below.
 - Weather and knowledge questions stay with chat (web search). "What's my name?" keeps the face check.
 
 ## Back touch (petting)
@@ -119,4 +120,19 @@ agent writes the live sensor to `/data/victor/touch.txt`. Touch never reaches th
 While nothing else is going on (no turn, action, petting or veto), the agent glances its eyes around every
 5-12 s, sometimes nudges its head up or down, and glances (eyes + head up) toward a sudden sound. Head only:
 no wheels, no lift (the lift is part of the SSH latch gesture). `touch /data/victor/idle-life.disabled`
-on the robot turns it off. Driving wander stays behind `/data/victor/explore.enabled` (off).
+on the robot turns it off. Idle life pauses while a wander session runs.
+
+## Autonomous wander
+
+Runs on the robot (`robot/agent/internal/wander`), never from the hub. It drives only when BOTH the flag file
+`/data/victor/explore.enabled` exists on the robot (default: absent) AND someone says "explore" / "go explore"
+(German "erkunde", "fahr herum"; Persian "برو بگرد") while Vector is off the charger.
+
+- ~40 mm/s legs of 15-40 cm, then a 2-4 s pause with a short head look-around; ends after 10 minutes.
+- Obstacle (ToF) closer than 100 mm ahead: stop and turn away 90-150 degrees. Wheels stalled 1.5 s: same.
+- Front cliff: stop at once; the only motion then allowed is a slow reverse of 4 cm while both rear cliff sensors
+  see floor, then a turn. Cliffs front and rear: halt until someone restarts it.
+- Picked up, falling, low battery, put on the charger, hub gone > 1 s: the session ends.
+- Refuses to start on the charger, without cliff calibration (`/data/victor/cliffs.cal`), or at an edge.
+- Stop by voice ("stop", "shut up", "stop exploring"), by picking him up, or `rm /data/victor/explore.enabled`.
+- Never moves the lift. Status: `/data/victor/wander.txt`, agent log lines `wander ...`.

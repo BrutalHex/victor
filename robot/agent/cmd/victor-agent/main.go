@@ -17,6 +17,7 @@ import (
 
 	"github.com/BrutalHex/victor/robot/agent/internal/action"
 	"github.com/BrutalHex/victor/robot/agent/internal/idle"
+	"github.com/BrutalHex/victor/robot/agent/internal/wander"
 	"github.com/BrutalHex/victor/robot/agent/internal/anki"
 	"github.com/BrutalHex/victor/robot/agent/internal/audio"
 	"github.com/BrutalHex/victor/robot/agent/internal/blemask"
@@ -228,6 +229,11 @@ func runDaemon() int {
 	life := idle.New(time.Now().UnixNano())
 	var snd idle.SoundDetector
 	soundHit, motorNoise := false, false
+	wand := wander.New(time.Now().UnixNano() + 1)
+	var lastPWM [4]int16
+	var lastProxSamples uint16
+	var proxFreshAt time.Time
+	var lastMotorAt time.Time // audio up to motorNoiseTail after a real motor command is flagged robot-noise
 	face.Boot()
 	var lastFaceAt time.Time
 	// Status files: rewritten on change at most 2/s (was ~300 writes/s).
@@ -307,7 +313,9 @@ func runDaemon() int {
 				vin.CommandAge = time.Since(lastCmd)
 			}
 			reason := veto.Check(vin)
-			allow := skill.AllowWheels(skill.ExploreEnabled(), reason == veto.Clear, vin.OnCharger)
+			// Legacy hub creep (skill wheels) is retired: internal/wander owns
+			// autonomous driving now, under the same explore.enabled flag.
+			allow := false
 			pwm := skill.PWM(kind, allow)
 			if reason == veto.Battery || reason == veto.Fall || reason == veto.Pickup || reason == veto.Cliff {
 				pwm = [4]int16{}
@@ -320,8 +328,40 @@ func runDaemon() int {
 				}
 			}
 			// Voice-command actions (hub names them; power decided here under the veto).
+			hubGone := !vin.HasHeartbeat || vin.HeartbeatAge > time.Second
+			if have && fr.ProxSamples != lastProxSamples {
+				lastProxSamples, proxFreshAt = fr.ProxSamples, time.Now()
+			}
+			win := wander.In{Now: time.Now(), OnCharger: vin.OnCharger, CliffCal: cal.Ready(), Cliffs: cliffs, Thresh: cal.Thresh,
+				Pickup: reason == veto.Pickup, Fall: reason == veto.Fall, LowBattery: reason == veto.Battery, HubGone: hubGone,
+				ProxValid: have && fr.ProxValid && time.Since(proxFreshAt) < 500*time.Millisecond, ProxMM: fr.ProxMM,
+				Busy: runner.Active() || ui.thinking() || ui.muted() || pet.touching()}
+			if have {
+				win.EncL, win.EncR = fr.Motors[0].Pos, fr.Motors[1].Pos
+			}
 			select {
 			case name := <-actCh:
+				switch name {
+				case "explore":
+					if why := wand.Start(win, wander.FlagOn()); why != "" {
+						fmt.Printf("wander refused: %s\n", why)
+						status.Put("/data/victor/wander.txt", "refused: "+why+"\n")
+						ui.set("anim", "cant_help", face.ClipLen("cant_help"))
+					} else {
+						fmt.Printf("wander start cliffs=%v thresh=%v prox=%d valid=%v\n", cliffs, cal.Thresh, fr.ProxMM, win.ProxValid)
+						status.Put("/data/victor/wander.txt", "start\n")
+					}
+					break
+				case "explore_stop", "stop":
+					if wand.Active() {
+						wand.Stop("voice " + name)
+						fmt.Printf("wander stop: voice %s\n", name)
+						status.Put("/data/victor/wander.txt", "stopped: voice\n")
+					}
+				}
+				if name == "explore" || name == "explore_stop" {
+					break
+				}
 				if runner.Start(name, time.Now()) {
 					fmt.Printf("action %s start charger=%v veto=%s\n", name, vin.OnCharger, reason)
 					status.Put("/data/victor/action.txt", name+" start\n")
@@ -340,6 +380,9 @@ func runDaemon() int {
 					abortWhy = reason.String()
 				case reason == veto.HeartbeatMiss && (!vin.HasHeartbeat || vin.HeartbeatAge > time.Second):
 					abortWhy = "heartbeat"
+				}
+				if abortWhy == "" && win.ProxValid && fr.ProxMM < wander.ObstacleMM && lastPWM[0] > 0 && lastPWM[1] < 0 {
+					abortWhy = fmt.Sprintf("obstacle %d mm", fr.ProxMM) // voice "forward"/"come here" toward a wall
 				}
 				ain := action.In{Now: time.Now(), OnCharger: vin.OnCharger, Abort: abortWhy != ""}
 				if have {
@@ -361,14 +404,39 @@ func runDaemon() int {
 					status.Put("/data/victor/action.txt", runner.Name()+" "+out.Done+"\n")
 				}
 			}
+			// Autonomous wander (explore.enabled + "explore"). Voice actions win.
+			if wand.Active() {
+				o := wand.Tick(win)
+				if !runner.Active() {
+					pwm = o.PWM
+				}
+				if o.Event != "" {
+					fmt.Printf("wander %s state=%s prox=%d valid=%v cliffs=%v\n", o.Event, o.State, fr.ProxMM, win.ProxValid, cliffs)
+					status.Put("/data/victor/wander.txt", string(o.State)+" "+o.Event+"\n")
+				}
+				if !wand.Active() {
+					status.Put("/data/victor/wander.txt", "stopped: "+wand.Why+"\n")
+				}
+			}
+			// Final interlock, after every source of motion: no wheel power at
+			// all on pickup/fall/low battery, and at a front cliff only a pure
+			// reverse (both wheels backward) may pass. Lift never auto-moves.
+			switch reason {
+			case veto.Battery, veto.Fall, veto.Pickup:
+				pwm[0], pwm[1] = 0, 0
+			case veto.Cliff:
+				if pwm[0] > 0 || pwm[1] < 0 || (pwm[0] == 0) != (pwm[1] == 0) {
+					pwm[0], pwm[1] = 0, 0
+				}
+			}
+			lastPWM = pwm
 			// Idle life: glances, head fidgets, look toward a sound. Head only;
 			// never wheels or lift. Only when nothing else owns the face/motors.
-			if have && !runner.Active() && !idle.Disabled() && ui.currentMode() == "idle" && !pet.touching() &&
+			if have && !runner.Active() && !wand.Active() && !idle.Disabled() && ui.currentMode() == "idle" && !pet.touching() &&
 				reason != veto.Battery && reason != veto.Fall && reason != veto.Pickup && reason != veto.Cliff {
 				o := life.Tick(idle.In{Now: time.Now(), Head: fr.Motors[3].Pos, HaveHead: true, Sound: soundHit, SoundDir: proc.Direction()})
 				if o.Head != 0 {
-					pwm[3] = o.Head
-					ui.muteFor(300 * time.Millisecond) // head gear noise must not open a hub voice turn
+					pwm[3] = o.Head // gear noise is flagged to the hub (FlagRobotNoise), not muted
 				}
 				ui.setGaze(o.LookX, o.LookY)
 				if o.Event != "" {
@@ -380,6 +448,9 @@ func runDaemon() int {
 			}
 			soundHit = false
 			motorNoise = pwm[3] > 2000 || pwm[3] < -2000 || pwm[2] > 2000 || pwm[2] < -2000 || pwm[0] != 0 || pwm[1] != 0
+			if motorNoise {
+				lastMotorAt = time.Now()
+			}
 			if body != nil {
 				body.SetDrive(pwm)
 				if mic := body.DrainMic(); len(mic) > 0 {
@@ -396,8 +467,9 @@ func runDaemon() int {
 					// speaker comes back as the next utterance.
 					clean := proc.Process(mic)
 					if !ui.thinking() && !ui.muted() {
+						noisy := time.Since(lastMotorAt) < motorNoiseTail
 						for _, pkt := range pk.Push(clean) {
-							lnk.QueueMedia(hub.SendAudio(pkt))
+							lnk.QueueMedia(hub.SendAudioFlags(pkt, noisy))
 						}
 					}
 				}
@@ -430,6 +502,12 @@ func runDaemon() int {
 					hub.NoteOK()
 				}
 				lnk.Tick(uint8(reason))
+			}
+			if wander.FlagOn() {
+				s.Flags |= vct1.FlagExploreEnabled
+			}
+			if wand.Active() {
+				s.Flags |= vct1.FlagWandering
 			}
 			lnk.QueueMedia(hub.SendSensor(s))
 			if gotSpine {
@@ -643,6 +721,9 @@ func renderFace(u *uiState, reason veto.Reason) {
 // ~65 ms for a 320x240 nav frame and ~265 ms for 640x480, so the old 10 + 5 fps
 // plan would eat two cores. camera.conf can change nav_fps / face_fps.
 var camNavFPS, camFaceFPS = 2.0, 1.0
+
+// motorNoiseTail: gears ring on briefly after the PWM stops.
+const motorNoiseTail = 300 * time.Millisecond
 
 func cameraLoop(hub *telem.Hub, lnk *link.Client) {
 	loadCameraConf()
