@@ -6,3 +6,4 @@ onnxruntime>=1.17
 Pillow>=10.0
 onnx>=1.16
 tzdata>=2024.1  # zoneinfo for HUB_TZ in python:slim
+opencv-python-headless>=4.10,<6  # face_local: YuNet detector + SFace embedding (CPU, ONNX)

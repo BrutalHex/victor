@@ -156,8 +156,9 @@ def response_text(data: dict) -> str:
 
 
 class FaceID:
-    def __init__(self, db=None) -> None:
+    def __init__(self, db=None, budget=None) -> None:
         self.db = db
+        self.budget = budget  # nv_budget.Budget: every request takes a slot first
         self.base = (os.environ.get("HUB_FACE_BASE_URL") or DEFAULT_BASE).rstrip("/")
         self.model = os.environ.get("HUB_FACE_MODEL") or DEFAULT_MODEL
         self.key_var = os.environ.get("HUB_FACE_API_KEY_VAR") or "NVIDIA_API_KEY"
@@ -176,7 +177,7 @@ class FaceID:
         self.errors = 0
         self.last_call_t = 0.0
         self.result = {"person": False, "name": None, "confidence": 0.0, "t": 0.0, "ms": 0, "error": ""}
-        self.retries = int(_env_float("HUB_FACE_RETRIES", 4))  # extra tries on 429/5xx (shared free endpoint)
+        self.retries = int(_env_float("HUB_FACE_RETRIES", 1))  # extra tries on 429/5xx; each one is budgeted
         self.retry_s = _env_float("HUB_FACE_RETRY_S", 1.5)
         self.sleep = time.sleep
         self.post = self._post  # tests replace this
@@ -208,13 +209,24 @@ class FaceID:
         with urllib.request.urlopen(req, timeout=self.timeout) as resp:
             return json.loads(resp.read().decode())
 
-    def recognize(self, frame: bytes, refs: list[tuple[str, bytes]]) -> dict:
+    def recognize(self, frame: bytes, refs: list[tuple[str, bytes]], reason: str = "unspecified") -> dict:
+        """One NVIDIA check (plus budgeted retries). With the budget exhausted
+        nothing is sent and res["skip"] == "budget" (callers stay local-only)."""
         t0 = time.time()
-        res = {"person": False, "face_visible": False, "name": None, "confidence": 0.0, "error": "", "raw": ""}
+        res = {"person": False, "face_visible": False, "name": None, "confidence": 0.0, "error": "", "raw": "",
+               "skip": ""}
         try:
             payload = build_payload(self.model, shrink(frame, 640), [(n, shrink(j, 384)) for n, j in refs])
             data = None
             for attempt in range(self.retries + 1):
+                if self.budget is not None:
+                    ok, why = self.budget.take(reason if attempt == 0 else reason + " (retry)")
+                    if not ok:
+                        if attempt == 0:
+                            res["skip"] = "budget"
+                            res["ms"] = int((time.time() - t0) * 1000)
+                            return res
+                        raise TimeoutError(f"budget {why} during retries")
                 try:
                     data = self.post(payload)
                     break
@@ -257,7 +269,7 @@ class FaceID:
             with self.lock:
                 self.busy = True
             try:
-                res.update(self.recognize(frame, refs))
+                res.update(self.recognize(frame, refs, reason="identity question (no local model)"))
                 res["t"] = time.time()
             finally:
                 with self.lock:
@@ -294,7 +306,8 @@ class FaceID:
             "error": r.get("error", ""),
             "skip": r.get("skip", ""),
             "enabled": self.ready(),
-            "trigger": "identity questions and enroll only",
+            "trigger": "local scan first; NVIDIA only when the local match is uncertain (budgeted)",
+            "via": r.get("via", ""),
             "model": self.model,
         }
 
@@ -305,10 +318,14 @@ IDENTITY_EXAMPLES = (
     "\"kennst du mich\", \"اسم من چیه\", \"من کی هستم\", \"منو میشناسی\""
 )
 
+# Questions only: "my name is Ann" / "mein Name ist Ann" / "اسم من آنا است" are
+# introductions (names.py, voice enrollment), not identity questions.
 _IDENTITY_RE = re.compile(
-    r"(my name|who am i|do you (know|recogni[sz]e) me|know who i am|"
-    r"wie hei(ß|ss)e ich|wer bin ich|kennst du mich|mein name|"
-    r"اسم\s*من|اسمم|من\s*کی\s*هستم|منو\s*می\s*?شناسی|میشناسی\s*منو)",
+    r"(what(?:'s|s| is) my name|(?:know|remember|say|tell me) my name|my name\?|who am i|"
+    r"do you (know|recogni[sz]e) me|know who i am|"
+    r"wie hei(ß|ss)e ich|wer bin ich|kennst du mich|wie ist mein name|kennst du meinen namen|"
+    r"اسم\s*من\s*(?:چیه|چیست|چی\s*است|چی\s*هست|رو\s*می\s*?دونی|را\s*می\s*?دانی)|اسمم\s*(?:چیه|چیست|رو\s*می\s*?دونی)|"
+    r"من\s*کی\s*هستم|منو\s*می\s*?شناسی|میشناسی\s*منو)",
     re.I,
 )
 

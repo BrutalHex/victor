@@ -229,7 +229,7 @@ _DEF: list[tuple[str, str, str, dict[str, list[str]]]] = [
     ("intent_seasonal_happyholidays", "partial", "spoken + hello clip", {
         "en": [r"(?:happy holidays|merry christmas)"], "de": [r"frohe weihnachten", r"schöne feiertage"], "fa": [r"کریسمس مبارک"],
     }),
-    ("intent_names_username_extend", "works", "enrolls the face under that name (one explicit NVIDIA check per photo)", {
+    ("intent_names_username_extend", "works", "router-checked introduction; learns the face locally (no NVIDIA call)", {
         "en": [r"my name is (?P<n>[^\s].{0,30})", r"call me (?P<n>[^\s].{0,30})"],
         "de": [r"ich heiße (?P<n>[^\s].{0,30})", r"ich heisse (?P<n>[^\s].{0,30})", r"mein name ist (?P<n>[^\s].{0,30})", r"nenn mich (?P<n>[^\s].{0,30})"],
         "fa": [r"اسم من (?P<n>[^\s].{0,30}?) (?:است|ه|هست)", r"اسمم (?P<n>[^\s].{0,30}?) (?:است|ه|هست)", r"من (?P<n>[^\s].{0,30}?) هستم"],
@@ -437,9 +437,16 @@ R = {
     "enrolled": {"en": "Nice to meet you, {n}! I'll remember your face.",
                  "de": "Schön, dich kennenzulernen, {n}! Ich merke mir dein Gesicht.",
                  "fa": "از آشنایی‌ات خوشحالم {n}! چهره‌ات رو یادم می‌مونه."},
-    "enroll_fail": {"en": "Nice to meet you, {n}. I couldn't see your face, please look at me and say it again.",
-                    "de": "Hallo {n}. Ich konnte dein Gesicht nicht sehen, schau mich an und sag es nochmal.",
-                    "fa": "سلام {n}. صورتت رو ندیدم، به من نگاه کن و دوباره بگو."},
+    "enroll_fail": {"en": "Nice to meet you, {n}. I couldn't see your face clearly, so I didn't save it. Look at me and tell me your name again.",
+                    "de": "Hallo {n}. Ich konnte dein Gesicht nicht gut sehen und habe es nicht gespeichert. Schau mich an und sag mir deinen Namen nochmal.",
+                    "fa": "سلام {n}. صورتت رو خوب ندیدم و ذخیره‌اش نکردم. به من نگاه کن و دوباره اسمت رو بگو."},
+    "enrolled_more": {"en": "Hi {n}! I've added a few more pictures of your face.",
+                      "de": "Hallo {n}! Ich habe mir dein Gesicht noch besser gemerkt.",
+                      "fa": "سلام {n}! چند تا عکس دیگه از صورتت یاد گرفتم."},
+    "enroll_look": {"en": "I can't see your face. Please look at me.", "de": "Ich sehe dein Gesicht nicht. Schau mich bitte an.",
+                    "fa": "صورتت رو نمی‌بینم. لطفاً به من نگاه کن."},
+    "ask_name": {"en": "I don't think we've met. What's your name?", "de": "Ich glaube, wir kennen uns noch nicht. Wie heißt du?",
+                 "fa": "فکر کنم همدیگه رو نمی‌شناسیم. اسمت چیه؟"},
     "explore": {"en": "Okay, exploring! Say stop to stop me.", "de": "Okay, ich erkunde! Sag stopp, um mich anzuhalten.",
                 "fa": "باشه، می‌رم بگردم! بگو وایسا تا وایسم."},
     "explore_off": {"en": "Exploring is switched off on me right now.", "de": "Erkunden ist bei mir gerade ausgeschaltet.",

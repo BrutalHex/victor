@@ -18,6 +18,10 @@ from edge import Edge
 from explore import NAMES, Explorer
 from faces import FaceDB
 from face_id import NO_CONTEXT, FaceID, is_identity_question, person_context
+from face_local import LocalFaces
+from face_watch import Watcher
+from nv_budget import Budget
+import names as names_mod
 import intents as intents_mod
 import router
 import voice as voice_mod
@@ -57,7 +61,11 @@ try:  # numpy once, in the main thread, before Voice() starts its scipy warm-up 
     import numpy  # noqa: F401  # the two imports raced and onnxruntime's failed (edge model absent, 10 Oct)
 except ImportError:
     pass
-FACE_ID = FaceID(FACE_DB)
+NV_BUDGET = Budget()  # every NVIDIA request takes a slot (NVIDIA_RPM, NVIDIA_MAX_CALLS, NVIDIA_CAP_WINDOW)
+FACE_ID = FaceID(FACE_DB, NV_BUDGET)
+FACE_LOCAL = LocalFaces(download=False)  # YuNet + SFace on the hub CPU; main() fetches missing models
+FACE_WATCH = Watcher(FACE_LOCAL, FACE_ID, NV_BUDGET, FACE_DB)
+LAST_TURN = {"t": 0.0}  # end of the last voice turn (greetings wait HUB_GREET_QUIET_S after it)
 EDGE = Edge()
 VOICE = Voice()
 PENDING: list[tuple[int, bytes]] = []
@@ -498,8 +506,8 @@ def reply_turn(pcm: bytes, text: str | None = None) -> tuple[str, str, bytes]:
         intent = None  # identity questions keep the face-ID path
     t_face = time.time()
     if text and intent is None and is_identity_question(text):
-        # The only place a camera frame goes to the AI during voice: one call, this turn only.
-        res = FACE_ID.identify()
+        # Local match first; NVIDIA (budgeted) only when the local match is uncertain.
+        res = identify_person()
         TURN_PERSON["ctx"] = person_context(res, FACE_ID.min_conf)
         if res.get("name") and float(res.get("confidence") or 0) >= FACE_ID.min_conf:
             with LOCK:
@@ -810,9 +818,11 @@ def run_intent(intent) -> str:
             print(f"intent photo saved {path} bytes={len(img)}", flush=True)
             show, reply = "photo", I.say("photo", lang)
     elif n == "intent_names_username_extend":
-        name = intent.arg.title() if intent.arg.isascii() else intent.arg
-        out, code = enroll({"name": name, "count": 2, "gap": 1.0})  # explicit enroll: NVIDIA person check per frame
-        reply = I.say("enrolled" if out.get("ok") else "enroll_fail", lang, n=out.get("name") or name)
+        name = names_mod.valid_name(intent.arg, intent.text) or ""
+        if not name:
+            reply = I.say("cant", lang)
+        else:
+            reply, show = voice_enroll(name, lang)
     elif n in I.CUBE:
         reply, show = I.say("cube", lang), "cant_help"
     else:  # I.CANT and anything unhandled
@@ -876,6 +886,7 @@ def run_turn(pcm: bytes, text: str | None = None) -> None:
             why = "intent " + TURN_OUT["intent"]
         TURN_OUT.update(show=b"", action="", intent="")
         end_think(audio, why, show)
+        LAST_TURN["t"] = time.time()
         if action:  # after idle/clip so the runner's own clip is not overwritten
             queue_cmd(CMD_ACTION, action.encode())
     print(f"voice transcript={text!r} lang={getattr(VOICE, 'last_lang', '')} reply={reply!r} speak={len(audio)}", flush=True)
@@ -911,9 +922,190 @@ def _on_nav_frame(jpeg: bytes) -> None:
 
 
 def _on_face_frame(jpeg: bytes) -> None:
-    """Keep the newest face frame on the hub (local only). It goes to NVIDIA
-    only for an identity question or an explicit enroll."""
+    """Keep the newest face frame on the hub (local only). face_loop scans it
+    locally; it goes to NVIDIA only when a local match is uncertain (budgeted)."""
     FACE_ID.on_frame(jpeg)
+
+
+# ------------------------------------------------------------ faces (local first)
+FACE_SYNC = {"t": 0.0, "n": -1}
+GREET_TEXT = {"en": "Hi {n}!", "de": "Hallo {n}!", "fa": "سلام {n}!"}
+
+
+def face_sync(force: bool = False) -> None:
+    """Embed new/removed reference photos (web page or voice enroll) for the local matcher."""
+    if not FACE_LOCAL.available:
+        return
+    now = time.time()
+    if not force and now - FACE_SYNC["t"] < 10:
+        return
+    n = len(FACE_DB.list())
+    FACE_SYNC["t"] = now
+    if force or n != FACE_SYNC["n"]:
+        added = FACE_LOCAL.sync(FACE_DB)
+        FACE_LOCAL.load_extra(FACE_DB.embeddings())
+        FACE_SYNC["n"] = n
+        if added:
+            FACE_WATCH.clear_cache()
+            print(f"face local gallery +{added} refs={len(FACE_LOCAL.refs())}", flush=True)
+
+
+def face_ctx() -> dict:
+    now = time.time()
+    with LOCK:
+        busy, thinking = bool(STATE.get("voice_busy")), bool(STATE.get("thinking"))
+    return {"awake": SESSION.listening(), "busy": busy or not UTTERANCES.empty(), "thinking": thinking,
+            "speaking": SPEAK["until"] > now, "since_turn_s": now - LAST_TURN["t"] if LAST_TURN["t"] else 1e9}
+
+
+def _greet_lang() -> str:
+    lang = SESSION.lang or getattr(VOICE, "last_lang", "") or "en"
+    return lang if lang in GREET_TEXT else "en"
+
+
+def greet(name: str) -> None:
+    """Spontaneous hello for a known face (cooldown, quiet and still-there checked again after a short pause)."""
+    time.sleep(FACE_WATCH.delay())
+    ctx = face_ctx()
+    frame = FACE_ID.latest()
+    ev = FACE_WATCH.scan(frame, ctx) if frame else {}
+    if ev.get("greet") != name:
+        print(f"face greet {name!r} dropped (gone or busy)", flush=True)
+        return
+    mode = FACE_WATCH.greet_mode(ctx)
+    FACE_WATCH.mark_greeted(name)
+    if mode == "speak":
+        print(f"face greet {name!r} speak awake={ctx['awake']}", flush=True)
+        speak_turn(GREET_TEXT[_greet_lang()].format(n=name), "greet", b"anim|hello")
+        LAST_TURN["t"] = time.time()
+    else:  # asleep: look up + happy eyes, no speech
+        print(f"face greet {name!r} look (asleep, no speech)", flush=True)
+        queue_cmd(CMD_ACTION, b"look_up")
+        queue_cmd(CMD_FACEUI, b"anim|hello")
+
+
+def ask_unknown() -> None:
+    time.sleep(FACE_WATCH.delay())
+    ctx = face_ctx()
+    if not ctx["awake"] or not FACE_WATCH.quiet(ctx):
+        return
+    FACE_WATCH.mark_asked()
+    print("face unknown: asking for a name", flush=True)
+    speak_turn(intents_mod.say("ask_name", _greet_lang()), "ask name", b"anim|lookatme")
+    LAST_TURN["t"] = time.time()
+
+
+def face_loop() -> None:
+    """Local scan of the newest face frame (~1 fps with a face around, ~0.5 fps
+    otherwise). Nothing leaves the hub unless face_watch asks NVIDIA."""
+    last = b""
+    while True:
+        time.sleep(0.25)
+        if not FACE_LOCAL.available or not FACE_ID.enabled:
+            continue
+        frame = FACE_ID.latest()
+        if not frame or frame is last or not FACE_WATCH.due():
+            continue
+        last = frame
+        try:
+            face_sync()
+            if not FACE_LOCAL.refs() and not FACE_WATCH.unknown_on:
+                FACE_WATCH.last_scan_t = time.time()
+                continue  # nobody enrolled: nothing to greet
+            ev = FACE_WATCH.scan(frame, face_ctx())
+            if ev.get("greet"):
+                greet(ev["greet"])
+            elif ev.get("ask"):
+                ask_unknown()
+        except Exception as exc:  # noqa: BLE001 - the scan must never die
+            print(f"face loop error {exc!r}", flush=True)
+            time.sleep(2)
+
+
+def identify_person() -> dict:
+    """Identity question ("who am I?"): local match first, NVIDIA only when
+    uncertain (budgeted; budget gone = local-only, nothing said about it)."""
+    if not (FACE_LOCAL.available and FACE_ID.enabled):
+        return FACE_ID.identify()
+    res = {"person": False, "face_visible": False, "name": None, "confidence": 0.0, "error": "", "raw": "",
+           "ms": 0, "skip": "", "t": time.time(), "via": "local"}
+    t0 = time.time()
+    face_sync(force=True)
+    frame = FACE_ID.latest()
+    if not FACE_DB.names():
+        res["skip"] = "nobody enrolled"
+    elif not frame:
+        res["skip"] = "no fresh camera frame"
+    else:
+        faces, clear, img = FACE_LOCAL.detect(frame)
+        if not clear:
+            res["person"] = bool(faces)  # someone there, face not clear -> "don't recognise / face not visible"
+            if not faces:
+                res["skip"] = "no face in view"
+        else:
+            emb = FACE_LOCAL.embed(img, clear[0])
+            r = FACE_WATCH.resolve(emb, frame, "identity", face_ctx())
+            res.update(person=True, face_visible=True, name=r.get("name"), confidence=float(r.get("confidence") or 0),
+                       via=r.get("via", ""), error=r.get("error", ""), score=r.get("score"), level=r.get("level"))
+    res["ms"] = int((time.time() - t0) * 1000)
+    with FACE_ID.lock:
+        FACE_ID.result = dict(res)
+    print(f"face id (identity question) local-first name={res['name']!r} conf={res['confidence']:.2f} "
+          f"via={res.get('via')} score={res.get('score')} level={res.get('level')} skip={res['skip']!r} "
+          f"err={res['error'][:80]!r} ms={res['ms']}", flush=True)
+    return res
+
+
+ENROLL_WANT = 3
+
+
+def capture_faces(want: int, secs: float) -> list[bytes]:
+    """New camera frames with exactly one clear face, until `want` or `secs`."""
+    out: list[bytes] = []
+    last = b""
+    deadline = time.time() + secs
+    while len(out) < want and time.time() < deadline:
+        img = LAST_JPEG["face"]
+        if img and img is not last:
+            last = img
+            emb, why = FACE_LOCAL.one_clear_face(img)
+            if emb is not None:
+                out.append(img)
+            else:
+                print(f"face enroll frame skipped: {why}", flush=True)
+        time.sleep(0.1)
+    return out
+
+
+def voice_enroll(name: str, lang: str) -> tuple[str, str]:
+    """'My name is X' / 'I'm X' (router-checked): learn X's face from the camera.
+    -> (reply, face clip). No NVIDIA call: the local detector checks each frame."""
+    import intents as I
+    name = names_mod.canonical(name, FACE_DB.names())
+    known = any(n.lower() == name.lower() for n in FACE_DB.names())
+    if not (FACE_LOCAL.available and FACE_ID.enabled):
+        out, _code = enroll({"name": name, "count": 2, "gap": 1.0})  # no local model: old NVIDIA-checked enroll
+        return I.say("enrolled" if out.get("ok") else "enroll_fail", lang, n=out.get("name") or name), ""
+    queue_cmd(CMD_ACTION, b"look_at_me")  # head up toward the speaker
+    frames = capture_faces(ENROLL_WANT, float(os.environ.get("HUB_ENROLL_S", "5")))
+    if not frames:
+        try:
+            pcm = VOICE.tts(I.say("enroll_look", lang))
+            if pcm:
+                queue_cmd(CMD_SPEAK, VOLUME.apply(pcm))
+                time.sleep(len(pcm) / (2 * RATE))
+        except Exception as exc:  # noqa: BLE001
+            print(f"enroll prompt failed {exc!r}", flush=True)
+        frames = capture_faces(ENROLL_WANT, float(os.environ.get("HUB_ENROLL_RETRY_S", "6")))
+    for img in frames:
+        FACE_DB.enroll(name, img)
+    print(f"face voice enroll name={name!r} stored={len(frames)} known_before={known}", flush=True)
+    if not frames:
+        return I.say("enroll_fail", lang, n=name), ""
+    face_sync(force=True)
+    FACE_WATCH.clear_cache()
+    FACE_WATCH.mark_greeted(name)  # just met: no "Hi X!" right after
+    return I.say("enrolled_more" if known else "enrolled", lang, n=name), "hello"
 
 
 TURN_PERSON = {"ctx": ""}  # set by reply_turn for an identity question, cleared after the chat call
@@ -1031,6 +1223,9 @@ class Status(BaseHTTPRequestHandler):
                 "stt_language": VOICE.stt_language or "auto",
             }
             body["person"] = FACE_ID.present()
+            body["person"]["local"] = FACE_LOCAL.status()
+            body["person"]["watch"] = FACE_WATCH.status()
+            body["nvidia_budget"] = NV_BUDGET.status()
             body["intents"] = {"enabled": INTENTS_ON, "volume": VOLUME.level, "timer_left_s": TIMER.left()}
             body["session"] = dict(SESSION.status(), asleep=dict(ASLEEP), chime=WAKE_CHIME, button=dict(BUTTON))
             body["openai_calls"] = dict(Api.CALLS)
@@ -1174,8 +1369,17 @@ def enroll(data: dict) -> tuple[dict, int]:
         return {"ok": False, "error": "no camera frame (is the robot streaming video?)"}, 409
     stored, skipped, checks = [], 0, []
     for img in frames:
-        if FACE_ID.ready():
-            res = FACE_ID.recognize(img, [])  # explicit enroll only: "is a face visible?"
+        if FACE_LOCAL.available:  # local check, no NVIDIA call
+            emb, why = FACE_LOCAL.one_clear_face(img)
+            checks.append({"local": True, "face": emb is not None, "why": "" if emb is not None else why})
+            if emb is None:
+                skipped += 1
+                continue
+        elif FACE_ID.ready():
+            res = FACE_ID.recognize(img, [], reason="enroll check")  # explicit enroll only: "is a face visible?"
+            if res.get("skip") == "budget":  # no budget left: store unchecked rather than fail
+                stored.append(FACE_DB.enroll(name, img)["id"])
+                continue
             FACE_ID.enroll_calls += 1
             checks.append({"person": res["person"], "face": res.get("face_visible", res["person"]),
                            "ms": res["ms"], "error": res["error"][:80]})
@@ -1188,6 +1392,9 @@ def enroll(data: dict) -> tuple[dict, int]:
     if not ok:
         out["error"] = "no person visible in the frames; stand 0.5-1 m in front of the robot, face it, and retry"
     print(f"face enroll name={name!r} stored={len(stored)} skipped={skipped}", flush=True)
+    if stored:
+        face_sync(force=True)
+        FACE_WATCH.clear_cache()
     return out, 200 if ok else 422
 
 
@@ -1237,12 +1444,15 @@ img.live{width:100%;max-width:640px;border:1px solid #888}.refs img{height:96px;
 .row{margin:.4rem 0}button{padding:.4rem .8rem}</style></head>
 <body><h1>victor hub - faces</h1>
 <p>Live robot camera (1 fps, local preview only). Stand 0.5-1 m in front of Vector, face it, good light.
-Photos go to the face-matching AI only when you click enroll or ask Vector "what's my name?".</p>
+Faces are found and matched locally on the hub. A photo goes to the NVIDIA face AI only when the local match is
+unsure (hard budget below). You can also just tell Vector "my name is ..." / "ich heiße ..." / "اسم من ... است".</p>
 <img class="live" id="live" alt="no camera frame yet">
 <form onsubmit="enroll(event)" class="row"><input name="name" placeholder="your name" required>
 <button>enroll (3 photos, ~5 s)</button></form>
 <div class="row" id="sess" style="font-weight:bold"></div>
 <div class="row" id="who"></div>
+<div class="row" id="seen"></div>
+<div class="row" id="budget"></div>
 <pre id="out"></pre><div id="list"></div>
 <script>
 function tick(){document.getElementById('live').src='/frame?kind=face&t='+Date.now();
@@ -1252,7 +1462,15 @@ function tick(){document.getElementById('live').src='/frame?kind=face&t='+Date.n
    ') | asleep: heard '+(s.asleep||{}).heard+', ignored '+(s.asleep||{}).ignored+', last '+JSON.stringify((s.asleep||{}).last||'');
   document.getElementById('who').textContent='last identity check: '+(p.present_name||'nobody')+
    ' conf '+p.confidence+' age '+p.age_s+'s person='+p.present_person+' checks '+p.calls+
-   (p.skip?' ('+p.skip+')':'')+(p.error?' error: '+p.error:'');});}
+   (p.skip?' ('+p.skip+')':'')+(p.error?' error: '+p.error:'')+(p.via?' via '+p.via:'');
+  const w=p.watch||{},l=w.last||{},L=p.local||{};
+  document.getElementById('seen').textContent='local scan: '+(L.available?'on':'OFF '+(L.error||''))+', refs '+L.refs+
+   ' | last: '+(l.clear?(l.name||'unknown face')+' ('+l.via+', '+l.score+')':(l.faces?'face not clear':'no face'))+
+   ' | greeted (2 h): '+JSON.stringify((w.greet||{}).recent||{});
+  const b=j.nvidia_budget||{};
+  document.getElementById('budget').textContent='NVIDIA budget: '+b.used+'/'+b.max+' used ('+b.window+
+   (b.window==='day'?' '+b.period:'')+'), '+b.last60s+'/'+b.rpm+' in the last minute, denied '+JSON.stringify(b.denied||{})+
+   ', by reason '+JSON.stringify(b.by_reason||{});});}
 setInterval(tick,1000);tick();
 async function enroll(e){e.preventDefault();const name=e.target.name.value;
  document.getElementById('out').textContent='taking photos...';
@@ -1292,6 +1510,19 @@ def main() -> None:
         print(f"face id on: model={FACE_ID.model} key=${FACE_ID.key_var} (value not logged)", flush=True)
     else:
         print(f"face id off: set ${FACE_ID.key_var} (and HUB_FACE_ID=1) for face-to-name", flush=True)
+    if not FACE_LOCAL.available and "missing" in FACE_LOCAL.error:
+        globals()["FACE_LOCAL"] = LocalFaces(download=True)  # first start without baked models
+        FACE_WATCH.local = FACE_LOCAL
+    if FACE_LOCAL.available:
+        face_sync(force=True)
+        print(f"face local on: YuNet+SFace refs={len(FACE_LOCAL.refs())} sure>={FACE_LOCAL.sure} "
+              f"unsure>={FACE_LOCAL.unsure}; greet={FACE_WATCH.greet_on} asleep={FACE_WATCH.asleep_mode} "
+              f"cooldown={FACE_WATCH.cooldown:.0f}s unknown={FACE_WATCH.unknown_on}", flush=True)
+    else:
+        print(f"face local off ({FACE_LOCAL.error}); identity questions use NVIDIA only", flush=True)
+    b = NV_BUDGET.status()
+    print(f"nvidia budget {b['used']}/{b['max']} window={b['window']} rpm={b['rpm']}", flush=True)
+    threading.Thread(target=face_loop, daemon=True).start()
     threading.Thread(target=think_loop, daemon=True).start()
     threading.Thread(target=udp_loop, args=(host, udp_sensor), daemon=True).start()
     threading.Thread(target=udp_loop, args=(host, udp_audio), daemon=True).start()

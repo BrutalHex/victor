@@ -60,7 +60,11 @@ DESC = {
     "intent_greeting_goodbye": "goodbye / see you",
     "intent_seasonal_happynewyear": "happy new year",
     "intent_seasonal_happyholidays": "happy holidays / merry christmas",
-    "intent_names_username_extend": "the user tells their own name: my name is X / I am X (args.name = X)",
+    "intent_names_username_extend": "the user introduces themself by their personal name: my name is X / I am X / I'm X / "
+                                    "call me X / ich heiße X / ich bin X / mein Name ist X / اسم من X است / من X هستم "
+                                    "(args.name = just the name, in Latin letters; transliterate Persian, e.g. محمد -> Mohammad). "
+                                    "NOT for states or places: 'I am hungry/tired/back/fine/sorry', 'ich bin müde', "
+                                    "'من خسته هستم' are chat (or their own intent)",
     "intent_play_rollcube": "roll the cube",
     "intent_imperative_findcube": "find the cube",
     "intent_imperative_fetchcube": "bring/fetch the cube",
@@ -115,7 +119,10 @@ PROMPT = (
     "Examples: 'what do you think about dancing' -> chat. 'can you dance for me' -> intent_imperative_dance. "
     "'I turned left yesterday' -> chat. 'turn left' -> intent_imperative_turnleft. 'do you like taking photos' -> chat. "
     "'Wie spät ist es?' -> intent_clock_time. 'Ich habe gestern getanzt' -> chat. 'برقص' -> intent_imperative_dance. "
-    "'رقص دوست داری؟' -> chat. 'is SSH on?' / 'is SSH up?' / 'Ist SSH an?' / 'Läuft SSH?' -> intent_system_ssh_status. 'who am I' / 'do you know me' -> chat. Polite forms (please, could you, kannst du, "
+    "'رقص دوست داری؟' -> chat. 'I'm Mohammad' -> intent_names_username_extend name=Mohammad. 'I am hungry' -> chat. "
+    "'Ich bin müde' -> chat. 'من سارا هستم' -> intent_names_username_extend name=Sara. 'من خسته هستم' -> chat. "
+    "'my name is Anna' -> intent_names_username_extend name=Anna. 'I'm sorry' -> intent_imperative_apologize. "
+    "'is SSH on?' / 'is SSH up?' / 'Ist SSH an?' / 'Läuft SSH?' -> intent_system_ssh_status. 'who am I' / 'do you know me' -> chat. Polite forms (please, could you, kannst du, "
     "میشه) and filler words (by the way, eigentlich, mal, الان) do not change the decision. Questions a command answers "
     "(what time is it / Wie spät ist es eigentlich? / ساعت چنده, how old are you, how long is left on my timer) are commands.\n"
     "SSH may be transcribed as 'S S H', 'es es ha' or 'اس اس اچ'. Talking about SSH (opinions, how it works, "
@@ -134,6 +141,8 @@ def fast(text: str) -> I.Intent | None:
     m = I.match(text)
     if m is None:
         return None
+    if m.name == "intent_names_username_extend":
+        return None  # introductions always go to the router: is it really a name?
     t = I.normalise(text)
     if len(t.split()) > FAST_MAX_WORDS or text.strip().endswith("?") and m.name not in QUESTION_INTENTS:
         return None
@@ -160,8 +169,10 @@ def to_intent(d: dict, text: str, lang: str) -> I.Intent | None:
     elif name == "intent_imperative_volumelevel_extend":
         arg = str(a.get("level") or "")
     elif name == "intent_names_username_extend":
-        arg = str(a.get("name") or "").strip()
+        import names as N
+        arg = N.valid_name(str(a.get("name") or ""), text)
         if not arg:
+            print(f"router name rejected {a.get('name')!r} text={text!r}", flush=True)
             return None
     lang = lang if lang in ("en", "de", "fa") else "en"
     return I.Intent(name=name, lang=lang, arg=arg, text=I.normalise(text))
@@ -187,6 +198,17 @@ def classify(api, text: str) -> tuple[dict | None, int]:
     return d, int((time.monotonic() - t0) * 1000)
 
 
+def _checked(m: I.Intent | None, text: str) -> I.Intent | None:
+    """Pattern fallback: a name from the regexes must still look like a name."""
+    if m is not None and m.name == "intent_names_username_extend":
+        import names as N
+        arg = N.valid_name(m.arg, text)
+        if not arg:
+            return None
+        m = I.Intent(name=m.name, lang=m.lang, arg=arg, text=m.text)
+    return m
+
+
 LAST = {"conf": 0.0, "how": ""}  # last decision, for the SSH-off gate in main
 
 
@@ -201,11 +223,11 @@ def route(api, text: str, lang: str, has_key: bool = True) -> tuple[I.Intent | N
         LAST.update(conf=1.0, how="fast")
         return f, "fast"
     if not ON or not has_key:
-        m = I.match(text)
+        m = _checked(I.match(text), text)
         return m, "patterns"
     d, ms = classify(api, text)
     if d is None:
-        m = I.match(text)  # API down: behave like before
+        m = _checked(I.match(text), text)  # API down: behave like before
         print(f"router fallback patterns intent={m.name if m else None} ms={ms}", flush=True)
         return m, "fallback"
     it = to_intent(d, text, lang)

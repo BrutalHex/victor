@@ -81,23 +81,70 @@ Operator HTTP: `http://robot.mohammadabbasi.com:8080/status`, `/faces`, `/ui`. O
 
 ## Face page (teach Vector who you are)
 
-Open **http://localhost:8080/ui** on the hub machine (or `http://robot.mohammadabbasi.com:8080/ui` from the LAN). It shows a live preview from the robot's camera (about 1 fps), the enroll form, and the list of enrolled people with their photos.
+### By voice (no web page needed)
 
-To enroll:
+While Vector is awake ("Hey Vector"), stand 0.5–1 m in front of him, face him, with light on your face, and say
+"my name is Mohammad" / "I'm Mohammad" / "call me Mohammad", "ich heiße Mohammad" / "ich bin Mohammad" /
+"mein Name ist Mohammad", "اسم من محمد است" / "من محمد هستم". The OpenAI router decides whether it really is an
+introduction and pulls out the name ("I am hungry", "ich bin müde", "من خسته هستم" enroll nobody; a name that was
+not said is rejected). Vector looks up, takes about 3 camera frames over ~3–5 s, keeps only frames with exactly one
+clear face (small background faces are ignored), stores them in the same face DB the web page uses, and says
+"Nice to meet you, Mohammad!" (happy eyes). No face: "I can't see your face. Please look at me." and a ~6 s retry;
+still nothing: nothing is stored and he says so. A name that already exists gets the new frames as extra references
+("I've added a few more pictures"). Persian names are stored in Latin letters (محمد -> Mohammad) so one person
+has one entry. (Optional later: "forget me" / "forget X"; today use the delete button on the page.)
 
-1. Stand 0.5–1 m in front of Vector, facing him, with light on your face (not behind you). Check the preview until your face is clear, not a silhouette.
-2. Type your name, click **enroll**, and hold still about 5 s while it takes 3 photos. If it reports skipped frames, adjust the light or position and retry.
-3. Ask "What's my name?" / "Wie heiße ich?" / "اسم من چیه؟" while facing Vector.
+"Who am I?" / "What's my name?" / "Wer bin ich?" / "Wie heiße ich?" / "من کی هستم؟" / "اسم من چیه؟" is answered from
+the local match; NVIDIA only if the local match is uncertain; OpenAI phrases the reply as before.
 
-Same thing from a shell:
+Spontaneous hello: when a known face is in view (2 scans in a row), Vector says "Hi Mohammad!" with the happy
+`hello` eyes, at most once per person per 2 h (`HUB_GREET_COOLDOWN_S`), never while speaking/thinking or within 20 s
+of a voice turn, after a random 0.8–2.5 s pause and a re-check that you are still there. Asleep he only looks up
+with happy eyes, no speech (`HUB_GREET_ASLEEP=look|speak|off`). Unknown faces: nothing (`HUB_GREET_UNKNOWN=1` makes
+him ask "I don't think we've met. What's your name?" once per 6 h, awake only). Right after you enroll, the 2 h
+cooldown starts, so he does not greet you again at once.
+
+### How it decides (local first, NVIDIA budgeted)
+
+- The robot already streams the face camera to the hub (640x480, 1 fps). The hub scans the newest frame locally
+  (`hub/app/face_local.py`): ~1 scan/s while a face is around, ~0.5/s otherwise. YuNet finds faces; SFace makes a
+  128-d embedding of a clear frontal face; cosine similarity against every stored reference photo.
+  ≥ `HUB_FACE_LOCAL_SURE` (0.50) = that person, < `HUB_FACE_LOCAL_UNSURE` (0.32) = nobody enrolled; no call either way.
+  Measured on the stored frames: owner across sessions 0.51–0.72, 63 strangers ≤ 0.31.
+- Uncertain (between the two) -> one NVIDIA call (`hub/app/face_watch.py`): always for "who am I?", in the background
+  only if it would lead to a greeting (not greeted for 2 h, nothing else going on), at most
+  `HUB_FACE_BG_MAX_PER_HOUR` (6), and never once only `HUB_FACE_BG_RESERVE` (50) calls are left.
+  If NVIDIA confirms (≥ 0.85) that embedding is kept as an extra local reference, so that view is local next time.
+- Every answer is cached per face embedding for `HUB_FACE_CACHE_S` (10 min): the same person in view does not
+  trigger repeat calls. No face in view = never a call.
+- Hard budget for every NVIDIA request (retries included), shared by all callers (`hub/app/nv_budget.py`):
+  `NVIDIA_RPM` (20/min), `NVIDIA_MAX_CALLS` (400) per `NVIDIA_CAP_WINDOW` (`day` = resets at local midnight,
+  `total` = never). Persisted in `hub/data/nvidia_budget.json` across hub restarts; shown on `/status`
+  (`nvidia_budget`) and on the Face page; every call is logged (`nvidia call reason=...`). Cap reached: local-only
+  matching, nothing is said about it.
+- Expected use: 0 calls while nobody or a confidently known face is in view; ~0–3 calls/hour in normal use
+  (an uncertain view of a person not yet greeted, or an uncertain "who am I?"). Worst case in the background is
+  6/hour. Enrollment never calls NVIDIA.
+- Privacy: frames stay on the hub. Only a budgeted NVIDIA check sends one frame + up to 6 reference photos.
+  OpenAI never receives camera images. No keys go on the robot. `HUB_FACE_ID=0` turns face features off;
+  `HUB_GREET=0` only the greeting.
+
+### Web page
+
+Open **http://localhost:8080/ui** on the hub machine (or `http://robot.mohammadabbasi.com:8080/ui` from the LAN). It
+shows a live preview from the robot's camera (about 1 fps), the enroll form, what the local scan sees, the NVIDIA
+budget, and the list of enrolled people with their photos (voice enrollments appear here too).
+
+1. Stand 0.5–1 m in front of Vector, facing him, with light on your face (not behind you).
+2. Type your name, click **enroll**, and hold still about 5 s while it takes 3 photos. Frames without exactly one
+   clear face are skipped (checked locally, no NVIDIA call).
 
 ```bash
 curl -XPOST localhost:8080/faces -d '{"name":"Mohammad","count":3,"gap":1.5}'   # enroll
 curl localhost:8080/faces                                                      # list
-curl -XDELETE 'localhost:8080/faces?id=<id>'                                    # remove
+curl -XDELETE 'localhost:8080/faces?id=<id>'                                    # remove one photo
+curl -XDELETE 'localhost:8080/faces?name=Mohammad'                              # remove a person
 ```
-
-Matching runs on the hub through NVIDIA (`HUB_FACE_MODEL`, key in `NVIDIA_API_KEY` in `.env`), and only on demand: nothing is sent in the background. A camera frame leaves the hub only when (a) you click **enroll** (each photo is checked for a visible face) or (b) a voice turn is an identity question ("what's my name / who am I / do you know me", "wie heiße ich / wer bin ich / kennst du mich", "اسم من چیه / من کی هستم / منو میشناسی"). Then the hub takes the newest face frame (≤ `HUB_FACE_FRAME_MAX_AGE_S`, 5 s), makes one call (retries on a busy endpoint, `HUB_FACE_TIMEOUT` 25 s) while Vector shows the thinking face, and puts the result into that turn's prompt only. There are no periodic checks and no automatic greeting. OpenAI never receives camera images (STT gets audio, chat gets text). The camera preview on `/ui` stays on the hub. The last check is in `/status` under `person` (`calls` = identity checks, `enroll_calls` = enroll checks). Vector only says a name when it recognised an enrolled face with confidence ≥ `HUB_FACE_MIN_CONF` (0.7); otherwise it says it doesn't recognise you or can't see you. No keys go on the robot. Set `HUB_FACE_ID=0` and run `make hub` to turn it off.
 
 ## Wake word: "Hey Vector" ... "Stop Vector"
 

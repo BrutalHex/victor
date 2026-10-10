@@ -14,6 +14,9 @@ import unittest
 import zlib
 
 os.environ.setdefault("HUB_FACE_DB", os.path.join(tempfile.gettempdir(), "victor-faces-test.db"))
+os.environ.setdefault("HUB_FACE_LOCAL", "0")  # these tests cover the NVIDIA-only path; test_faces.py the local one
+os.environ.setdefault("HUB_NVIDIA_BUDGET_FILE", os.path.join(tempfile.mkdtemp(), "nv.json"))
+os.environ.setdefault("HUB_GREET_FILE", os.path.join(tempfile.mkdtemp(), "greet.json"))
 
 from explore import BACK_OFF, LOOK_DOWN, LOOK_UP, STOP, Explorer  # noqa: E402
 from faces import FaceDB, cosine, embed  # noqa: E402
@@ -813,6 +816,7 @@ class FaceToName(unittest.TestCase):
         from face_id import FaceID
         f = FaceID(self.db())
         f.key = "k"
+        f.retries = 4  # default is 1 now (every retry spends NVIDIA budget)
         f.sleep = lambda s: None
         n = {"c": 0}
 

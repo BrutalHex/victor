@@ -29,6 +29,12 @@ def _connect(path: str) -> sqlite3.Connection:
     cols = {r[1] for r in conn.execute("PRAGMA table_info(faces)").fetchall()}
     if "jpeg" not in cols:  # reference photo for the VLM matcher (face_id.py)
         conn.execute("ALTER TABLE faces ADD COLUMN jpeg BLOB")
+    # extra local (SFace) embeddings learned from NVIDIA-confirmed sightings (face_watch.py)
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS face_emb ("
+        "id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, emb BLOB NOT NULL,"
+        "source TEXT NOT NULL DEFAULT '', created REAL NOT NULL)"
+    )
     conn.commit()
     return conn
 
@@ -110,8 +116,34 @@ class FaceDB:
     def delete_name(self, name: str) -> int:
         with self.lock:
             cur = self.conn.execute("DELETE FROM faces WHERE lower(name)=lower(?)", (name.strip(),))
+            self.conn.execute("DELETE FROM face_emb WHERE lower(name)=lower(?)", (name.strip(),))
             self.conn.commit()
             return cur.rowcount
+
+    def photos(self) -> list[tuple[int, str, bytes]]:
+        """All stored reference photos (id, name, jpeg) for the local matcher."""
+        with self.lock:
+            rows = self.conn.execute("SELECT id, name, jpeg FROM faces WHERE jpeg IS NOT NULL ORDER BY id").fetchall()
+        return [(r[0], r[1], bytes(r[2])) for r in rows]
+
+    def names(self) -> list[str]:
+        with self.lock:
+            rows = self.conn.execute("SELECT name FROM faces GROUP BY lower(name) ORDER BY min(id)").fetchall()
+        return [r[0] for r in rows]
+
+    def add_embedding(self, name: str, emb: bytes, source: str = "", keep: int = 20) -> None:
+        with self.lock:
+            self.conn.execute("INSERT INTO face_emb(name, emb, source, created) VALUES(?,?,?,?)",
+                              (name, emb, source, time.time()))
+            self.conn.execute(
+                "DELETE FROM face_emb WHERE lower(name)=lower(?) AND id NOT IN "
+                "(SELECT id FROM face_emb WHERE lower(name)=lower(?) ORDER BY id DESC LIMIT ?)", (name, name, keep))
+            self.conn.commit()
+
+    def embeddings(self) -> list[tuple[str, bytes]]:
+        with self.lock:
+            rows = self.conn.execute("SELECT name, emb FROM face_emb ORDER BY id").fetchall()
+        return [(r[0], bytes(r[1])) for r in rows]
 
     def refs(self, limit: int = 6, per_name: int = 2) -> list[tuple[str, bytes]]:
         """Newest reference photos, at most per_name per person, limit in total."""
