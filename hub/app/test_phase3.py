@@ -1908,3 +1908,15 @@ class WakeRobust(unittest.TestCase):
             self.assertEqual(m.SESSION.state, "awake")
         finally:
             m.SESSION, m.VOICE.transcribe, m.VOICE.last_raw, m.cue_wake = saved
+
+
+class SpeakClock(unittest.TestCase):
+    def test_pop_cmds_tracks_robot_playback(self):
+        import main
+        main.pop_cmds()
+        main.SPEAK["until"] = 0.0
+        main.queue_cmd(main.CMD_SPEAK, b"\x00\x00" * main.RATE)  # 1 s
+        main.queue_cmd(main.CMD_SPEAK, b"\x00\x00" * (main.RATE // 2))  # queued behind it
+        main.pop_cmds()
+        left = main.SPEAK["until"] - time.time()
+        self.assertTrue(1.3 < left <= 1.5, left)

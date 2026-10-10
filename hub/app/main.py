@@ -53,9 +53,13 @@ _WINDOW = []
 LOCK = threading.Lock()
 EXPLORER = Explorer()
 FACE_DB = FaceDB()  # HUB_FACE_DB or /app/data/faces.db (persistent volume)
+try:  # numpy once, in the main thread, before Voice() starts its scipy warm-up thread:
+    import numpy  # noqa: F401  # the two imports raced and onnxruntime's failed (edge model absent, 10 Oct)
+except ImportError:
+    pass
 FACE_ID = FaceID(FACE_DB)
-VOICE = Voice()
 EDGE = Edge()
+VOICE = Voice()
 PENDING: list[tuple[int, bytes]] = []
 UTTERANCES: queue.Queue[bytes] = queue.Queue(maxsize=2)
 # Wake word (HUB_WAKE, default on). Asleep, an utterance still gets the normal
@@ -111,10 +115,17 @@ def queue_cmd(kind: int, payload: bytes) -> None:
         PENDING.append((kind, payload))
 
 
+SPEAK = {"until": 0.0}  # when the robot finishes playing what we sent (its mic is muted until then)
+
+
 def pop_cmds() -> list[tuple[int, bytes]]:
     with LOCK:
         out = list(PENDING)
         PENDING.clear()
+        now = time.time()
+        for kind, payload in out:
+            if kind == CMD_SPEAK:
+                SPEAK["until"] = max(now, SPEAK["until"]) + len(payload) / (2 * RATE)
         return out
 
 
@@ -1023,6 +1034,7 @@ class Status(BaseHTTPRequestHandler):
             body["intents"] = {"enabled": INTENTS_ON, "volume": VOLUME.level, "timer_left_s": TIMER.left()}
             body["session"] = dict(SESSION.status(), asleep=dict(ASLEEP), chime=WAKE_CHIME, button=dict(BUTTON))
             body["openai_calls"] = dict(Api.CALLS)
+            body["speak_left_s"] = round(max(0.0, SPEAK["until"] - time.time()), 2)
             self._json(body)
             return
         if path == "/intents":
