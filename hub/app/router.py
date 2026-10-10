@@ -106,7 +106,9 @@ SCHEMA = {
 
 PROMPT = (
     "You route what a person said to Vector, a small home robot, transcribed from speech. The text may be "
-    "English, German or Persian (Farsi), sometimes with a wake word like 'Hey Vector' / 'سلام وکتور'.\n"
+    "English, German or Persian (Farsi), sometimes with a wake word like 'Hey Vector' / 'سلام وکتور'. "
+    "The robot's name is Vector (it is a Vector robot); speech-to-text often writes it as Victor, Vektor or "
+    "Viktor - that is the user addressing the robot, not another person.\n"
     "Decide: is it a direct request to the robot to perform one of the commands below RIGHT NOW (type=command, "
     "intent=that id), or anything else (type=chat, intent=null): conversation, opinions, questions about a "
     "topic, stories, past or hypothetical actions, talking ABOUT a command, questions about who someone is.\n"

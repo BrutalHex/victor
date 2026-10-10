@@ -20,6 +20,7 @@ import (
 	"github.com/BrutalHex/victor/robot/agent/internal/anki"
 	"github.com/BrutalHex/victor/robot/agent/internal/audio"
 	"github.com/BrutalHex/victor/robot/agent/internal/blemask"
+	"github.com/BrutalHex/victor/robot/agent/internal/button"
 	"github.com/BrutalHex/victor/robot/agent/internal/camera"
 	"github.com/BrutalHex/victor/robot/agent/internal/cliffcal"
 	"github.com/BrutalHex/victor/robot/agent/internal/face"
@@ -242,6 +243,7 @@ func runDaemon() int {
 	// Status files: rewritten on change at most 2/s (was ~300 writes/s).
 	status := statusfile.New()
 	tick := time.NewTicker(*rate)
+	var btn button.Debouncer // backpack presses -> SENSOR ButtonPresses -> hub button_press
 	defer tick.Stop()
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
@@ -274,10 +276,15 @@ func runDaemon() int {
 						fmt.Printf("cliffs calibrated floor=%v thresh=%v\n", cal.Floor, cal.Thresh)
 					}
 				}
+				if btn.Feed(fr.Button, time.Now()) {
+					fmt.Printf("button press n=%d\n", btn.Presses)
+					status.Put("/data/victor/button.txt", fmt.Sprintf("presses=%d at=%s\n", btn.Presses, time.Now().Format(time.RFC3339)))
+				}
 				lo, hi := body.LiftRange()
 				// CHARGE-LATCH button gesture: off unless charge-latch.enabled
-				// exists (SSH is voice-only since 10 Oct 2026; the button reads
-				// "pressed" on every frame here). Code kept, not fed.
+				// exists (SSH is voice-only since 10 Oct 2026). The button is now
+				// read correctly (touchLevel[1]); with the gesture off a press
+				// only wakes the hub voice session, it never reaches the latch.
 				if buttonLatch(m, latch.Sample{T: time.Since(start), Button: fr.Button, OnCharger: fr.OnCharger(), Driving: fr.Driving(), LiftNorm: fr.LiftNorm(lo, hi)}, sshctl.LatchEnabled()) {
 					on, err := ssh.Toggle()
 					sshOn.Store(on)
@@ -526,6 +533,13 @@ func runDaemon() int {
 			}
 			if sshOn.Load() {
 				s.Flags |= vct1.FlagSSHOn
+			}
+			s.ButtonPresses = btn.Presses
+			if have {
+				s.Flags &^= vct1.FlagButton // debounced level, not the raw sample
+				if btn.Pressed() {
+					s.Flags |= vct1.FlagButton
+				}
 			}
 			lnk.QueueMedia(hub.SendSensor(s))
 			if gotSpine {

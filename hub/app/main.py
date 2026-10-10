@@ -21,6 +21,9 @@ from face_id import NO_CONTEXT, FaceID, is_identity_question, person_context
 import intents as intents_mod
 import router
 import voice as voice_mod
+import wake as wake_mod
+from api import Api
+from session import Session
 from protocol import FLAG_FACE, FLAG_ROBOT_NOISE, TYPE_AUDIO, TYPE_SENSOR, TYPE_VIDEO, decode, unpack_sensor
 from safety import classical_vote
 from voice import MIN_UTTERANCE_BYTES, Voice, _wav_wrap, speech_like, tone
@@ -55,6 +58,12 @@ VOICE = Voice()
 EDGE = Edge()
 PENDING: list[tuple[int, bytes]] = []
 UTTERANCES: queue.Queue[bytes] = queue.Queue(maxsize=2)
+# Wake word (HUB_WAKE, default on). Asleep, an utterance still gets the normal
+# STT, but the transcript is only checked for "Hey Vector": a miss is dropped
+# silently (no router, chat, TTS or thinking face). Awake until "Stop Vector".
+SESSION = Session()
+ASLEEP = {"heard": 0, "ignored": 0, "woke": 0, "last": ""}
+WAKE_CHIME = os.environ.get("HUB_WAKE_CHIME", "1").strip().lower() not in ("0", "false", "no", "off", "")
 LAST_JPEG = {"nav": b"", "face": b""}
 # Mic test recorder (POST /record). While it runs the VAD/OpenAI turn is paused so
 # the file is the continuous robot stream, not VAD-gated pieces.
@@ -129,6 +138,7 @@ def _ingest_vct1(buf: bytes, src: str = "") -> None:
             sensor = unpack_sensor(payload)
         except ValueError:
             return
+        _button_events(sensor)
         with LOCK:
             STATE["sensors"] += 1
             STATE["last_seq"] = hdr.seq
@@ -166,6 +176,43 @@ def _ingest_vct1(buf: bytes, src: str = "") -> None:
             _on_nav_frame(payload)
 
 
+BUTTON = {"last": None, "presses": 0, "last_at": 0.0, "last_action": ""}
+
+
+def _button_events(sensor: dict) -> None:
+    """SENSOR carries the robot's running press count; each increase is one
+    button_press (a lost UDP packet only delays it). A drop = agent restart."""
+    n = sensor.get("button_presses")
+    if n is None:
+        return
+    with LOCK:
+        last = BUTTON["last"]
+        BUTTON["last"] = n
+    if last is None or n == last:
+        return
+    new = (n - last) & 0xFFFF
+    if n < last and new > 50:  # agent restarted (counter back near 0), not 65k presses
+        return
+    for _ in range(min(new, 3)):
+        button_press()
+
+
+def button_press() -> str:
+    """Backpack press: asleep -> wake (same cue as 'Hey Vector'). Awake: logged only."""
+    with LOCK:
+        BUTTON["presses"] += 1
+        BUTTON["last_at"] = time.time()
+    if SESSION.enabled and SESSION.state != "awake":
+        SESSION.wake("button")
+        cue_wake()
+        action = "wake"
+    else:
+        action = "ignored (awake)" if SESSION.enabled else "ignored (wake word off)"
+    BUTTON["last_action"] = action
+    print(f"button_press -> {action}", flush=True)
+    return action
+
+
 def _enqueue_utterance(utt: bytes) -> None:
     while True:
         try:
@@ -198,6 +245,9 @@ def _on_audio(pcm: bytes, robot_noise: bool = False) -> None:
     if not speech_like(utt):
         print(f"voice skip rumble {len(utt)} bytes rms={VOICE.last_rms} noise={int(VOICE.noise)}", flush=True)
         return
+    if not SESSION.listening():
+        _enqueue_utterance(("asleep", utt))  # STT + wake check only; no thinking face
+        return
     if not begin_think("vad"):
         return
     print(f"voice utterance {len(utt)} bytes rms={VOICE.last_rms} noise={int(VOICE.noise)}", flush=True)
@@ -207,6 +257,55 @@ def _on_audio(pcm: bytes, robot_noise: bool = False) -> None:
     except OSError as exc:
         print(f"voice wav save failed {exc}", flush=True)
     _enqueue_utterance(utt)
+
+
+def chime() -> bytes:
+    """Soft two-note rising chime (16 kHz PCM), the wake cue."""
+    import math as _m
+    import struct as _s
+
+    out = bytearray()
+    for hz, ms in ((660.0, 90), (880.0, 120)):
+        n = 16000 * ms // 1000
+        for i in range(n):
+            env = min(1.0, i / 160, (n - i) / 400)
+            out += _s.pack("<h", int(3500 * env * _m.sin(2 * _m.pi * hz * i / 16000)))
+    return bytes(out)
+
+
+def cue_wake() -> None:
+    queue_cmd(CMD_FACEUI, b"anim|lookatme")  # eyes widen / look up at you
+    if WAKE_CHIME:
+        queue_cmd(CMD_SPEAK, VOLUME.apply(chime()))
+
+
+def cue_sleep() -> None:
+    queue_cmd(CMD_FACEUI, b"anim|goodnight")
+
+
+def asleep_turn(pcm: bytes) -> dict:
+    """One utterance while asleep: STT, then only the wake check. A hit opens
+    the session (cue); words after the wake phrase run at once as turn one."""
+    if SESSION.listening():  # woke while this waited: a normal turn
+        run_turn(pcm)
+        return {"hit": False, "queued": True}
+    text = VOICE.transcribe(pcm)
+    hit, rest = wake_mod.match_wake(text) if text else (False, "")
+    with LOCK:
+        ASLEEP["heard"] += 1 if text else 0
+        ASLEEP["ignored"] += 0 if hit or not text else 1
+        ASLEEP["woke"] += 1 if hit else 0
+        ASLEEP["last"] = text[:80]
+    if not hit:
+        if text:
+            print(f"asleep ignore text={text!r}", flush=True)
+        return {"hit": False, "text": text}
+    print(f"asleep WAKE text={text!r} rest={rest!r}", flush=True)
+    SESSION.wake("phrase")
+    cue_wake()
+    if len(rest) >= 2:
+        run_turn(pcm, text=text)  # "Hey Vector, what time is it?" -> answered now
+    return {"hit": True, "text": text, "rest": rest}
 
 
 THINK_REFRESH_S = float(os.environ.get("HUB_THINK_REFRESH", "4"))
@@ -280,18 +379,30 @@ def think_loop() -> None:
     while True:
         time.sleep(0.5)
         think_keepalive()
+        if SESSION.check_idle():  # HUB_SESSION_IDLE_S (0 = never)
+            cue_sleep()
 
 
-def reply_turn(pcm: bytes) -> tuple[str, str, bytes]:
+def reply_turn(pcm: bytes, text: str | None = None) -> tuple[str, str, bytes]:
     """STT -> stock command (no chat) or chat (web search) -> TTS, timed.
     Thinking stays on throughout. A matched command leaves its face clip and
     robot action in TURN_OUT for run_turn to send after the reply."""
     t = time.time()
-    text = VOICE.transcribe(pcm)
+    if text is None:
+        text = VOICE.transcribe(pcm)
     TURN_PERSON["ctx"] = ""
     TURN_OUT.update(show=b"", action="", intent="")
     VOICE.last_via = ""
     t_r = time.time()
+    if text and SESSION.enabled:
+        if wake_mod.is_session_stop(text):
+            return session_stop(text)
+        bare = wake_mod.strip_wake(text)
+        if not bare:  # just "Hey Vector" again inside the session
+            cue_wake()
+            SESSION.touch()
+            return text, "", b""
+        text = bare
     intent, how = (None, "off")
     confirm = SSH_CONFIRM["until"] > time.time()
     if text:
@@ -328,6 +439,8 @@ def reply_turn(pcm: bytes) -> tuple[str, str, bytes]:
     finally:
         TURN_PERSON["ctx"] = ""
     t_chat = time.time()
+    reply = voice_mod.own_name(reply)
+    SESSION.add(text, reply, getattr(VOICE, "last_lang", ""))
     audio = VOICE.tts(reply) if reply else b""
     t_tts = time.time()
     print(
@@ -336,6 +449,17 @@ def reply_turn(pcm: bytes) -> tuple[str, str, bytes]:
         flush=True,
     )
     return text, reply, audio
+
+
+def session_stop(text: str) -> tuple[str, str, bytes]:
+    """'Stop Vector': stop motion/wander, short ack, asleep cue, back to asleep."""
+    lang = wake_mod.stop_lang(text, getattr(VOICE, "last_lang", "") or "en")
+    reply = intents_mod.say("session_stop", lang)
+    SESSION.sleep("phrase")
+    SSH_CONFIRM["until"] = 0.0
+    TURN_OUT.update(show=b"anim|goodnight", action="stop", intent="session_stop")
+    print(f"session stop by {text!r} lang={lang}", flush=True)
+    return text, reply, VOICE.tts(reply)
 
 
 # ------------------------------------------------------------ stock commands
@@ -622,9 +746,12 @@ def run_intent(intent) -> str:
 def voice_loop() -> None:
     """One OpenAI turn at a time. Mic stays closed until the reply is queued."""
     while True:
-        pcm = UTTERANCES.get()
+        item = UTTERANCES.get()
         try:
-            run_turn(pcm)
+            if isinstance(item, tuple):  # ("asleep", pcm)
+                asleep_turn(item[1])
+            else:
+                run_turn(item)
         except Exception as exc:  # noqa: BLE001 - one bad turn must never kill the voice thread
             print(f"voice loop turn crashed {exc!r}", flush=True)
             try:
@@ -635,15 +762,16 @@ def voice_loop() -> None:
                 pass
 
 
-def run_turn(pcm: bytes) -> None:
+def run_turn(pcm: bytes, text: str | None = None) -> None:
     """One reply turn; thinking is always cleared, even if a call raises."""
     with LOCK:
         running = bool(STATE.get("thinking"))
     if not running:  # turn was not opened by _on_audio (tests, /record)
         begin_think("queue")
+    heard = text
     text, reply, audio, why = "", "", b"", "done"
     try:
-        text, reply, audio = reply_turn(pcm)
+        text, reply, audio = reply_turn(pcm, heard)
         if not audio:
             why = "no-reply" if text else ("dropped" if getattr(VOICE, "last_drop", "") else "no-transcript")
     except Exception as exc:  # noqa: BLE001 - never leave the face thinking
@@ -712,6 +840,7 @@ def _person_context() -> str:
 
 
 voice_mod.PERSON_CONTEXT = _person_context
+voice_mod.HISTORY = lambda: SESSION.messages()  # global: tests swap SESSION
 
 
 def handle_robot(conn: socket.socket) -> None:
@@ -819,6 +948,8 @@ class Status(BaseHTTPRequestHandler):
             }
             body["person"] = FACE_ID.present()
             body["intents"] = {"enabled": INTENTS_ON, "volume": VOLUME.level, "timer_left_s": TIMER.left()}
+            body["session"] = dict(SESSION.status(), asleep=dict(ASLEEP), chime=WAKE_CHIME, button=dict(BUTTON))
+            body["openai_calls"] = dict(Api.CALLS)
             self._json(body)
             return
         if path == "/intents":
@@ -1025,11 +1156,15 @@ Photos go to the face-matching AI only when you click enroll or ask Vector "what
 <img class="live" id="live" alt="no camera frame yet">
 <form onsubmit="enroll(event)" class="row"><input name="name" placeholder="your name" required>
 <button>enroll (3 photos, ~5 s)</button></form>
+<div class="row" id="sess" style="font-weight:bold"></div>
 <div class="row" id="who"></div>
 <pre id="out"></pre><div id="list"></div>
 <script>
 function tick(){document.getElementById('live').src='/frame?kind=face&t='+Date.now();
- fetch('/status').then(r=>r.json()).then(j=>{const p=j.person||{};
+ fetch('/status').then(r=>r.json()).then(j=>{const p=j.person||{};const s=j.session||{};
+  document.getElementById('sess').textContent='voice session: '+(s.state||'?').toUpperCase()+' for '+s.for_s+'s'+
+   ' (wakes '+s.wakes+', turns '+s.turns+', history '+s.history_turns+(s.idle_timeout_s?', idle timeout '+s.idle_timeout_s+'s':'')+
+   ') | asleep: heard '+(s.asleep||{}).heard+', ignored '+(s.asleep||{}).ignored+', last '+JSON.stringify((s.asleep||{}).last||'');
   document.getElementById('who').textContent='last identity check: '+(p.present_name||'nobody')+
    ' conf '+p.confidence+' age '+p.age_s+'s person='+p.present_person+' checks '+p.calls+
    (p.skip?' ('+p.skip+')':'')+(p.error?' error: '+p.error:'');});}
@@ -1063,6 +1198,11 @@ def main() -> None:
     tcp_port = int(os.environ.get("HUB_SKILL_PORT", "7443"))
     http_port = int(os.environ.get("HUB_HTTP_PORT", "8080"))
     threading.Thread(target=voice_loop, daemon=True).start()
+    if SESSION.enabled:
+        print(f"wake word on: asleep until 'Hey Vector', awake until 'Stop Vector'; "
+              f"idle timeout {SESSION.idle_s or 'off'}", flush=True)
+    else:
+        print("wake word off (HUB_WAKE=0): always listening", flush=True)
     if FACE_ID.ready():
         print(f"face id on: model={FACE_ID.model} key=${FACE_ID.key_var} (value not logged)", flush=True)
     else:

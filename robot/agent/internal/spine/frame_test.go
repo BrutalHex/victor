@@ -46,7 +46,7 @@ func TestParsePackedFields(t *testing.T) {
 	binary.LittleEndian.PutUint16(b[56:], 111)
 	binary.LittleEndian.PutUint16(b[64:], 2000) // batt
 	binary.LittleEndian.PutUint16(b[66:], 3000) // charger
-	binary.LittleEndian.PutUint16(b[91:], 1)    // button
+	binary.LittleEndian.PutUint16(b[94:], 1)    // button (touchLevel[1])
 	f, err := ParsePacked(b)
 	if err != nil {
 		t.Fatal(err)

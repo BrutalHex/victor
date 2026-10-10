@@ -94,10 +94,17 @@ type Sensor struct {
 	ChargerMV   uint16
 	Touch       uint16
 	Flags       uint16 // bit0 button, bit1 picked_up, bit2 on_charger, bit3 falling
+	// ButtonPresses: debounced backpack presses since the agent started
+	// (wraps). The hub turns an increase into a button_press event. 49-byte
+	// payload; a 47-byte one (older agent) has none.
+	ButtonPresses uint16
 }
 
+// SensorSize is the SENSOR payload length (47 before ButtonPresses).
+const SensorSize = 49
+
 func (s Sensor) Marshal() []byte {
-	b := make([]byte, 47)
+	b := make([]byte, SensorSize)
 	off := 0
 	for i := 0; i < 4; i++ {
 		binary.LittleEndian.PutUint16(b[off:], s.Cliffs[i])
@@ -130,6 +137,8 @@ func (s Sensor) Marshal() []byte {
 	binary.LittleEndian.PutUint16(b[off:], s.Touch)
 	off += 2
 	binary.LittleEndian.PutUint16(b[off:], s.Flags)
+	off += 2
+	binary.LittleEndian.PutUint16(b[off:], s.ButtonPresses)
 	return b
 }
 
@@ -170,6 +179,10 @@ func UnmarshalSensor(b []byte) (Sensor, error) {
 	s.Touch = binary.LittleEndian.Uint16(b[off:])
 	off += 2
 	s.Flags = binary.LittleEndian.Uint16(b[off:])
+	off += 2
+	if len(b) >= off+2 {
+		s.ButtonPresses = binary.LittleEndian.Uint16(b[off:])
+	}
 	return s, nil
 }
 

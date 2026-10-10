@@ -222,7 +222,9 @@ def _http_error(where: str, exc: BaseException) -> None:
 
 
 SYSTEM_PROMPT = (
-    "You are Vector, a small desk robot that answers out loud. "
+    "Your name is Vector. You are a Vector robot, the small desk robot (made by Anki, now Digital Dream Labs), "
+    "and you answer out loud. Speech-to-text often writes your name as Victor, Vektor or Viktor: that is the "
+    "user talking to you, Vector. Always call yourself Vector, never Victor. "
     "Reply in one or two short spoken sentences, under 30 words. "
     "Plain text only: no markdown, no lists, no URLs, no citations or source names in brackets. "
     "For today's date, the weekday or the time, use the local clock below; never say you cannot know it. "
@@ -262,6 +264,28 @@ def now_context(now: _dt.datetime | None = None) -> str:
 
 
 PERSON_CONTEXT = None  # main sets a callable -> camera/identity section (face_id.person_context)
+HISTORY = None  # main sets a callable -> this wake session's earlier turns (chat messages)
+
+
+def _history() -> list[dict]:
+    if HISTORY is None:
+        return []
+    try:
+        return list(HISTORY())
+    except Exception as exc:  # noqa: BLE001
+        print(f"voice history failed {exc!r}", flush=True)
+        return []
+
+
+_SELF_VICTOR = re.compile(r"\b(I'm|I am|my name is|call me|ich bin|ich heiße|mein name ist)\s+(?:Victor|Viktor|Vektor)\b", re.I)
+
+
+def own_name(reply: str) -> str:
+    """Vector never introduces itself as Victor (STT spelling leaking into a reply)."""
+    if not reply:
+        return reply
+    reply = _SELF_VICTOR.sub(lambda m: m.group(1) + " Vector", reply)
+    return reply.replace("ویکتور هستم", "وکتور هستم")
 
 
 def system_prompt(now: _dt.datetime | None = None) -> str:
@@ -571,8 +595,8 @@ class Voice:
     def _stt(self, pcm: bytes, clip: bytes, language: str) -> str:
         t0 = time.time()
         fields = {"model": self.stt_model, "language": language, "response_format": "json"}
-        if not language:
-            fields["prompt"] = langmod.stt_prompt(self.langs)
+        # name hint always (also on a pinned language): "Vector", not "Victor"
+        fields["prompt"] = langmod.stt_prompt(self.langs)
         body, ctype = multipart(fields, _wav_wrap(clip))
         connects = self.api.connects
         try:
@@ -638,7 +662,7 @@ class Voice:
         payload = {
             "model": self.search_model,
             "instructions": system_prompt(),
-            "input": text,
+            "input": _history() + [{"role": "user", "content": text}],
             "tools": [tool],
             "tool_choice": "auto",
             "max_output_tokens": 300,
@@ -655,6 +679,7 @@ class Voice:
             "model": self.model,
             "messages": [
                 {"role": "system", "content": system_prompt()},
+                *_history(),
                 {"role": "user", "content": text},
             ],
         }

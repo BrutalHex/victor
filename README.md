@@ -34,7 +34,7 @@ Later debug access is **by voice** (changed at the owner's request on 10 Oct 202
 
 Vector answers "SSH is on" / "SSH is off" (in your language) once the robot confirms it, and the face shows `SSH ON` / `SSH OFF` for 1.5 s. Turning SSH **off** needs one of the exact phrases, or the OpenAI router at >= 0.85 with "SSH" and an off verb in the sentence; anything less and Vector asks "Did you want me to turn SSH off?" and only a "yes" within ~10 s does it, so a misheard sentence can't lock you out. Hub telemetry stays up while SSH is closed. The agent sets `/data/victor/ssh.enabled` and starts/stops `sshd.socket` (or `dropbear`); the state persists across reboots.
 
-The old CHARGE-LATCH button gesture is off (this body reports the backpack button as pressed on every frame); `touch /data/victor/charge-latch.enabled` re-arms it. Safety net unchanged: SSH off >= 24 h AND hub heartbeat missing 10 min AND on the charger -> SSH turns itself on (face `SSH AUTO`).
+The old CHARGE-LATCH button gesture is off; `touch /data/victor/charge-latch.enabled` re-arms it. The button is now read from the right field (`touchLevel[1]`, offset 94, as in the vic HAL; the old read at 91 looked pressed on every frame), and with the gesture off a press only wakes the voice session (below): it never reaches the latch and never toggles SSH. Safety net unchanged: SSH off >= 24 h AND hub heartbeat missing 10 min AND on the charger -> SSH turns itself on (face `SSH AUTO`).
 
 ## Edge model
 
@@ -98,6 +98,32 @@ curl -XDELETE 'localhost:8080/faces?id=<id>'                                    
 ```
 
 Matching runs on the hub through NVIDIA (`HUB_FACE_MODEL`, key in `NVIDIA_API_KEY` in `.env`), and only on demand: nothing is sent in the background. A camera frame leaves the hub only when (a) you click **enroll** (each photo is checked for a visible face) or (b) a voice turn is an identity question ("what's my name / who am I / do you know me", "wie heiße ich / wer bin ich / kennst du mich", "اسم من چیه / من کی هستم / منو میشناسی"). Then the hub takes the newest face frame (≤ `HUB_FACE_FRAME_MAX_AGE_S`, 5 s), makes one call (retries on a busy endpoint, `HUB_FACE_TIMEOUT` 25 s) while Vector shows the thinking face, and puts the result into that turn's prompt only. There are no periodic checks and no automatic greeting. OpenAI never receives camera images (STT gets audio, chat gets text). The camera preview on `/ui` stays on the hub. The last check is in `/status` under `person` (`calls` = identity checks, `enroll_calls` = enroll checks). Vector only says a name when it recognised an enrolled face with confidence ≥ `HUB_FACE_MIN_CONF` (0.7); otherwise it says it doesn't recognise you or can't see you. No keys go on the robot. Set `HUB_FACE_ID=0` and run `make hub` to turn it off.
+
+## Wake word: "Hey Vector" ... "Stop Vector"
+
+Vector no longer answers everything it hears. After a hub start it is **asleep**; a conversation runs from
+"Hey Vector" to "Stop Vector" (owner's request, 10 Oct 2026). No extra model or process: the robot streams the mic
+as before, the hub noise gate and the normal speech-to-text run, and while asleep the transcript is only checked
+for the wake phrase (`hub/app/wake.py`). Anything else is dropped silently: no router, chat, speech or thinking
+face, so the only cost of background talk is one transcription call.
+
+- Wake: "Hey Vector" / "Hi Vector" / "Okay Vector" / "Vector, ...", "Hallo Vektor", "هی وکتور" / "سلام وکتور"
+  (Victor / Vektor / Viktor accepted), at the start of the sentence or after a greeting anywhere in it.
+  Cue: eyes look up at you (`lookatme`) plus a soft two-note chime (`HUB_WAKE_CHIME=0` mutes the chime).
+  "Hey Vector, what time is it?" answers at once from the same transcript.
+- **Backpack button**: one press while asleep wakes him the same way (same cue). A press while awake is only logged.
+- Awake: every utterance runs the normal pipeline (commands, chat with web search, "what's my name?" face check,
+  SSH by voice with its rules); the session's turns are kept as chat history and cleared when it ends.
+- Sleep: "Stop Vector" / "Vector, stop" / "Stop listening", "Vektor stopp" / "Hör auf zuzuhören", "وکتور بسه" /
+  "وکتور استاپ" (whole sentence only). It also stops any motion or wander, says "Okay, I'll stop listening."
+  in your language and plays the `goodnight` face. Plain "stop" (or "Vector, stop driving") stays the motion stop.
+- Optional idle timeout: `HUB_SESSION_IDLE_S=600` ends a session after 10 min without a turn (default 0 = only
+  "Stop Vector"). `HUB_SESSION_HISTORY` (default 8) = turns kept as context.
+- `/status` -> `session` (state, wakes, turns, history, asleep heard/ignored, button presses, `openai_calls` per
+  endpoint); `/ui` shows the state on top.
+- The name: system prompt, router and STT prompt say "Your name is Vector. You are a Vector robot"; STT's
+  "Victor/Vektor/Viktor" counts as addressing Vector, and a reply never introduces itself as Victor.
+- Undo: `HUB_WAKE=0` in `.env` + `make hub` = always listening, exactly as before.
 
 ## Voice commands (stock Vector set)
 

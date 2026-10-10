@@ -37,6 +37,8 @@ _STALE = (
 
 
 class Api:
+    CALLS: dict[str, int] = {}  # per endpoint, all instances (asleep must stay 0 for audio)
+
     def __init__(self, key: str, host: str = HOST) -> None:
         self.key = key
         self.host = host
@@ -81,6 +83,7 @@ class Api:
         threading.Thread(target=run, daemon=True).start()
 
     def post(self, path: str, body: bytes, content_type: str, timeout: float) -> bytes:
+        Api.CALLS[path] = Api.CALLS.get(path, 0) + 1
         headers = {
             "Authorization": f"Bearer {self.key}",
             "Content-Type": content_type,

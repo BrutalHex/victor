@@ -72,4 +72,6 @@ def unpack_sensor(payload: bytes) -> dict:
         "explore_enabled": bool(flags & 16),  # /data/victor/explore.enabled on the robot
         "wandering": bool(flags & 32),
         "ssh_on": bool(flags & 64),  # /data/victor/ssh.enabled on the robot (voice SSH toggle)
+        # debounced backpack presses since the agent started (None: older 47-byte agent)
+        "button_presses": struct.unpack_from("<H", payload, 47)[0] if len(payload) >= 49 else None,
     }

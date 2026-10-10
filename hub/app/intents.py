@@ -451,6 +451,8 @@ R = {
     "ssh_cancel": {"en": "Okay, SSH stays on.", "de": "Okay, SSH bleibt an.", "fa": "باشه، اس اس اچ روشن می‌مونه."},
     "ssh_fail": {"en": "I couldn't change SSH.", "de": "Ich konnte SSH nicht umschalten.", "fa": "نتونستم اس اس اچ رو عوض کنم."},
     "ssh_unknown": {"en": "I can't tell right now.", "de": "Das weiß ich gerade nicht.", "fa": "الان نمی‌دونم."},
+    "session_stop": {"en": "Okay, I'll stop listening.", "de": "Okay, ich höre nicht mehr zu.",
+                     "fa": "باشه، دیگه گوش نمی‌دم."},
     "explore_stop": {"en": "Okay, I'll stop.", "de": "Okay, ich halte an.", "fa": "باشه، وایمیستم."},
     "cube": {"en": "I can't play with my cube yet.", "de": "Mit meinem Würfel kann ich noch nicht spielen.", "fa": "هنوز نمی‌تونم با مکعبم بازی کنم."},
     "cant": {"en": "Sorry, I can't do that yet.", "de": "Das kann ich leider noch nicht.", "fa": "متأسفم، هنوز این کار رو بلد نیستم."},

@@ -100,3 +100,31 @@ func TestWeakProxReturnIsNotValid(t *testing.T) {
 		}
 	}
 }
+
+// Backpack button = touchLevel[1] at 94. Recorded frames (nobody touching the
+// button) read 0 there; the old read at 91 was non-zero on every frame, so the
+// button looked pressed all the time. 0xFFFF is what the HAL writes for a press.
+func TestButtonIsTouchLevel1(t *testing.T) {
+	n := 0
+	for _, name := range []string{"idle-oncharger.bin.gz", "floor-noprox.bin.gz", "desk-wall165.bin.gz"} {
+		for i, b := range loadFrames(t, name) {
+			fr, err := ParsePacked(b)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if fr.Button {
+				t.Fatalf("%s frame %d: button pressed with nobody pressing it", name, i)
+			}
+			p := append([]byte(nil), b...)
+			p[94], p[95] = 0xff, 0xff
+			fr2, _ := ParsePacked(p)
+			if !fr2.Button || fr2.Touch != fr.Touch || fr2.TouchLevel != fr.TouchLevel || fr2.ProxMM != fr.ProxMM {
+				t.Fatalf("%s frame %d: press not seen or other fields moved", name, i)
+			}
+			n++
+		}
+	}
+	if ButtonBytes != 94 || n != 160 {
+		t.Fatalf("ButtonBytes=%d frames=%d", ButtonBytes, n)
+	}
+}

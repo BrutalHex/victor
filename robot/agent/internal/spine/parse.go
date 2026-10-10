@@ -88,8 +88,11 @@ func ParsePacked(b []byte) (Frame, error) {
 	if len(b) < touchOff+4 {
 		return f, errors.New("short spine tail")
 	}
-	// Button: unchanged on purpose (it feeds CHARGE-LATCH). See ButtonBytes.
-	f.Button = binary.LittleEndian.Uint16(b[touchOff+2:]) > 0
+	// Backpack button = touchLevel[1] (vic HAL GetButtonState(BUTTON_POWER);
+	// the supervisor sets IS_BUTTON_PRESSED when it is > 0). See ButtonBytes.
+	if len(b) >= ButtonBytes+2 {
+		f.Button = binary.LittleEndian.Uint16(b[ButtonBytes:]) > 0
+	}
 	f.TouchLevel, f.TouchHires, f.Touch = touchFields(b)
 	if len(b) >= micOffset+micBytes {
 		f.Mic = make([]int16, micSamples)
@@ -109,10 +112,13 @@ const (
 	touchHiresOff = 100
 )
 
-// ButtonBytes is where Button is read from (offset 91, 2 bytes). Kept as
-// is for the latch; note it overlaps calibrationResult's top byte and the
-// low byte of touchLevel[0] (see deploy notes / tests).
-const ButtonBytes = 91
+// ButtonBytes is where Button is read from: touchLevel[1] at 94 (2 bytes),
+// BUTTON_POWER in wire-os-victor robot/hal/src/hal.cpp (the boot path sets
+// it to 0xFFFF / 0 for pressed / released). Before 10 Oct 2026 this read 91
+// (calibrationResult's top byte + touchLevel[0]'s low byte), which is never
+// 0 on hardware, so the button looked pressed on every frame. Recorded
+// frames (no press) read 0 here on all 160 frames.
+const ButtonBytes = 94
 
 // RangeData at 76 (messages.h): rangeStatus u8, spare u8, rangeMM, signalRate,
 // ambientRate, spadCount, sampleCount (u16 each), calibrationResult u32 at 88.

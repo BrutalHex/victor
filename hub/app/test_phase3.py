@@ -1491,3 +1491,293 @@ class Router(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class WakeSession(unittest.TestCase):
+    """Wake word session (M.O 10 Oct 2026): asleep until 'Hey Vector', a
+    conversation until 'Stop Vector'. Asleep, only STT runs: a transcript
+    without the wake phrase is dropped (no router, chat, TTS, thinking face)."""
+
+    def setUp(self):
+        import main
+        from session import Session
+        self.m = main
+        self.now = [1000.0]
+        main.pop_cmds()
+        with main.LOCK:
+            main.STATE.update(thinking=False, voice_busy=False)
+            main.STATE["last_sensor"] = {"on_charger": True}
+        self.saved = (main.SESSION, main.VOICE.transcribe, main.VOICE.chat, main.VOICE.tts, main.VOICE.push,
+                      main.speech_like, main.VOLUME.path, main.VOLUME.level)
+        main.SESSION = Session(enabled=True, idle_s=0, clock=lambda: self.now[0])
+        self.chats, self.stt, self.tts = [], [], []
+        import voice as voice_mod
+        self.vm = voice_mod
+
+        def chat(t):
+            self.chats.append((t, voice_mod._history()))
+            return "chat reply"
+        main.VOICE.chat = chat
+        main.VOICE.tts = lambda r: self.tts.append(r) or b"\x00\x10" * 8
+        main.VOLUME.path = os.path.join(tempfile.mkdtemp(), "volume.txt")
+        main.VOLUME.level = 4
+        import router
+        self.routes = []
+        saved_route = router.route
+        router.route = lambda api, text, lang, key: self.routes.append(text) or saved_route(api, text, lang, False)
+        self.addCleanup(setattr, router, "route", saved_route)
+        while not main.UTTERANCES.empty():
+            main.UTTERANCES.get_nowait()
+
+    def tearDown(self):
+        m = self.m
+        (m.SESSION, m.VOICE.transcribe, m.VOICE.chat, m.VOICE.tts, m.VOICE.push,
+         m.speech_like, m.VOLUME.path, m.VOLUME.level) = self.saved
+        m.TIMER.cancel()
+        with m.LOCK:
+            m.STATE.update(thinking=False, voice_busy=False, last_sensor=None)
+        while not m.UTTERANCES.empty():
+            m.UTTERANCES.get_nowait()
+        m.pop_cmds()
+
+    def hear(self, text):
+        """One VAD utterance from the robot mic through the real queue; returns
+        the replies spoken and the commands sent to the robot."""
+        m = self.m
+        pcm = b"\x00" * (m.MIN_UTTERANCE_BYTES + 2)
+        m.VOICE.push = lambda p, robot_noise=False: pcm
+        m.speech_like = lambda u: True
+        lang = "de" if any(w in text for w in ("Vektor", "spät", "hör", "Hör")) else (
+            "fa" if any("\u0600" <= c <= "\u06ff" for c in text) else "en")
+
+        def stt(p, q=text):
+            self.stt.append(q)
+            m.VOICE.last_lang = lang
+            return q
+        m.VOICE.transcribe = stt
+        m.STATE["last_reply"] = None
+        m._on_audio(b"\x01\x00" * 320)
+        out = []
+        while not m.UTTERANCES.empty():
+            item = m.UTTERANCES.get_nowait()
+            if isinstance(item, tuple):
+                m.asleep_turn(item[1])
+            else:
+                m.run_turn(item)
+            if m.STATE["last_reply"] is not None and (m.STATE["last_reply"] or m.STATE["last_transcript"]):
+                out.append(m.STATE["last_reply"])
+        return out, m.pop_cmds()
+
+    def _faces(self, cmds):
+        return [p for k, p in cmds if k == self.m.CMD_FACEUI]
+
+    def _acts(self, cmds):
+        return [p for k, p in cmds if k == self.m.CMD_ACTION]
+
+    def test_asleep_ignores_speech_only_stt_runs(self):
+        m = self.m
+        for text in ("What time is it?", "Wie spät ist es?", "ساعت چنده؟", "Tell me about Victor Hugo",
+                     "The vector points north", "Stop."):
+            replies, cmds = self.hear(text)
+            self.assertEqual(replies, [], text)
+            self.assertNotIn(b"thinking|", self._faces(cmds), text)  # the robot does not even look busy
+            self.assertEqual(cmds, [], text)
+        self.assertEqual(len(self.stt), 6)  # the only cost: one STT call each
+        self.assertEqual((self.routes, self.chats, self.tts), ([], [], []))
+        self.assertEqual(m.SESSION.state, "asleep")
+        self.assertEqual(m.ASLEEP["ignored"] >= 6, True)
+
+    def test_wake_phrase_cue_then_session_continues(self):
+        m = self.m
+        replies, cmds = self.hear("Hey Vector.")
+        self.assertEqual(replies, [])
+        self.assertEqual(m.SESSION.state, "awake")
+        self.assertIn(b"anim|lookatme", self._faces(cmds))
+        self.assertTrue(any(k == m.CMD_SPEAK for k, _ in cmds))  # chime
+        self.assertNotIn(b"thinking|", self._faces(cmds))
+        self.assertEqual((self.stt, self.chats, self.tts), (["Hey Vector."], [], []))
+        r1, _ = self.hear("What time is it?")
+        self.assertTrue(r1[0].startswith("It's"), r1)
+        r2, _ = self.hear("Wie spät ist es?")
+        self.assertTrue(r2[0].startswith("Es ist"), r2)
+        r3, _ = self.hear("Tell me a joke")
+        self.assertEqual(r3, ["chat reply"])
+        self.assertEqual(m.SESSION.state, "awake")
+        self.assertEqual(len(self.stt), 4)  # one STT per utterance, also for the inline turn
+
+    def test_wake_with_inline_command_runs_it_at_once(self):
+        m = self.m
+        replies, cmds = self.hear("Hey Victor, what time is it?")
+        self.assertEqual(len(self.stt), 1)  # the wake transcript is reused, no second STT
+        self.assertEqual(len(replies), 1)
+        self.assertTrue(replies[0].startswith("It's"), replies)
+        self.assertIn(b"anim|lookatme", self._faces(cmds))
+        self.assertEqual(m.SESSION.state, "awake")
+        self.assertEqual(m.STATE["last_transcript"], "what time is it?")  # wake phrase stripped
+        for text, lang in (("Hallo Vektor, wie spät ist es?", "de"), ("سلام وکتور، ساعت چنده؟", "fa"),
+                           ("So um, hey Vector, what time is it", "en")):
+            m.SESSION.sleep("test")
+            replies, _ = self.hear(text)
+            self.assertEqual(len(replies), 1, text)
+            self.assertEqual(m.STATE["last_intent"]["intent"], "intent_clock_time", text)
+            self.assertEqual(m.STATE["last_intent"]["lang"], lang, text)
+
+    def test_history_kept_in_session_and_reset_on_sleep(self):
+        m = self.m
+        self.hear("Hey Vector")
+        self.hear("My favourite colour is green")
+        self.hear("What is my favourite colour?")
+        self.assertEqual(self.chats[0][1], [])
+        self.assertEqual(self.chats[1][1], [{"role": "user", "content": "My favourite colour is green"},
+                                            {"role": "assistant", "content": "chat reply"}])
+        self.hear("Stop Vector")
+        self.assertEqual(m.SESSION.history, [])
+        self.hear("Hey Vector, tell me a joke")
+        self.assertEqual(self.chats[-1], ("tell me a joke", []))
+
+    def test_plain_stop_stops_motion_but_keeps_session(self):
+        m = self.m
+        self.hear("Hey Vector")
+        replies, cmds = self.hear("Stop.")
+        self.assertIn(b"stop", self._acts(cmds))
+        self.assertEqual(m.SESSION.state, "awake")
+        self.hear("Vector, stop driving")
+        self.assertEqual(m.SESSION.state, "awake")
+
+    def test_stop_vector_phrases_end_session_in_the_users_language(self):
+        import intents
+        m = self.m
+        for text, lang in (("Stop Vector", "en"), ("Vector, stop.", "en"), ("Stop listening.", "en"),
+                           ("Okay, stop Victor, thanks.", "en"), ("Vektor stopp!", "de"),
+                           ("Hör auf zuzuhören.", "de"), ("وکتور بسه", "fa"), ("وکتور استاپ", "fa")):
+            self.hear("Hey Vector")
+            self.hear("Tell me a joke")
+            replies, cmds = self.hear(text)
+            self.assertEqual(replies, [intents.say("session_stop", lang)], text)
+            self.assertIn(b"stop", self._acts(cmds), text)  # motion / wander stop too
+            self.assertIn(b"anim|goodnight", self._faces(cmds), text)
+            self.assertEqual(m.SESSION.state, "asleep", text)
+            self.assertEqual(m.SESSION.history, [], text)
+            n = (len(self.chats), len(self.tts), len(self.routes))
+            again, cmds2 = self.hear("What time is it?")
+            self.assertEqual((again, cmds2), ([], []), text)  # ignored again, silently
+            self.assertEqual((len(self.chats), len(self.tts), len(self.routes)), n, text)
+
+    def test_session_stop_only_when_wake_word_is_on(self):
+        from session import Session
+        m = self.m
+        m.SESSION = Session(enabled=False, idle_s=0)
+        self.assertTrue(m.SESSION.listening())
+        self.assertEqual(m.SESSION.status()["state"], "always")
+        m.VOICE.transcribe = lambda p: "Stop Vector"
+        m.run_turn(b"\x00" * 100)
+        self.assertIn(b"stop", self._acts(m.pop_cmds()))  # old meaning: the stop intent
+        self.assertEqual(m.STATE["last_intent"]["intent"], "intent_imperative_shutup")
+
+    def test_idle_timeout_option(self):
+        from session import Session
+        m = self.m
+        self.hear("Hey Vector")
+        self.now[0] += 3600
+        self.assertTrue(m.SESSION.listening())  # default 0 = until "Stop Vector"
+        m.SESSION = Session(enabled=True, idle_s=30, clock=lambda: self.now[0])
+        self.hear("Hey Vector")
+        self.now[0] += 20
+        self.hear("Tell me a joke")
+        self.now[0] += 29
+        self.assertFalse(m.SESSION.check_idle())
+        self.now[0] += 2
+        self.assertTrue(m.SESSION.check_idle())
+        self.assertEqual(m.SESSION.state, "asleep")
+        self.assertEqual(m.SESSION.status()["last_end"], "idle")
+        replies, _ = self.hear("What time is it?")
+        self.assertEqual(replies, [])
+
+    def test_wake_matcher(self):
+        import wake
+        for t in ("Hey Vector.", "Hey Victor!", "Hallo Vektor.", "Hey, Viktor", "Hello Vector", "Salam Vector",
+                  "هی وکتور", "سلام وکتور", "Hey Vector, what time is it?", "Vector, look at me", "Okay Vector"):
+            self.assertTrue(wake.match_wake(t)[0], t)
+        for t in ("The vector points north.", "Hey, what time is it?", "Victoria station is closed",
+                  "Hey Peter", "I like vectors", "Der Vektor zeigt nach oben", "سلام، ساعت چنده؟", ""):
+            self.assertFalse(wake.match_wake(t)[0], t)
+        self.assertFalse(wake.match_wake("Vector, look at me", bare=False)[0])
+        self.assertEqual(wake.match_wake("Hey Victor, what time is it?")[1], "what time is it")
+        self.assertEqual(wake.strip_wake("Hey Victor, what time is it?"), "what time is it?")
+        self.assertEqual(wake.strip_wake("سلام وکتور، ساعت چنده؟"), "ساعت چنده؟")
+        self.assertEqual(wake.strip_wake("Tell me about Victor Hugo"), "Tell me about Victor Hugo")
+        for t in ("stop", "Stop driving", "Vector, stop driving", "stop the timer", "Vector, stop the music please now"):
+            self.assertFalse(wake.is_session_stop(t), t)
+
+    def test_name_is_vector(self):
+        import lang
+        import router
+        import voice
+        self.assertIn("Your name is Vector. You are a Vector robot", voice.SYSTEM_PROMPT)
+        self.assertIn("never Victor", voice.SYSTEM_PROMPT)
+        self.assertIn("Victor, Vektor", router.PROMPT)
+        self.assertIn("named Vector", lang.stt_prompt(["en", "de", "fa"]))
+        self.assertEqual(voice.own_name("Hi! I'm Victor, your robot."), "Hi! I'm Vector, your robot.")
+        self.assertEqual(voice.own_name("Ich bin Viktor."), "Ich bin Vector.")
+        self.assertEqual(voice.own_name("Victor Hugo wrote it."), "Victor Hugo wrote it.")
+
+    def test_status_shows_session(self):
+        m = self.m
+        self.hear("Hey Vector")
+        st = m.SESSION.status()
+        self.assertEqual(st["state"], "awake")
+        self.assertEqual(st["wakes"], 1)
+        self.assertIn("voice session", m.UI_HTML)
+
+    # ---- backpack button (M.O 10 Oct 2026: "when he is asleep, a back button press brings it back")
+    def _sensor(self, presses):
+        import struct as st
+        import protocol
+        payload = bytes(45) + st.pack("<HH", 4, presses)  # flags=on_charger, 49 bytes
+        s = protocol.unpack_sensor(payload)
+        self.assertEqual(s["button_presses"], presses)
+        self.m._button_events(s)
+        return self.m.pop_cmds()
+
+    def test_button_press_wakes_when_asleep_only(self):
+        m = self.m
+        m.BUTTON.update(last=None)
+        self.assertEqual(self._sensor(7), [])  # first sample after hub start: baseline, no event
+        self.assertEqual(self._sensor(7), [])
+        self.assertEqual(m.SESSION.state, "asleep")
+        cmds = self._sensor(8)  # one press
+        self.assertEqual(m.SESSION.state, "awake")
+        self.assertIn(b"anim|lookatme", self._faces(cmds))
+        self.assertTrue(any(k == m.CMD_SPEAK for k, _ in cmds))  # same chime as "Hey Vector"
+        self.assertEqual(m.SESSION.status()["wakes"], 1)
+        self.assertEqual((self.stt, self.chats, self.tts), ([], [], []))
+        cmds = self._sensor(9)  # awake: logged only
+        self.assertEqual(cmds, [])
+        self.assertEqual(m.BUTTON["last_action"], "ignored (awake)")
+        self.assertEqual(m.SESSION.status()["wakes"], 1)
+        replies, _ = self.hear("What time is it?")  # the session is a real one
+        self.assertTrue(replies[0].startswith("It's"), replies)
+
+    def test_button_counter_restart_and_old_agent(self):
+        import struct as st
+        import protocol
+        m = self.m
+        m.BUTTON.update(last=None)
+        self._sensor(40)
+        self.assertEqual(self._sensor(0), [])  # agent restarted: counter reset, not a press
+        self.assertEqual(m.SESSION.state, "asleep")
+        self.assertEqual(self._sensor(1)[0][1], b"anim|lookatme")  # next real press wakes
+        m.SESSION.sleep("test")
+        old = protocol.unpack_sensor(bytes(39) + st.pack("<4H", 3900, 0, 0, 1))  # 47-byte payload, button flag set
+        self.assertIsNone(old["button_presses"])
+        m._button_events(old)
+        self.assertEqual(m.SESSION.state, "asleep")  # an old agent's always-"pressed" flag never wakes
+
+    def test_button_ignored_with_wake_word_off(self):
+        from session import Session
+        m = self.m
+        m.SESSION = Session(enabled=False, idle_s=0)
+        m.BUTTON.update(last=None)
+        self._sensor(1)
+        self.assertEqual(self._sensor(2), [])
+        self.assertEqual(m.BUTTON["last_action"], "ignored (wake word off)")

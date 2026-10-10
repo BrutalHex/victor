@@ -7,10 +7,10 @@ func TestRoundTrip(t *testing.T) {
 		Cliffs: [4]uint16{1, 2, 3, 4},
 		ProxMM: 120, ProxQuality: 9,
 		EncLift: 700, BattMV: 3900, ChargerMV: 5000, Touch: 11,
-		Flags: FlagOnCharger | FlagButton,
+		Flags: FlagOnCharger | FlagButton, ButtonPresses: 3,
 	}
 	payload := s.Marshal()
-	if len(payload) != 47 {
+	if len(payload) != SensorSize || SensorSize != 49 {
 		t.Fatalf("payload %d", len(payload))
 	}
 	buf := Encode(Header{Type: TypeSensor, Seq: 7, Tns: 99}, payload)
@@ -50,5 +50,13 @@ func TestAudioVideo(t *testing.T) {
 	h, p, err = Decode(buf)
 	if err != nil || h.Type != TypeVideo || h.Flags != FlagFaceJPEG || string(p) != string(jpeg) {
 		t.Fatalf("%+v %v", h, err)
+	}
+}
+
+func TestOldSensorWithoutPressCounter(t *testing.T) {
+	s := Sensor{BattMV: 3900, Flags: FlagOnCharger, ButtonPresses: 9}
+	got, err := UnmarshalSensor(s.Marshal()[:47])
+	if err != nil || got.ButtonPresses != 0 || got.BattMV != 3900 || got.Flags != FlagOnCharger {
+		t.Fatalf("%+v %v", got, err)
 	}
 }

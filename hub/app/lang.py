@@ -23,7 +23,8 @@ def allowed(env: str | None = None) -> list[str]:
 
 def stt_prompt(langs: list[str]) -> str:
     names = ", ".join(NAMES[x] for x in langs)
-    return f"A person talks to a small robot named Vector. The speech is in one of: {names}."
+    return (f"A person talks to a small robot named Vector (the name is spelled Vector). "
+            f"The speech is in one of: {names}.")
 
 
 def reply_rule(langs: list[str]) -> str:

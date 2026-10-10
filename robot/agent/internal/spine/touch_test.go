@@ -12,10 +12,11 @@ import (
 	"github.com/BrutalHex/victor/robot/agent/internal/latch"
 )
 
-// legacyButton is the exact expression ParsePacked used before the touch fix
-// (commit 4c0f768): touchOff = 56+8+10+1+14 = 89, button = u16 at 91 > 0.
+// legacyButton is the reference button bit: touchLevel[1] > 0 (vic HAL
+// BUTTON_POWER). Until 10 Oct 2026 it was the u16 at 91, which never read 0
+// on hardware; the tests below keep checking that no other field moves it.
 func legacyButton(b []byte) bool {
-	return binary.LittleEndian.Uint16(b[89+2:]) > 0
+	return binary.LittleEndian.Uint16(b[94:]) > 0
 }
 
 func recorded(t *testing.T) [][]byte {
