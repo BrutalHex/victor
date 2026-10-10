@@ -109,9 +109,20 @@ face, so the only cost of background talk is one transcription call.
 
 - Wake: "Hey Vector" / "Hi Vector" / "Okay Vector" / "Vector, ...", "Hallo Vektor", "هی وکتور" / "سلام وکتور"
   (Victor / Vektor / Viktor accepted), at the start of the sentence or after a greeting anywhere in it.
-  Cue: eyes look up at you (`lookatme`) plus a soft two-note chime (`HUB_WAKE_CHIME=0` mutes the chime).
-  "Hey Vector, what time is it?" answers at once from the same transcript.
-- **Backpack button**: one press while asleep wakes him the same way (same cue). A press while awake is only logged.
+  Near misses right after a greeting also count ("Hey Vecta", "Evektor", "Эй, Вектор", "Hey Becca." alone);
+  a sentence that only contains a Victor-like word ("Victor Hugo wrote...", "Hallo Viktoria") does not.
+  Cue: eyes look up at you (`lookatme`), a soft two-note chime and a short "Yes?" / "Ja?" / "بله؟"
+  (`HUB_WAKE_CHIME=0` mutes the chime). "Hey Vector, what time is it?" answers at once from the same transcript.
+  Saying "Hey Vector" again while awake gives the same cue + "Yes?" (never silence).
+- **Eyes show the state**: awake = normal open eyes (listening); asleep = half-lidded, dimmer eyes looking slightly
+  down. The hub sends `session|awake` / `session|asleep` on every change and every 10 s.
+- Asleep the noise gate is looser (a quick, quiet "Hey Vector" from across the room is short and has little steady
+  voicing): `HUB_ASLEEP_MIN_SNR` (3.5), `HUB_ASLEEP_MIN_VOICED` (4), `HUB_ASLEEP_MIN_FRAMES` (8). Asleep clips are
+  levelled up before STT and the STT prompt mentions "Hey Vector"; hub log lines `asleep WAKE|ignore|empty` show the
+  transcript and the gate numbers.
+- A garbled 1-2 word transcript while awake ("Mof Berlin.") gets "Sorry?" instead of a chat answer.
+- **Backpack button**: one press while asleep wakes him the same way (same cue). A press while awake gives the
+  look-up + chime.
   The agent debounces the button (40 ms; a level stuck "pressed" gives one press, never a stream), logs
   `button press n=N`, writes `/data/victor/button.txt`, and sends the running count in SENSOR; the hub logs
   `button_press -> wake` and shows `session.button` in `/status`. A press never touches SSH (the latch is off).
@@ -120,8 +131,7 @@ face, so the only cost of background talk is one transcription call.
 - Sleep: "Stop Vector" / "Vector, stop" / "Stop listening", "Vektor stopp" / "Hör auf zuzuhören", "وکتور بسه" /
   "وکتور استاپ" (whole sentence only). It also stops any motion or wander, says "Okay, I'll stop listening."
   in your language and plays the `goodnight` face. Plain "stop" (or "Vector, stop driving") stays the motion stop.
-- Optional idle timeout: `HUB_SESSION_IDLE_S=600` ends a session after 10 min without a turn (default 0 = only
-  "Stop Vector"). `HUB_SESSION_HISTORY` (default 8) = turns kept as context.
+- No idle timeout (owner's decision): he goes to sleep only on "Stop Vector" (`HUB_SESSION_IDLE_S` stays 0). `HUB_SESSION_HISTORY` (default 8) = turns kept as context.
 - `/status` -> `session` (state, wakes, turns, history, asleep heard/ignored, button presses, `openai_calls` per
   endpoint); `/ui` shows the state on top.
 - The name: system prompt, router and STT prompt say "Your name is Vector. You are a Vector robot"; STT's

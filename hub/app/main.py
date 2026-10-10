@@ -26,7 +26,7 @@ from api import Api
 from session import Session
 from protocol import FLAG_FACE, FLAG_ROBOT_NOISE, TYPE_AUDIO, TYPE_SENSOR, TYPE_VIDEO, decode, unpack_sensor
 from safety import classical_vote
-from voice import MIN_UTTERANCE_BYTES, Voice, _wav_wrap, speech_like, tone
+from voice import MIN_UTTERANCE_BYTES, RATE, Voice, _wav_wrap, speech_like, tone
 
 STATE = {
     "sensors": 0,
@@ -206,8 +206,15 @@ def button_press() -> str:
         SESSION.wake("button")
         cue_wake()
         action = "wake"
+    elif SESSION.enabled:
+        SESSION.touch()
+        with LOCK:
+            busy = bool(STATE.get("thinking"))
+        if not busy:  # same look-up + chime: "I'm listening"
+            cue_wake()
+        action = "cue (awake)"
     else:
-        action = "ignored (awake)" if SESSION.enabled else "ignored (wake word off)"
+        action = "ignored (wake word off)"
     BUTTON["last_action"] = action
     print(f"button_press -> {action}", flush=True)
     return action
@@ -232,6 +239,7 @@ def _on_audio(pcm: bytes, robot_noise: bool = False) -> None:
         busy = bool(STATE.get("voice_busy"))
     if busy:
         return
+    VOICE.asleep = not SESSION.listening()
     utt = VOICE.push(pcm, robot_noise)
     with LOCK:
         STATE["audio_rms"] = getattr(VOICE, "last_rms", 0)
@@ -273,10 +281,55 @@ def chime() -> bytes:
     return bytes(out)
 
 
-def cue_wake() -> None:
+def cue_wake(lang: str | None = None) -> None:
+    """Look up + chime; with lang also a short spoken "Yes?" (one buffer, so
+    the ack can't cut the chime off)."""
     queue_cmd(CMD_FACEUI, b"anim|lookatme")  # eyes widen / look up at you
-    if WAKE_CHIME:
-        queue_cmd(CMD_SPEAK, VOLUME.apply(chime()))
+    audio = wake_audio(lang)
+    if audio:
+        queue_cmd(CMD_SPEAK, VOLUME.apply(audio))
+
+
+ACK = {"en": "Yes?", "de": "Ja?", "fa": "بله؟"}
+SORRY = {"en": "Sorry?", "de": "Wie bitte?", "fa": "ببخشید؟"}
+_ACK_CACHE: dict[str, bytes] = {}
+
+
+def ack_audio(lang: str, table: dict | None = None) -> bytes:
+    """TTS of a one-word reply, cached per language (one call per hub start)."""
+    table = table or ACK
+    lang = lang if lang in table else "en"
+    key = f"{id(table)}:{lang}"
+    if key not in _ACK_CACHE:
+        audio = VOICE.tts(table[lang])
+        if not audio:
+            return b""
+        _ACK_CACHE[key] = audio
+    return _ACK_CACHE[key]
+
+
+def wake_audio(lang: str | None) -> bytes:
+    """Chime, then (lang given) a short gap and "Yes?" / "Ja?" / "بله؟"."""
+    out = chime() if WAKE_CHIME else b""
+    if lang is not None:
+        ack = ack_audio(lang)
+        if ack:
+            out += b"\x00\x00" * (RATE // 8) + ack
+    return out
+
+
+SESSION_FACE = {"sent": "", "at": 0.0}
+
+
+def session_face(force: bool = False) -> None:
+    """Tell the robot which idle eyes to draw: 'awake' (open, bright: listening)
+    or 'asleep' (half-lidded, dimmer: waiting for Hey Vector). Re-sent every
+    10 s so a restarted agent catches up."""
+    state = "asleep" if SESSION.enabled and not SESSION.listening() else "awake"
+    now = time.time()
+    if force or state != SESSION_FACE["sent"] or now - SESSION_FACE["at"] > 10:
+        SESSION_FACE.update(sent=state, at=now)
+        queue_cmd(CMD_FACEUI, f"session|{state}".encode())
 
 
 def cue_sleep() -> None:
@@ -289,8 +342,12 @@ def asleep_turn(pcm: bytes) -> dict:
     if SESSION.listening():  # woke while this waited: a normal turn
         run_turn(pcm)
         return {"hit": False, "queued": True}
-    text = VOICE.transcribe(pcm)
+    text = VOICE.transcribe(pcm, asleep=True)
+    if not text and getattr(VOICE, "last_raw", ""):
+        text = VOICE.last_raw  # language check dropped it ("Эй, Вектор!"): still check the wake phrase
     hit, rest = wake_mod.match_wake(text) if text else (False, "")
+    gate = (getattr(VOICE, "utt", {}) or {})
+    gate_s = f"gate={gate.get('gate', '?')} snr={gate.get('snr', '?')} voiced={gate.get('voiced', '?')} run={gate.get('voiced_run', '?')}"
     with LOCK:
         ASLEEP["heard"] += 1 if text else 0
         ASLEEP["ignored"] += 0 if hit or not text else 1
@@ -298,13 +355,18 @@ def asleep_turn(pcm: bytes) -> dict:
         ASLEEP["last"] = text[:80]
     if not hit:
         if text:
-            print(f"asleep ignore text={text!r}", flush=True)
+            print(f"asleep ignore text={text!r} {gate_s}", flush=True)
+        else:
+            print(f"asleep empty {gate_s}", flush=True)
         return {"hit": False, "text": text}
-    print(f"asleep WAKE text={text!r} rest={rest!r}", flush=True)
+    print(f"asleep WAKE text={text!r} rest={rest!r} {gate_s}", flush=True)
     SESSION.wake("phrase")
-    cue_wake()
+    session_face()
     if len(rest) >= 2:
+        cue_wake()
         run_turn(pcm, text=text)  # "Hey Vector, what time is it?" -> answered now
+    else:
+        cue_wake(getattr(VOICE, "last_lang", "") or "en")  # look up, chime, "Yes?"
     return {"hit": True, "text": text, "rest": rest}
 
 
@@ -381,6 +443,7 @@ def think_loop() -> None:
         think_keepalive()
         if SESSION.check_idle():  # HUB_SESSION_IDLE_S (0 = never)
             cue_sleep()
+        session_face()
 
 
 def reply_turn(pcm: bytes, text: str | None = None) -> tuple[str, str, bytes]:
@@ -397,11 +460,14 @@ def reply_turn(pcm: bytes, text: str | None = None) -> tuple[str, str, bytes]:
     if text and SESSION.enabled:
         if wake_mod.is_session_stop(text):
             return session_stop(text)
-        bare = wake_mod.strip_wake(text)
-        if not bare:  # just "Hey Vector" again inside the session
-            cue_wake()
+        hit, rest = wake_mod.match_wake(text)
+        bare = "" if hit and not rest else wake_mod.strip_wake(text)
+        if not bare:  # just "Hey Vector" again inside the session: never silence
             SESSION.touch()
-            return text, "", b""
+            lang = getattr(VOICE, "last_lang", "") or "en"
+            TURN_OUT.update(show=b"anim|lookatme", intent="wake_ack")
+            print(f"session wake ack {text!r} lang={lang}", flush=True)
+            return text, ACK.get(lang, ACK["en"]), wake_audio(lang)
         text = bare
     intent, how = (None, "off")
     confirm = SSH_CONFIRM["until"] > time.time()
@@ -433,9 +499,16 @@ def reply_turn(pcm: bytes, text: str | None = None) -> tuple[str, str, bytes]:
             reply = run_intent(intent)
             VOICE.last_via = "intent"
         else:
-            if text:
-                print(f"intent none -> chat text={text!r} norm={intents_mod.normalise(text)!r}", flush=True)
-            reply = VOICE.chat(text) if text else ""
+            if text and wake_mod.unclear(text):
+                # "Mof Berlin.": a garbled short transcript gets "Sorry?", not a lecture
+                lang = getattr(VOICE, "last_lang", "") or "en"
+                print(f"unclear text={text!r} -> sorry", flush=True)
+                reply = SORRY.get(lang, SORRY["en"])
+                VOICE.last_via = "unclear"
+            else:
+                if text:
+                    print(f"intent none -> chat text={text!r} norm={intents_mod.normalise(text)!r}", flush=True)
+                reply = VOICE.chat(text) if text else ""
     finally:
         TURN_PERSON["ctx"] = ""
     t_chat = time.time()

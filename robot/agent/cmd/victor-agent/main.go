@@ -747,6 +747,10 @@ func renderFace(u *uiState, reason veto.Reason) {
 		return
 	}
 	lx := gx + 0.15*math.Sin(float64(time.Now().UnixMilli())/900.0)
+	if sessionAsleep.Load() {
+		face.Blit(face.EyesDrowsy(lx, gy, blink))
+		return
+	}
 	face.Blit(face.EyesFrame(lx, gy, blink))
 }
 
@@ -892,6 +896,12 @@ func cmdLoop(lnk *link.Client, ui *uiState, proc *audio.Processor, actCh chan<- 
 				}
 			case "sleep":
 				ui.set("sleep", "", 0)
+			case "session":
+				// hub voice session: "asleep" (until Hey Vector) or "awake" (listening)
+				asleep := strings.TrimSpace(cap) == "asleep"
+				if sessionAsleep.Swap(asleep) != asleep {
+					fmt.Printf("voice session %s\n", strings.TrimSpace(cap))
+				}
 			case "name":
 				ui.set("name", cap, 3*time.Second)
 			case "idle", "e-ok", "":
@@ -904,6 +914,9 @@ func cmdLoop(lnk *link.Client, ui *uiState, proc *audio.Processor, actCh chan<- 
 }
 
 func showFace(sshOn, auto bool) { showFaceUI(sshOn, auto, nil) }
+
+// sessionAsleep: the hub's wake-word session is closed -> drowsy idle eyes.
+var sessionAsleep atomic.Bool
 
 // sshOn mirrors ssh.enabled for the sensor flag (no file read per tick).
 var sshOn atomic.Bool

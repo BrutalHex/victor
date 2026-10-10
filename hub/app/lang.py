@@ -21,10 +21,13 @@ def allowed(env: str | None = None) -> list[str]:
     return out or ["en"]
 
 
-def stt_prompt(langs: list[str]) -> str:
+def stt_prompt(langs: list[str], wake: bool = False) -> str:
     names = ", ".join(NAMES[x] for x in langs)
-    return (f"A person talks to a small robot named Vector (the name is spelled Vector). "
-            f"The speech is in one of: {names}.")
+    out = (f"A person talks to a small robot named Vector (the name is spelled Vector). "
+           f"The speech is in one of: {names}.")
+    if wake:  # asleep: the only thing that matters is the wake phrase
+        out += " To wake the robot they say Hey Vector (German: Hallo Vektor, Persian: سلام وکتور)."
+    return out
 
 
 def reply_rule(langs: list[str]) -> str:

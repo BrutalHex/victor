@@ -40,6 +40,13 @@ func EyesFrame(lookX, lookY, blink float64) []byte {
 	return renderEyes(lookX, lookY, blink, 1)
 }
 
+// EyesDrowsy: the idle eyes while the hub's voice session is asleep (waiting
+// for "Hey Vector"): half-lidded, a little dimmer, gaze slightly down.
+func EyesDrowsy(lookX, lookY, blink float64) []byte {
+	b := 0.5 + 0.5*blink
+	return renderEyes(lookX*0.6, lookY+0.35, b, 0.6)
+}
+
 func EyesThinking(phase float64) []byte {
 	look := 0.35 * math.Sin(phase*2*math.Pi)
 	return renderEyes(look, 0.08, 0.22, 0.85)

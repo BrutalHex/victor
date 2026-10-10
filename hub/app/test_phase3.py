@@ -238,7 +238,7 @@ class NoiseTurns(unittest.TestCase):
         v = self.armed()
         v.key = "k"
         seen = []
-        v._stt = lambda pcm, clip, language: seen.append(1) or "hello there"
+        v._stt = lambda pcm, clip, language, asleep=False: seen.append(1) or "hello there"
         v.utt = {"bytes": 64000, "speech_rms": 40, "floor": 60.0}
         self.assertEqual(v.transcribe(b"\x00\x00" * 32000), "")
         self.assertTrue(v.last_drop.startswith("quiet"))
@@ -654,7 +654,7 @@ class Languages(unittest.TestCase):
         v.key, v.stt_language, v.langs, v.noise = "k", "", ["en", "de", "fa"], noise
         calls = []
 
-        def fake(pcm, clip, language):
+        def fake(pcm, clip, language, asleep=False):
             calls.append(language)
             return answers[len(calls) - 1] if len(calls) <= len(answers) else ""
         v._stt = fake
@@ -686,7 +686,7 @@ class Languages(unittest.TestCase):
         main.pop_cmds()
         saved = (main.VOICE._stt, main.VOICE.chat, main.VOICE.key, main.VOICE.noise)
         chats = []
-        main.VOICE._stt = lambda pcm, clip, language: "今天天气怎么样"
+        main.VOICE._stt = lambda pcm, clip, language, asleep=False: "今天天气怎么样"
         main.VOICE.chat = lambda t: chats.append(t) or "reply"
         main.VOICE.key, main.VOICE.noise = "k", 0.0
         try:
@@ -1510,6 +1510,8 @@ class WakeSession(unittest.TestCase):
         self.saved = (main.SESSION, main.VOICE.transcribe, main.VOICE.chat, main.VOICE.tts, main.VOICE.push,
                       main.speech_like, main.VOLUME.path, main.VOLUME.level)
         main.SESSION = Session(enabled=True, idle_s=0, clock=lambda: self.now[0])
+        main._ACK_CACHE.clear()
+        main.SESSION_FACE.update(sent="", at=0.0)
         self.chats, self.stt, self.tts = [], [], []
         import voice as voice_mod
         self.vm = voice_mod
@@ -1550,7 +1552,7 @@ class WakeSession(unittest.TestCase):
         lang = "de" if any(w in text for w in ("Vektor", "spät", "hör", "Hör")) else (
             "fa" if any("\u0600" <= c <= "\u06ff" for c in text) else "en")
 
-        def stt(p, q=text):
+        def stt(p, asleep=False, q=text):
             self.stt.append(q)
             m.VOICE.last_lang = lang
             return q
@@ -1593,9 +1595,10 @@ class WakeSession(unittest.TestCase):
         self.assertEqual(replies, [])
         self.assertEqual(m.SESSION.state, "awake")
         self.assertIn(b"anim|lookatme", self._faces(cmds))
-        self.assertTrue(any(k == m.CMD_SPEAK for k, _ in cmds))  # chime
+        self.assertTrue(any(k == m.CMD_SPEAK for k, _ in cmds))  # chime + "Yes?"
+        self.assertIn(b"session|awake", self._faces(cmds))  # listening eyes on the robot
         self.assertNotIn(b"thinking|", self._faces(cmds))
-        self.assertEqual((self.stt, self.chats, self.tts), (["Hey Vector."], [], []))
+        self.assertEqual((self.stt, self.chats, self.tts), (["Hey Vector."], [], ["Yes?"]))
         r1, _ = self.hear("What time is it?")
         self.assertTrue(r1[0].startswith("It's"), r1)
         r2, _ = self.hear("Wie spät ist es?")
@@ -1621,6 +1624,42 @@ class WakeSession(unittest.TestCase):
             self.assertEqual(len(replies), 1, text)
             self.assertEqual(m.STATE["last_intent"]["intent"], "intent_clock_time", text)
             self.assertEqual(m.STATE["last_intent"]["lang"], lang, text)
+
+    def test_wake_phrase_while_awake_is_never_silent(self):
+        # live 12:24: "Hey, vektor." inside the session got reply='' speak=0
+        m = self.m
+        self.hear("Hey Vector")
+        for text in ("Hey, vektor.", "Hi Vector!", "Hey Vecta."):
+            replies, cmds = self.hear(text)
+            self.assertEqual(replies, ["Yes?"], text)
+            self.assertIn(b"anim|lookatme", self._faces(cmds), text)
+            self.assertTrue(any(k == m.CMD_SPEAK for k, _ in cmds), text)
+        self.assertEqual(self.chats, [])
+        self.assertEqual(self.tts, ["Yes?"])  # cached after the first
+        replies, _ = self.hear("Hallo Vektor")
+        self.assertEqual(replies, ["Ja?"])
+        self.assertEqual(m.SESSION.state, "awake")
+
+    def test_garbled_short_transcript_gets_sorry_not_chat(self):
+        m = self.m
+        self.hear("Hey Vector")
+        replies, _ = self.hear("Mof Berlin.")
+        self.assertEqual(replies, ["Sorry?"])
+        self.assertEqual(self.chats, [])
+        replies, _ = self.hear("Tell me about Berlin")
+        self.assertEqual(replies, ["chat reply"])
+
+    def test_session_face_tells_robot_awake_or_asleep(self):
+        m = self.m
+        m.session_face(force=True)
+        self.assertEqual(self._faces(m.pop_cmds()), [b"session|asleep"])
+        self.hear("Hey Vector")
+        m.session_face()
+        self.hear("Stop Vector")
+        m.session_face()
+        faces = self._faces(m.pop_cmds())
+        self.assertNotIn(b"session|awake", faces)  # already sent with the wake
+        self.assertEqual(faces[-1], b"session|asleep")
 
     def test_history_kept_in_session_and_reset_on_sleep(self):
         m = self.m
@@ -1753,9 +1792,9 @@ class WakeSession(unittest.TestCase):
         self.assertTrue(any(k == m.CMD_SPEAK for k, _ in cmds))  # same chime as "Hey Vector"
         self.assertEqual(m.SESSION.status()["wakes"], 1)
         self.assertEqual((self.stt, self.chats, self.tts), ([], [], []))
-        cmds = self._sensor(9)  # awake: logged only
-        self.assertEqual(cmds, [])
-        self.assertEqual(m.BUTTON["last_action"], "ignored (awake)")
+        cmds = self._sensor(9)  # awake: the same look-up + chime, no TTS (parent 12:32: never silence)
+        self.assertIn(b"anim|lookatme", self._faces(cmds))
+        self.assertEqual(m.BUTTON["last_action"], "cue (awake)")
         self.assertEqual(m.SESSION.status()["wakes"], 1)
         replies, _ = self.hear("What time is it?")  # the session is a real one
         self.assertTrue(replies[0].startswith("It's"), replies)
@@ -1783,3 +1822,79 @@ class WakeSession(unittest.TestCase):
         self._sensor(1)
         self.assertEqual(self._sensor(2), [])
         self.assertEqual(m.BUTTON["last_action"], "ignored (wake word off)")
+
+
+class WakeRobust(unittest.TestCase):
+    """Live 10 Oct 12:10-12:23: M.O's quick 'Hey Vector' across the room was
+    gated as noise (SNR 3.5-6, short voiced runs), trimmed to a click, or
+    transcribed as a near miss."""
+
+    def test_fuzzy_name_after_greeting(self):
+        import wake
+        for t in ("Hey Vecta.", "Hey Becca.", "Evektor.", "Hey Vic tor, what time is it?", "Hej Vecter",
+                  "Okay Vectar, look at me", "Эй, Вектор!", "Привет, Вектор.", "Vecta.", "Heyvector", "Hey, Vektar!",
+                  "Hi, Vector.", "Hey Becker."):
+            self.assertTrue(wake.match_wake(t)[0], t)
+        self.assertEqual(wake.match_wake("Hey Vic tor, what time is it?")[1], "what time is it")
+        for t in ("Hey Becca, are you coming tonight?", "Hey, have you seen the director?", "Hi Viktoria",
+                  "Hey victory is ours", "Hey, Wecker stellen", "Hey big guy", "Hey, better luck next time",
+                  "Hey factor that in", "Effector", "Hey buddy", "Hey Becky, come here", "Our sector manager, Victor, called today.",
+                  "Hallo Victoria, wie geht es dir?", "Yajin", "I think you know.", "Hey, vectors are cool",
+                  "Victor Hugo wrote Les Misérables in 1862.", "The Vector points to the north."):
+            self.assertFalse(wake.match_wake(t)[0], t)
+
+    def _vad(self, asleep, frames=12, voiced=5, run=2, snr=4.5):
+        import voice
+        v = voice.Voice()
+        v.noise = 40.0
+        v.asleep = asleep
+        v.active, v.buf = True, bytearray(b"\x00" * 6400)
+        v.sp_frames, v.sp_voiced, v.sp_energy = frames, voiced, int(snr * 40 * frames)
+        v.sp_run_max = run
+        return v._take()
+
+    def test_asleep_gate_takes_quiet_short_speech(self):
+        self.assertIsNone(self._vad(asleep=False))  # awake gate unchanged
+        self.assertIsNotNone(self._vad(asleep=True))
+        self.assertIsNone(self._vad(asleep=True, frames=6))  # too short
+        self.assertIsNone(self._vad(asleep=True, snr=2.5))  # too quiet
+        self.assertIsNone(self._vad(asleep=True, voiced=1, run=1, snr=60))  # a click
+        self.assertIsNone(self._vad(asleep=True, voiced=2, run=1))  # nothing voice-like
+
+    def test_trim_keeps_quiet_speech_next_to_a_click(self):
+        import struct
+        import voice
+        quiet = voice.tone(1000, 800)  # rms ~200 after pre-emphasis: a far-away voice
+        quiet = struct.pack(f"<{len(quiet) // 2}h", *(x // 10 for x in struct.unpack(f"<{len(quiet) // 2}h", quiet)))
+        click = voice.tone(3000, 40)
+        pcm = bytes(6400) + quiet + bytes(3200) + click + bytes(6400)
+        self.assertLess(len(voice.trim_silence(pcm)), len(quiet))  # old: the click set the level
+        self.assertGreater(len(voice.trim_silence(pcm, vad_thr=120)), len(quiet))
+        louder = voice.level_for_stt(quiet)
+        self.assertGreater(voice.rms(louder), 4 * voice.rms(quiet))
+        loud = voice.tone(300, 400)
+        self.assertEqual(voice.level_for_stt(loud), loud)
+
+    def test_asleep_prompt_and_raw_text(self):
+        import lang
+        import main as m
+        from session import Session
+        self.assertIn("Hey Vector", lang.stt_prompt(["en", "de", "fa"], wake=True))
+        self.assertNotIn("Hey Vector", lang.stt_prompt(["en", "de", "fa"]))
+        saved = (m.SESSION, m.VOICE.transcribe, m.VOICE.last_raw, m.cue_wake)
+        try:
+            m.SESSION = Session(enabled=True, idle_s=0)
+            seen = []
+
+            def stt(pcm, asleep=False):
+                seen.append(asleep)
+                m.VOICE.last_raw = "Эй, Вектор!"
+                return ""  # dropped by the language check (Cyrillic)
+            m.VOICE.transcribe = stt
+            m.cue_wake = lambda lang=None: None
+            out = m.asleep_turn(b"\x00" * 3200)
+            self.assertEqual(seen, [True])
+            self.assertTrue(out["hit"])
+            self.assertEqual(m.SESSION.state, "awake")
+        finally:
+            m.SESSION, m.VOICE.transcribe, m.VOICE.last_raw, m.cue_wake = saved

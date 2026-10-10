@@ -110,3 +110,19 @@ func TestNameGlyphs(t *testing.T) {
 		t.Fatalf("name not drawn %d", on)
 	}
 }
+
+func TestDrowsyEyesDifferFromAwake(t *testing.T) {
+	lit := func(b []byte) int {
+		n := 0
+		for i := 0; i+1 < len(b); i += 2 {
+			if b[i] != 0 || b[i+1] != 0 {
+				n++
+			}
+		}
+		return n
+	}
+	awake, drowsy := lit(EyesFrame(0, 0, 0)), lit(EyesDrowsy(0, 0, 0))
+	if drowsy == 0 || drowsy >= awake*3/4 {
+		t.Fatalf("drowsy eyes should be clearly smaller: awake=%d drowsy=%d", awake, drowsy)
+	}
+}

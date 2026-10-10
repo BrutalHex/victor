@@ -56,6 +56,14 @@ MIN_SNR = float(os.environ.get("HUB_VAD_MIN_SNR", "6"))  # mean speech-frame rms
 # when clearly loud. Noise turns peaked at SNR 17.6 with 3 voiced frames.
 LOUD_SNR = float(os.environ.get("HUB_VAD_LOUD_SNR", "15"))
 LOUD_MIN_VOICED = 5
+# Asleep (wake word on, session closed) a miss only costs one STT call, and a
+# quick "Hey Vector" from across the room is short and quiet: live 10 Oct,
+# M.O's attempts had SNR 3.5-6 and voiced runs of 1-4 frames and the awake
+# gate above dropped them. Clicks (loud, almost no voicing) stay out.
+ASLEEP_MIN_FRAMES = int(os.environ.get("HUB_ASLEEP_MIN_FRAMES", "8"))
+ASLEEP_MIN_SNR = float(os.environ.get("HUB_ASLEEP_MIN_SNR", "3.5"))
+ASLEEP_MIN_VOICED = int(os.environ.get("HUB_ASLEEP_MIN_VOICED", "4"))
+ASLEEP_MIN_RUN = 3
 ROBOT_NOISE_BOOST = float(os.environ.get("HUB_VAD_ROBOT_NOISE_BOOST", "3.0"))
 FLOOR_FRAMES = 500  # 10 s of quiet frames
 FLOOR_PCT = 0.3
@@ -176,16 +184,19 @@ def pcm16k(pcm: bytes, src_rate: int = TTS_RATE) -> bytes:
 FRAME_BYTES = int(RATE * 0.02) * 2
 
 
-def trim_silence(pcm: bytes, lead_ms: int = 160, tail_ms: int = 240) -> bytes:
+def trim_silence(pcm: bytes, lead_ms: int = 160, tail_ms: int = 240, vad_thr: int = 0) -> bytes:
     """Cut the VAD pre-roll/hang-over silence (up to ~0.9 s) before STT.
 
     Frames count as speech at max(VAD_RMS, 12% of the loudest frame); keep
-    lead_ms before the first and tail_ms after the last speech frame."""
+    lead_ms before the first and tail_ms after the last speech frame.
+    vad_thr (the VAD's own threshold) caps that level, so one loud click in
+    the clip can't trim a quiet sentence away (live 10 Oct: 2.6 s -> 0.6 s)."""
     n = len(pcm) // FRAME_BYTES
     if n < 3:
         return pcm
     levels = [rms(pcm[i * FRAME_BYTES:(i + 1) * FRAME_BYTES]) for i in range(n)]
-    thr = max(VAD_RMS, int(0.12 * max(levels)))
+    rel = int(0.12 * max(levels))
+    thr = max(VAD_RMS, min(rel, vad_thr) if vad_thr else rel)
     voiced = [i for i, v in enumerate(levels) if v >= thr]
     if not voiced:
         return pcm
@@ -193,6 +204,25 @@ def trim_silence(pcm: bytes, lead_ms: int = 160, tail_ms: int = 240) -> bytes:
     b = min(n, voiced[-1] + 1 + tail_ms // 20)
     out = pcm[a * FRAME_BYTES:b * FRAME_BYTES]
     return out if len(out) >= int(RATE * 0.3) * 2 else pcm
+
+
+def level_for_stt(pcm: bytes, target: int = 2500, max_gain: float = 8.0) -> bytes:
+    """Raise a quiet clip (far-away speaker) so its loud frames sit near
+    target RMS; never cut, never above max_gain, peaks kept below clipping."""
+    k = len(pcm) // 2
+    f = FRAME_BYTES // 2
+    if k < 3 * f:
+        return pcm
+    samples = struct.unpack_from(f"<{k}h", pcm)
+    levels = sorted(math.sqrt(sum(x * x for x in samples[i:i + f]) / f) for i in range(0, k - f + 1, f))
+    ref = levels[int(len(levels) * 0.9)]  # plain RMS of the loud frames (no pre-emphasis)
+    if ref <= 0:
+        return pcm
+    peak = max(1, max(abs(x) for x in samples))
+    gain = min(max_gain, target / ref, 30000 / peak)
+    if gain <= 1.05:
+        return pcm
+    return struct.pack(f"<{k}h", *(int(x * gain) for x in samples))
 
 
 def multipart(fields: dict[str, str], wav: bytes, boundary: str = "----victor") -> tuple[bytes, str]:
@@ -449,6 +479,8 @@ class Voice:
         self.rejected = {"onset": 0, "utterance": 0}
         self.last_reject = ""
         self.robot_noise_frames = 0
+        self.asleep = False  # main sets it: wake word on and the session closed
+        self.last_raw = ""
 
     def push(self, pcm: bytes, robot_noise: bool = False) -> bytes | None:
         """Return captured PCM when an utterance closes. Does not call OpenAI.
@@ -543,22 +575,31 @@ class Voice:
         self.utt["snr"] = round(snr, 1)
         voice_ok = nv >= MIN_VOICED_RATIO * frames and self.utt["voiced_run"] >= MIN_VOICED_RUN and snr >= MIN_SNR
         loud_ok = snr >= LOUD_SNR and nv >= LOUD_MIN_VOICED
+        self.utt["gate"] = "voice" if voice_ok else ("loud" if loud_ok else "")
+        if self.asleep and not (voice_ok or loud_ok) and frames >= ASLEEP_MIN_FRAMES and snr >= ASLEEP_MIN_SNR \
+                and (nv >= ASLEEP_MIN_VOICED or self.utt["voiced_run"] >= ASLEEP_MIN_RUN) and not (snr >= 20 and nv <= 3):
+            self.utt["gate"] = "asleep"
+            voice_ok = True
         if frames < MIN_SPEECH_FRAMES or not (voice_ok or loud_ok):
             self.rejected["utterance"] += 1
             self.last_reject = f"speech_frames={frames} voiced={nv} run={self.utt['voiced_run']} snr={snr:.1f}"
-            print(f"voice skip noise {self.last_reject} rms={self.utt['speech_rms']} floor={self.noise:.0f}", flush=True)
+            print(f"voice skip noise{' (asleep)' if self.asleep else ''} {self.last_reject} rms={self.utt['speech_rms']} floor={self.noise:.0f}", flush=True)
             return None
         self.thinking = True
         return pcm
 
-    def transcribe(self, pcm: bytes) -> str:
+    def transcribe(self, pcm: bytes, asleep: bool = False) -> str:
         """STT limited to HUB_LANGS. Returns "" for a dropped turn (noise or a
-        language we never speak); last_lang / last_drop say what happened."""
-        self.last_lang, self.last_drop = "", ""
+        language we never speak); last_lang / last_drop say what happened,
+        last_raw keeps the text STT gave even when dropped.
+        asleep: the wake check only: quiet clips are levelled and the prompt
+        says the speaker usually opens with "Hey Vector"."""
+        self.last_lang, self.last_drop, self.last_raw = "", "", ""
         if not self.key:
             print("voice transcribe skipped; no key", flush=True)
             return ""
-        clip = trim_silence(pcm) if self.stt_trim else pcm
+        vad_thr = int(max(VAD_RMS, float(getattr(self, "noise", 0.0)) * VAD_RATIO))
+        clip = trim_silence(pcm, vad_thr=vad_thr) if self.stt_trim else pcm
         level, floor = rms(clip), float(getattr(self, "noise", 0.0))
         utt = getattr(self, "utt", {}) or {}
         if utt.get("bytes") == len(pcm) and utt.get("speech_rms"):
@@ -569,16 +610,19 @@ class Voice:
             self.last_drop = f"quiet rms={level} floor={floor:.0f}"
             print(f"voice drop {self.last_drop}", flush=True)
             return ""
-        text = self._stt(pcm, clip, self.stt_language)
+        if asleep:
+            clip = level_for_stt(clip)
+        text = self._stt(pcm, clip, self.stt_language, asleep)
         if not text:
             return ""
+        self.last_raw = text
         lang, why = langmod.classify(text, self.langs)
         if not lang:
             loud = floor <= 0 or level >= 2 * floor
             if self.lang_retry and not self.stt_language and loud and secs >= 1.0 and len(text.strip()) >= 4:
                 force = langmod.retry_language(why, self.langs)
                 print(f"voice lang reject {why} {text[:80]!r}; retry language={force}", flush=True)
-                text2 = self._stt(pcm, clip, force)
+                text2 = self._stt(pcm, clip, force, asleep)
                 lang, why2 = langmod.classify(text2, self.langs) if text2 else ("", "empty")
                 if lang:
                     text = text2
@@ -592,11 +636,11 @@ class Voice:
         print(f"voice lang={lang} ({why})", flush=True)
         return text
 
-    def _stt(self, pcm: bytes, clip: bytes, language: str) -> str:
+    def _stt(self, pcm: bytes, clip: bytes, language: str, asleep: bool = False) -> str:
         t0 = time.time()
         fields = {"model": self.stt_model, "language": language, "response_format": "json"}
         # name hint always (also on a pinned language): "Vector", not "Victor"
-        fields["prompt"] = langmod.stt_prompt(self.langs)
+        fields["prompt"] = langmod.stt_prompt(self.langs, wake=asleep)
         body, ctype = multipart(fields, _wav_wrap(clip))
         connects = self.api.connects
         try:
