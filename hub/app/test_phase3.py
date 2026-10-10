@@ -1170,6 +1170,12 @@ class StockIntents(unittest.TestCase):
         self.assertEqual(self.chats[-2:], ["What's my name?", "اسم من چیه؟"])
         self.assertEqual(len(calls), 2)  # one identify call per identity question, none for the time
 
+    def test_persian_greeting_lead(self):
+        import intents
+        # live 10 Oct: Whisper wrote this, the intent missed and chat answered instead
+        self.assertEqual(intents.match("سلام وکتور، الان ساعت چنده؟").name, "intent_clock_time")
+        self.assertEqual(intents.match("سلام").name, "intent_greeting_hello")
+
     def test_explore_needs_flag_and_floor(self):
         m = self.m
         self.turn("Go explore")  # on the charger
