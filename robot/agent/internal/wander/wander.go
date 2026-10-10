@@ -16,6 +16,7 @@
 package wander
 
 import (
+	"github.com/BrutalHex/victor/robot/agent/internal/drivectl"
 	"math"
 	"math/rand"
 	"os"
@@ -25,18 +26,17 @@ import (
 var EnableFlag = "/data/victor/explore.enabled"
 
 const (
-	full        = 32767.0
-	SpeedMMps   = 40.0
-	ObstacleMM  = 100
-	wheelStart  = 0.18
-	wheelMax    = 0.38
-	turnPower   = 0.24
-	backMM      = 40.0
-	mmPerTick   = 0.96 * 29.0 * 0.25 * math.Pi / 172.3
-	halfTrackMM = 24.0
-	SessionMax  = 10 * time.Minute
-	stallAfter  = 1500 * time.Millisecond
-	headPWM     = int16(8192) // 0.25 power
+	full       = 32767.0
+	SpeedMMps  = 40.0
+	ObstacleMM = 100
+	// obstacleHold: a close return must persist this long (>= 2 ToF samples at
+	// ~17 Hz) before it counts; single noisy returns are ignored.
+	obstacleHold = 120 * time.Millisecond
+	backMM       = 40.0
+	mmPerTick    = 0.96 * 29.0 * 0.25 * math.Pi / 172.3
+	halfTrackMM  = 24.0
+	SessionMax   = 10 * time.Minute
+	headPWM      = int16(8192) // 0.25 power
 	// CliffMin mirrors veto: an uncalibrated channel below this is a cliff.
 	CliffMin = 40
 )
@@ -84,17 +84,17 @@ type W struct {
 	encL0    int32
 	encR0    int32
 	target   float64 // mm (drive/backoff) or deg (turn)
-	power    float64
-	lastD    float64
-	lastAt   time.Time
-	moveAt   time.Time // last encoder progress
+	ctl      *drivectl.Ctl
+	obsSince time.Time // close return first seen (zero = none)
 	turnDir  float64
 	pauseFor time.Duration
 	look     int
 	Why      string // last stop / refusal reason
 }
 
-func New(seed int64) *W { return &W{rng: rand.New(rand.NewSource(seed)), state: Off} }
+func New(seed int64) *W {
+	return &W{rng: rand.New(rand.NewSource(seed)), state: Off, ctl: drivectl.New(SpeedMMps)}
+}
 
 func FlagOn() bool {
 	_, err := os.Stat(EnableFlag)
@@ -140,7 +140,20 @@ func (w *W) Stop(why string) {
 func (w *W) enter(s State, in In) {
 	w.state, w.since = s, in.Now
 	w.encL0, w.encR0 = in.EncL, in.EncR
-	w.power, w.lastD, w.lastAt, w.moveAt = wheelStart, 0, in.Now, in.Now
+	w.ctl.Reset(in.Now)
+	w.obsSince = time.Time{}
+}
+
+// obstacle: a valid close return that has lasted obstacleHold.
+func (w *W) obstacle(in In) bool {
+	if !(in.ProxValid && in.ProxMM > 0 && in.ProxMM < ObstacleMM) {
+		w.obsSince = time.Time{}
+		return false
+	}
+	if w.obsSince.IsZero() {
+		w.obsSince = in.Now
+	}
+	return in.Now.Sub(w.obsSince) >= obstacleHold
 }
 
 func chan_(v, th uint16) bool { // true = no floor under this sensor
@@ -159,26 +172,6 @@ func (w *W) progress(in In) (fwd, turnDeg float64) {
 	dl := float64(in.EncL-w.encL0) * mmPerTick
 	dr := -float64(in.EncR-w.encR0) * mmPerTick // right encoder counts backwards
 	return (dl + dr) / 2, (dr - dl) / 2 / halfTrackMM * 180 / math.Pi
-}
-
-// speed adjusts power toward SpeedMMps from encoder progress.
-func (w *W) speed(in In, done float64) {
-	dt := in.Now.Sub(w.lastAt).Seconds()
-	if dt < 0.1 {
-		return
-	}
-	v := math.Abs(done-w.lastD) / dt
-	switch {
-	case v < SpeedMMps*0.7:
-		w.power += 0.06 * dt / 0.1
-	case v > SpeedMMps*1.3:
-		w.power -= 0.06 * dt / 0.1
-	}
-	w.power = math.Max(0.08, math.Min(wheelMax, w.power))
-	if math.Abs(done-w.lastD) > 1 {
-		w.moveAt = in.Now
-	}
-	w.lastD, w.lastAt = done, in.Now
 }
 
 func wheels(left, right float64) [4]int16 {
@@ -267,7 +260,7 @@ func (w *W) Tick(in In) Out {
 		}
 	case Drive:
 		done, _ := w.progress(in)
-		if in.ProxValid && in.ProxMM > 0 && in.ProxMM < ObstacleMM {
+		if w.obstacle(in) {
 			out.Event = w.startTurn(in, "obstacle")
 			out.State = w.state
 			return out
@@ -278,13 +271,13 @@ func (w *W) Tick(in In) Out {
 			out.State, out.Event = Pause, "pause"
 			return out
 		}
-		w.speed(in, done)
-		if in.Now.Sub(w.moveAt) > stallAfter {
+		p := w.ctl.Update(in.Now, done)
+		if w.ctl.Stalled() {
 			out.Event = w.startTurn(in, "stall")
 			out.State = w.state
 			return out
 		}
-		out.PWM = wheels(w.power, w.power)
+		out.PWM = wheels(p, p)
 		out.Moving = true
 	case Backoff:
 		done, _ := w.progress(in)
@@ -299,13 +292,12 @@ func (w *W) Tick(in In) Out {
 			out.State = w.state
 			return out
 		}
-		w.speed(in, done)
-		p := math.Min(w.power, 0.3)
+		p := w.ctl.Update(in.Now, done)
 		out.PWM = wheels(-p, -p)
 		out.Moving = true
 	case Turn:
 		_, deg := w.progress(in)
-		if math.Abs(deg) >= math.Abs(w.target) || el > 5*time.Second {
+		if math.Abs(deg) >= math.Abs(w.target) || el > 5*time.Second || w.ctl.Stalled() {
 			w.enter(Pause, in)
 			w.pauseFor = 1500 * time.Millisecond
 			out.State, out.Event = Pause, "pause"
@@ -315,8 +307,10 @@ func (w *W) Tick(in In) Out {
 		if w.target < 0 {
 			s = -1
 		}
-		// +deg = left: right wheel forward, left wheel back
-		out.PWM = wheels(-s*turnPower, s*turnPower)
+		// +deg = left: right wheel forward, left wheel back. Speed control on
+		// wheel travel (arc mm), same breakaway controller as driving.
+		p := w.ctl.Update(in.Now, deg*math.Pi/180*halfTrackMM)
+		out.PWM = wheels(-s*p, s*p)
 		out.Moving = true
 	}
 	out.State = w.state

@@ -12,6 +12,7 @@
 package action
 
 import (
+	"github.com/BrutalHex/victor/robot/agent/internal/drivectl"
 	"math"
 	"os"
 	"time"
@@ -23,10 +24,7 @@ const (
 	full          = 32767.0
 	headPower     = 0.35 // stock head calibration drives at 0.3
 	liftUpPower   = 0.55
-	liftDownPower = -0.4 // stock lift calibration power
-	wheelStart    = 0.18
-	wheelMax      = 0.38
-	wheelStep     = 0.006
+	liftDownPower = -0.4                                 // stock lift calibration power
 	mmPerTick     = 0.96 * 29.0 * 0.25 * math.Pi / 172.3 // wheel encoder count -> mm (HAL scale)
 	halfTrackMM   = 24.0
 	creepMMps     = 40.0
@@ -88,7 +86,9 @@ var Plans = map[string]Plan{
 		{kind: stHead, power: headPower, dur: 250 * time.Millisecond},
 		{kind: stTurn, deg: 15, dur: 1500 * time.Millisecond},
 		{kind: stHead, power: -headPower, dur: 250 * time.Millisecond}}},
-	"forward":       {Name: "forward", Steps: []step{{kind: stDrive, mm: 60, dur: 3 * time.Second}}},
+	"forward": {Name: "forward", Steps: []step{{kind: stDrive, mm: 60, dur: 3 * time.Second}}},
+	// supervised drive check (hub POST /action, never voice): 10 cm forward
+	"forward_test":  {Name: "forward_test", Steps: []step{{kind: stDrive, mm: 100, dur: 5 * time.Second}}},
 	"backup":        {Name: "backup", Steps: []step{{kind: stDrive, mm: -50, dur: 3 * time.Second}}},
 	"turn_left":     {Name: "turn_left", Steps: []step{{kind: stTurn, deg: 90, dur: 4 * time.Second}}},
 	"turn_right":    {Name: "turn_right", Steps: []step{{kind: stTurn, deg: -90, dur: 4 * time.Second}}},
@@ -124,9 +124,7 @@ type Runner struct {
 	encL0   int32
 	encR0   int32
 	lift0   int32
-	power   float64
-	lastD   float64
-	lastAt  time.Time
+	ctl     *drivectl.Ctl
 	notes   []string
 	active  bool
 	bumped  bool
@@ -197,7 +195,10 @@ func (r *Runner) Tick(in In) Out {
 	if r.stepAt.IsZero() {
 		r.stepAt = in.Now
 		r.encL0, r.encR0, r.lift0 = in.EncL, in.EncR, in.EncLift
-		r.power, r.lastD, r.lastAt = wheelStart, 0, in.Now
+		if r.ctl == nil {
+			r.ctl = drivectl.New(creepMMps)
+		}
+		r.ctl.Reset(in.Now)
 		out.Clip = st.clip
 		// skip steps that are not allowed right now
 		switch st.kind {
@@ -271,29 +272,17 @@ func (r *Runner) Tick(in In) Out {
 			r.note("move timeout (stalled?)")
 			return r.next(out)
 		}
-		// creep speed control on encoder speed
-		dt := in.Now.Sub(r.lastAt).Seconds()
-		if dt >= 0.1 {
-			v := math.Abs(done-r.lastD) / dt
-			switch {
-			case v < creepMMps*0.7:
-				r.power += wheelStep * 10 * dt / 0.1
-			case v > creepMMps*1.3:
-				r.power -= wheelStep * 10 * dt / 0.1
-			}
-			if r.power > wheelMax {
-				r.power = wheelMax
-			}
-			if r.power < 0.08 {
-				r.power = 0.08
-			}
-			r.lastD, r.lastAt = done, in.Now
+		// shared breakaway + speed controller (internal/drivectl)
+		pw := r.ctl.Update(in.Now, done)
+		if r.ctl.Stalled() {
+			r.note("move stalled (no wheel motion at full breakaway power)")
+			return r.next(out)
 		}
 		sign := 1.0
 		if target < 0 {
 			sign = -1
 		}
-		p := sign * r.power * full
+		p := sign * pw * full
 		if st.kind == stDrive {
 			out.PWM[0] = int16(p)  // left forward
 			out.PWM[1] = int16(-p) // right wheel direction -1

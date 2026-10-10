@@ -1,7 +1,10 @@
 package spine
 
 import (
+	"compress/gzip"
+	"io"
 	"math/rand"
+	"os"
 	"testing"
 )
 
@@ -21,7 +24,7 @@ func TestRecordedProx(t *testing.T) {
 
 func TestProxDecodeAndInvalid(t *testing.T) {
 	b := append([]byte(nil), recorded(t)[0]...)
-	b[proxOff] = 0x20 // status 4: signal fail
+	b[proxOff] = 0x20                       // status 4: signal fail
 	b[proxOff+2], b[proxOff+3] = 0x01, 0x2C // 300 mm big-endian
 	f, _ := ParsePacked(b)
 	if f.ProxValid || f.ProxMM != 300 || f.ProxRawRangeMM != 0 || f.ProxStatus != 4 {
@@ -49,6 +52,51 @@ func TestProxBytesNeverChangeButton(t *testing.T) {
 					t.Fatalf("off %d v %d: button %v legacy %v", off, v, f.Button, legacyButton(b))
 				}
 			}
+		}
+	}
+}
+
+func loadFrames(t *testing.T, name string) [][]byte {
+	t.Helper()
+	f, err := os.Open("testdata/" + name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	zr, err := gzip.NewReader(f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := io.ReadAll(zr)
+	var out [][]byte
+	for i := 0; i+DataRXSize <= len(raw); i += DataRXSize {
+		out = append(out, raw[i:i+DataRXSize])
+	}
+	return out
+}
+
+// Live 10 Oct: on the open floor the sensor reported status 11 with 6-65 mm at
+// ~0.5 MCPS; these must not count as obstacles. A real wall at ~165 mm must.
+func TestWeakProxReturnIsNotValid(t *testing.T) {
+	for i, b := range loadFrames(t, "floor-noprox.bin.gz") {
+		f, err := ParsePacked(b)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if f.ProxStatus != ProxStatusValid || f.ProxSignal > 1 {
+			t.Fatalf("frame %d: fixture changed? status %d signal %.2f", i, f.ProxStatus, f.ProxSignal)
+		}
+		if f.ProxValid || f.ProxRawRangeMM != 0 {
+			t.Fatalf("frame %d: noise %d mm at %.2f MCPS counted as valid", i, f.ProxMM, f.ProxSignal)
+		}
+		if f.Button != legacyButton(b) {
+			t.Fatalf("frame %d: button changed", i)
+		}
+	}
+	for i, b := range loadFrames(t, "desk-wall165.bin.gz") {
+		f, _ := ParsePacked(b)
+		if !f.ProxValid || f.ProxMM < 150 || f.ProxMM > 185 || f.Button != legacyButton(b) {
+			t.Fatalf("frame %d: wall %d mm valid=%v signal %.2f", i, f.ProxMM, f.ProxValid, f.ProxSignal)
 		}
 	}
 }

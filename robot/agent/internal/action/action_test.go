@@ -1,10 +1,13 @@
 package action
 
 import (
+	"math"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/BrutalHex/victor/robot/agent/internal/drivectl"
 )
 
 type sim struct {
@@ -16,6 +19,32 @@ type sim struct {
 	maxW  int16
 	done  string
 	clips []string
+	// brk > 0: tread static friction (live floor 10 Oct): a wheel starts at
+	// |power| >= brk and keeps rolling while |power| > 0.15.
+	brk        float64
+	movL, movR bool
+}
+
+func (s *sim) wheel(pwm int16, moving *bool) int32 {
+	if s.brk == 0 {
+		return int32(float64(pwm) * 0.0003 * 20)
+	}
+	a := float64(pwm) / full
+	if a < 0 {
+		a = -a
+	}
+	if !*moving && a >= s.brk {
+		*moving = true
+	}
+	if !*moving || a <= 0.15 {
+		*moving = false
+		return 0
+	}
+	v := (a - 0.15) * 160 / mmPerTick * 0.02 // ticks per 20 ms
+	if pwm < 0 {
+		v = -v
+	}
+	return int32(v)
 }
 
 func newSim(t *testing.T) *sim {
@@ -41,8 +70,8 @@ func (s *sim) run(name string, onCharger bool, ticks int, abortAt int, bumpAt in
 				s.maxW = -w
 			}
 		}
-		s.l += int32(float64(o.PWM[0]) * 0.0003 * 20)
-		s.rr += int32(float64(o.PWM[1]) * 0.0003 * 20)
+		s.l += s.wheel(o.PWM[0], &s.movL)
+		s.rr += s.wheel(o.PWM[1], &s.movR)
 		if bumpAt >= 0 && i == bumpAt {
 			s.lift += 40
 		}
@@ -146,7 +175,7 @@ func TestStalledMoveTimesOut(t *testing.T) {
 	var o Out
 	for i := 0; i < 400 && (i == 0 || o.Active); i++ {
 		o = s.r.Tick(In{Now: s.now}) // encoders never move
-		if o.PWM[0] > 12452 {
+		if float64(o.PWM[0]) > drivectl.KickMax*full+1 {
 			t.Fatalf("power above cap %d", o.PWM[0])
 		}
 		s.now = s.now.Add(20 * time.Millisecond)
@@ -160,5 +189,30 @@ func TestUnknownPlanIgnored(t *testing.T) {
 	var r Runner
 	if r.Start("self_destruct", time.Now()) || r.Active() {
 		t.Fatal("unknown plan started")
+	}
+}
+
+// Live 10 Oct: the old fixed creep power (<= 0.38) never broke the treads
+// loose on the floor. Voice moves share drivectl and must complete.
+func TestVoiceMovesBreakAway(t *testing.T) {
+	for _, c := range []struct {
+		name   string
+		wantMM float64 // forward distance (drive) or arc per wheel (turn)
+	}{{"forward", 60}, {"backup", -50}, {"turn_left", 90 * math.Pi / 180 * halfTrackMM}, {"turn_right", 90 * math.Pi / 180 * halfTrackMM}} {
+		s := newSim(t)
+		s.brk = 0.45
+		s.run(c.name, false, 300, -1, -1)
+		dl := float64(s.l) * mmPerTick
+		dr := -float64(s.rr) * mmPerTick
+		got := (dl + dr) / 2
+		if c.name == "turn_left" || c.name == "turn_right" {
+			got = math.Abs(dr-dl) / 2
+		}
+		if math.Abs(got) < math.Abs(c.wantMM)*0.9 || s.done != "ok" {
+			t.Fatalf("%s: moved %.1f of %.1f, done %q notes %v", c.name, got, c.wantMM, s.done, s.r.notes)
+		}
+		if math.Abs(got) > math.Abs(c.wantMM)+25 {
+			t.Fatalf("%s overshot: %.1f", c.name, got)
+		}
 	}
 }

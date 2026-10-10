@@ -121,6 +121,10 @@ const ButtonBytes = 91
 const (
 	proxOff         = 76
 	ProxStatusValid = 11
+	// ProxMinSignal (MCPS): below this a "valid" range is noise. Live 10 Oct:
+	// open floor read 6-65 mm at 0.45-0.53 MCPS (wander turned at phantom
+	// obstacles); a wall at 165 mm gave 5.3, the charger wall at 80 mm 21-28.
+	ProxMinSignal = 1.5
 )
 
 func flip16(b []byte) uint16 { return uint16(b[0])<<8 | uint16(b[1]) }
@@ -134,7 +138,7 @@ func proxFields(f *Frame, b []byte) {
 	f.ProxSignal = float32(flip16(b[proxOff+4:])) / 128
 	f.ProxAmbient = float32(flip16(b[proxOff+6:])) / 128
 	f.ProxSamples = binary.LittleEndian.Uint16(b[proxOff+10:])
-	f.ProxValid = f.ProxStatus == ProxStatusValid && f.ProxMM > 0 && f.ProxMM < 2000
+	f.ProxValid = f.ProxStatus == ProxStatusValid && f.ProxMM > 0 && f.ProxMM < 2000 && f.ProxSignal >= ProxMinSignal
 	f.ProxSigmaMM = f.ProxStatus
 	if f.ProxValid {
 		f.ProxRawRangeMM = f.ProxMM

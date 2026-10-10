@@ -841,6 +841,16 @@ class Status(BaseHTTPRequestHandler):
                 ok = True
             self._json({"thinking": on, "ok": ok})
             return
+        if path == "/action":
+            # supervised tests only; the agent runs it under its veto (cliff/pickup/charger)
+            name = str(data.get("name") or "")
+            if name not in ("forward_test", "stop"):
+                self._json({"ok": False, "error": "allowed: forward_test, stop"}, 400)
+                return
+            queue_cmd(CMD_ACTION, name.encode())
+            print(f"http action {name}", flush=True)
+            self._json({"ok": True, "action": name})
+            return
         if path == "/say":
             text = str(data.get("text") or "")
             n = speak_turn(text, "say")

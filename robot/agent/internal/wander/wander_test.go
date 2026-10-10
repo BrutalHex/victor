@@ -19,6 +19,26 @@ type sim struct {
 	stuck  bool
 	encLf  float64
 	encRf  float64
+	// brk > 0: tread static friction like the live floor (10 Oct): a wheel
+	// only starts at |power| >= brk, then rolls at (|p|-0.15)*160 mm/s.
+	brk        float64
+	movL, movR bool
+}
+
+func (s *sim) wheel(pwm int16, moving *bool) float64 {
+	if s.brk == 0 {
+		return wheelSpeed(pwm)
+	}
+	p := float64(pwm) / full
+	a := math.Abs(p)
+	if !*moving && a >= s.brk {
+		*moving = true
+	}
+	if !*moving || a <= 0.15 {
+		*moving = false
+		return 0
+	}
+	return math.Copysign((a-0.15)*160, p)
 }
 
 func newSim() *sim {
@@ -38,7 +58,7 @@ func wheelSpeed(pwm int16) float64 {
 // step applies out for 20 ms and returns the next input.
 func (s *sim) step(o Out) In {
 	dt := 0.02
-	l, r := wheelSpeed(o.PWM[0]), -wheelSpeed(o.PWM[1])
+	l, r := s.wheel(o.PWM[0], &s.movL), -s.wheel(o.PWM[1], &s.movR)
 	if s.stuck {
 		l, r = 0, 0
 	}
@@ -264,5 +284,71 @@ func TestStopAndSessionCap(t *testing.T) {
 	w.Tick(in)
 	if w.Active() || w.Why != "session time cap" {
 		t.Fatal(w.Why)
+	}
+}
+
+// Live 10 Oct: treads needed more than the old fixed 0.24-0.38 power to break
+// away; the robot only twitched. The shared controller must drive and turn.
+func TestBreakawayFloorDrivesAndTurns(t *testing.T) {
+	s := newSim()
+	s.brk = 0.45
+	w := New(7)
+	w.Start(s.in, true)
+	maxV, lastX, turned := 0.0, 0.0, 0.0
+	h0 := 0.0
+	run(t, w, s, 30, func(i int, o Out) {
+		if i%25 == 0 {
+			v := math.Hypot(s.x-lastX, 0) * 2
+			if o.State == Drive && v > maxV {
+				maxV = v
+			}
+			lastX = s.x
+		}
+		if o.State == Turn && math.Abs(s.head-h0) > turned {
+			turned = math.Abs(s.head - h0)
+		}
+		if o.State != Turn {
+			h0 = s.head
+		}
+	})
+	if math.Hypot(s.x, s.y) < 150 {
+		t.Fatalf("barely moved: x=%.0f y=%.0f", s.x, s.y)
+	}
+	if maxV > 75 {
+		t.Fatalf("too fast after breakaway: %.0f mm/s", maxV)
+	}
+}
+
+func TestBreakawayTurnCompletes(t *testing.T) {
+	s := newSim()
+	s.brk = 0.45
+	s.wallAt = 150 // obstacle right away -> turn
+	w := New(8)
+	w.Start(s.in, true)
+	maxTurn := 0.0
+	run(t, w, s, 8, func(i int, o Out) {
+		if math.Abs(s.head) > maxTurn {
+			maxTurn = math.Abs(s.head)
+		}
+	})
+	if maxTurn < 80 {
+		t.Fatalf("turn only reached %.0f deg", maxTurn)
+	}
+}
+
+func TestSingleNoisyProxReturnIgnored(t *testing.T) {
+	s := newSim()
+	w := New(9)
+	w.Start(s.in, true)
+	in := s.in
+	for i := 0; i < 400; i++ {
+		if i%10 == 0 { // one close return every 200 ms, never twice in a row
+			in.ProxValid, in.ProxMM = true, 30
+		}
+		o := w.Tick(in)
+		if o.State == Turn {
+			t.Fatalf("turned on an isolated noisy return at tick %d", i)
+		}
+		in = s.step(o)
 	}
 }
