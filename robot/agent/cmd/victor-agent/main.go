@@ -16,8 +16,6 @@ import (
 	"time"
 
 	"github.com/BrutalHex/victor/robot/agent/internal/action"
-	"github.com/BrutalHex/victor/robot/agent/internal/idle"
-	"github.com/BrutalHex/victor/robot/agent/internal/wander"
 	"github.com/BrutalHex/victor/robot/agent/internal/anki"
 	"github.com/BrutalHex/victor/robot/agent/internal/audio"
 	"github.com/BrutalHex/victor/robot/agent/internal/blemask"
@@ -25,6 +23,7 @@ import (
 	"github.com/BrutalHex/victor/robot/agent/internal/cliffcal"
 	"github.com/BrutalHex/victor/robot/agent/internal/face"
 	"github.com/BrutalHex/victor/robot/agent/internal/hosts"
+	"github.com/BrutalHex/victor/robot/agent/internal/idle"
 	"github.com/BrutalHex/victor/robot/agent/internal/latch"
 	"github.com/BrutalHex/victor/robot/agent/internal/link"
 	"github.com/BrutalHex/victor/robot/agent/internal/rotlog"
@@ -36,6 +35,7 @@ import (
 	"github.com/BrutalHex/victor/robot/agent/internal/telem"
 	"github.com/BrutalHex/victor/robot/agent/internal/vct1"
 	"github.com/BrutalHex/victor/robot/agent/internal/veto"
+	"github.com/BrutalHex/victor/robot/agent/internal/wander"
 )
 
 func main() {
@@ -230,6 +230,7 @@ func runDaemon() int {
 	var snd idle.SoundDetector
 	soundHit, motorNoise := false, false
 	wand := wander.New(time.Now().UnixNano() + 1)
+	var flagCheckAt time.Time
 	var lastPWM [4]int16
 	var lastProxSamples uint16
 	var proxFreshAt time.Time
@@ -405,6 +406,12 @@ func runDaemon() int {
 				}
 			}
 			// Autonomous wander (explore.enabled + "explore"). Voice actions win.
+			if wand.Active() && time.Since(flagCheckAt) > time.Second {
+				flagCheckAt = time.Now()
+				if !wander.FlagOn() {
+					wand.Stop("explore.enabled removed") // rm the flag = instant stop
+				}
+			}
 			if wand.Active() {
 				o := wand.Tick(win)
 				if !runner.Active() {
