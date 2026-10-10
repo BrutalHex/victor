@@ -1696,7 +1696,7 @@ class WakeSession(unittest.TestCase):
 
     def test_wake_matcher(self):
         import wake
-        for t in ("Hey Vector.", "Hey Victor!", "Hallo Vektor.", "Hey, Viktor", "Hello Vector", "Salam Vector",
+        for t in ("Hey Vector.", "Hey Victor!", "Hallo Vektor.", "Hey, Viktor", "Hello Vector", "Salam Vector", "Hej, Vector!",
                   "هی وکتور", "سلام وکتور", "Hey Vector, what time is it?", "Vector, look at me", "Okay Vector"):
             self.assertTrue(wake.match_wake(t)[0], t)
         for t in ("The vector points north.", "Hey, what time is it?", "Victoria station is closed",

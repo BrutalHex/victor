@@ -13,11 +13,11 @@ import unicodedata
 _FA_MAP = str.maketrans({"ي": "ی", "ك": "ک", "\u200c": " ", "آ": "ا"})
 
 NAME = r"(?:vector|victor|vektor|viktor|wektor|vecter|vectar|vektar|vecktor|wector|ویکتور|وکتور|وکتر|ویکتر)"
-GREET = (r"(?:hey|hay|hei|heh|hi|he|ey|eh|a|hello|hallo|halo|hallå|ok|okay|salam|salaam|salom|"
+GREET = (r"(?:hey|hay|hei|hej|heh|hi|he|ey|eh|a|hello|hallo|halo|hallå|ok|okay|salam|salaam|salom|"
          r"سلام|هی|های|هِی)")
 _WAKE_START = re.compile(rf"^(?:(?:oh|so|and|um|uh|well|ja|na|ok|okay|خب)\s+)?(?P<greet>{GREET}\s+)?(?P<name>{NAME})\b(?P<rest>.*)$")
 # mid-sentence only after a real greeting ("a vector field", "he Victor said" are not wakes)
-GREET_ANY = r"(?:hey|hi|hello|hallo|ok|okay|salam|salaam|سلام|هی)"
+GREET_ANY = r"(?:hey|hej|hi|hello|hallo|ok|okay|salam|salaam|سلام|هی)"
 _WAKE_ANY = re.compile(rf"(?:^|\s)(?P<greet>{GREET_ANY})\s+(?P<name>{NAME})\b(?P<rest>.*)$")
 
 
