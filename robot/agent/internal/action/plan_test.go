@@ -259,8 +259,9 @@ func TestGestureLiftSkippedOnChargerHeadStillMoves(t *testing.T) {
 	now := time.Unix(0, 0)
 	head := int32(0)
 	sawHead := false
+	minHead := int32(0)
 	for i := 0; i < 300 && r.Active(); i++ {
-		now = now.Add(10 * time.Millisecond)
+		now = now.Add(20 * time.Millisecond) // 50 Hz loop
 		out := r.Tick(In{Now: now, OnCharger: true, EncHead: head})
 		if out.PWM[2] != 0 {
 			t.Fatal("lift moved on the charger")
@@ -268,10 +269,17 @@ func TestGestureLiftSkippedOnChargerHeadStillMoves(t *testing.T) {
 		if out.PWM[3] != 0 {
 			sawHead = true
 		}
-		head += int32(out.PWM[3]) / 3000
+		head += int32(float64(out.PWM[3]) / full * 4300 * 0.02) // measured head speed per unit power
+		if head < minHead {
+			minHead = head
+		}
 	}
-	if !sawHead || head > gestureTolCounts || head < -gestureTolCounts {
+	want := int32(math.Round(-5 / HeadDegPerCount))
+	if !sawHead || head > headTolCounts || head < -headTolCounts {
 		t.Fatalf("head moved=%v ended %d", sawHead, head)
+	}
+	if minHead > want+headTolCounts || minHead < want-25 {
+		t.Fatalf("head reached %d counts, want ~%d without a big overshoot", minHead, want)
 	}
 }
 

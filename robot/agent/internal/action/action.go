@@ -63,9 +63,10 @@ const (
 	HeadDegPerCount   = 0.25 * 180.0 / 366.211               // ~0.123 deg
 	MaxGestureLiftMM  = 25.0                                 // expression gestures stay small
 	MaxGestureHeadDeg = 20.0
-	gestureMaxPower   = 0.6
-	gestureKp         = 0.05 // power per count of error
-	gestureTolCounts  = 3
+	// 50 Hz loop; measured on the robot 2026-10-12: head ~4300 counts/s per
+	// unit power, so the head gain stays low (no overshoot past a 20 ms tick).
+	gestureTolCounts = 3 // lift (~1 mm)
+	headTolCounts    = 8 // ~1 deg
 )
 
 type step struct {
@@ -151,7 +152,8 @@ type Runner struct {
 	encL0    int32
 	encR0    int32
 	lift0    int32
-	baseSet  bool // liftBase/headBase captured at the plan's first tick
+	gErr0    int32 // error at the start of the current gesture step (crossing = done)
+	baseSet  bool  // liftBase/headBase captured at the plan's first tick
 	liftBase int32
 	headBase int32
 	ctl      *drivectl.Ctl
@@ -284,10 +286,20 @@ func (r *Runner) Tick(in In) Out {
 			pos, base, ch = in.EncHead, r.headBase, 3
 		}
 		err := base + st.rel - pos
-		if abs32(err) <= gestureTolCounts || el >= st.dur {
+		head := st.kind == stHeadTo
+		tol := int32(gestureTolCounts)
+		if head {
+			tol = headTolCounts
+		}
+		if el == 0 || r.gErr0 == 0 {
+			r.gErr0 = err
+		}
+		crossed := (r.gErr0 > 0 && err < 0) || (r.gErr0 < 0 && err > 0)
+		if abs32(err) <= tol || crossed || el >= st.dur {
+			r.gErr0 = 0
 			return r.next(out)
 		}
-		out.PWM[ch] = int16(gesturePower(err) * full)
+		out.PWM[ch] = int16(gesturePower(err, head) * full)
 	case stWait:
 		if el >= st.dur {
 			return r.next(out)
@@ -423,14 +435,17 @@ func abs32(v int32) int32 {
 }
 
 // gesturePower: proportional, capped, with a small minimum so the motor
-// overcomes friction on tiny moves.
-func gesturePower(err int32) float64 {
-	p := gestureKp * float64(err)
-	p = math.Max(-gestureMaxPower, math.Min(gestureMaxPower, p))
-	if p > 0 && p < 0.2 {
-		p = 0.2
-	} else if p < 0 && p > -0.2 {
-		p = -0.2
+// overcomes friction on tiny moves. Lift gets more push upward (gravity).
+func gesturePower(err int32, head bool) float64 {
+	kp, max, minUp, minDown := 0.03, 0.6, 0.25, 0.15
+	if head {
+		kp, max, minUp, minDown = 0.006, 0.4, 0.12, 0.12
+	}
+	p := math.Max(-max, math.Min(max, kp*float64(err)))
+	if p > 0 && p < minUp {
+		p = minUp
+	} else if p < 0 && p > -minDown {
+		p = -minDown
 	}
 	return p
 }
