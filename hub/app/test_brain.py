@@ -87,6 +87,8 @@ class Expressions(unittest.TestCase):
     def test_every_clip_is_in_the_robot_pack(self):
         pack = json.loads(gzip.open(CLIPS).read())
         for n, (c, _, _) in brain.EXPRESSIONS.items():
+            if c in ("expr_dog", "expr_cat"):  # procedural: robot/agent/internal/face/pets.go
+                continue
             if c:
                 self.assertIn(c, pack, n)
                 kf = pack[c]["kf"]

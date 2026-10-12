@@ -265,6 +265,7 @@ or `curl -X POST localhost:8080/expression -d '{"name":"sad"}'` (`"gesture":true
 | `circle <mm>` | hexagon "circle" of that diameter | uses all 12 steps |
 | `explore`, `explore_stop`, `stop`, `volume <1-5>` | handled on the hub | explore needs `explore.enabled` |
 | `animal_sound <dog\|cat\|purr\|bird\|hamster>` | robot pet sound + face + head move (hub) | |
+| `pet_answer <dog\|cat>` | "who is my dog/cat?": he answers as the pet (dog/cat face, chin up, bark/meow, no apology) | |
 | `dance_music`, `hum` | dance to the music playing / hum a tune back (hub, see Music) | |
 | `keepbase` (wire only) | gesture deltas keep the previous plan's base if it started < 3 s ago (dance bars) | |
 
@@ -325,6 +326,8 @@ Here (`hub/app/music.py`, `dancer.py`; numpy only, ~1 ms per 0.5 s of mic audio)
   117); 0/20 speech-like clips taken for music.
 
 ### Pet sounds
+Dog and cat faces (`expr_dog`, `expr_cat`, procedural in robot/agent/internal/face/pets.go, teal like the eyes): puppy eyes, floppy ears that flap with each bark and a panting tongue; almond slit eyes that narrow while meowing, a slow blink, ears, twitching whiskers and a w-mouth. Used for dog / cat / purr sounds and pet answers, pickable by the brain ("dog", "cat") and on the Face page. "Who is my dog/cat?" (also slips like chat, catty, Katie, doggo, Guddagi, کتی) is matched locally; the brain has `pet_answer` too.
+
 "bark like a dog", "meow like a cat", "purr", "chirp", "squeak like a hamster", "wie macht der Hund",
 "miau mal", "مثل سگ پارس کن", "میو میو کن", "خرخر کن": a robot version of the sound with a face and a head (or
 lift, off the charger) move. The model can use it too: `animal_sound <dog|cat|purr|bird|hamster>` (e.g. "are

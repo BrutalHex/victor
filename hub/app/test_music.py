@@ -212,7 +212,7 @@ class WhoIsMyPet(unittest.TestCase):
 
     def test_proud_gesture_and_mishear(self):
         g = animals.gesture("dog", True, proud=True)
-        self.assertIn("face expr_proud", g)
+        self.assertIn("face expr_dog", g)
         self.assertEqual(intents.match("Forge like a dog.").name, "intent_animal_sound")
 
 

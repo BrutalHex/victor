@@ -133,9 +133,9 @@ def pcm(name: str, seed: int = 0) -> bytes:
 
 # face + head/lift gesture per sound (plan text; lift dropped on the charger)
 GESTURE = {
-    "dog": ("expr_excited", "headdeg 8 90;headdeg 0.3 120;wait 60;headdeg 8 90;headdeg 0 160"),
-    "cat": ("expr_curious", "headdeg 10 300;wait 300;headdeg 0 400"),
-    "purr": ("expr_love", "headdeg -6 500;wait 600;headdeg 0 500"),
+    "dog": ("expr_dog", "headdeg 8 90;headdeg 0.3 120;wait 60;headdeg 8 90;headdeg 0 160"),
+    "cat": ("expr_cat", "headdeg 10 300;wait 300;headdeg 0 400"),
+    "purr": ("expr_cat", "headdeg -6 500;wait 600;headdeg 0 500"),
     "bird": ("expr_happy", "headdeg 6 100;headdeg 1 100;headdeg 6 100;headdeg 0 200"),
     "hamster": ("expr_excited", "liftmm 6 100;liftmm 0.5 100;liftmm 6 100;liftmm 0 200"),
 }
@@ -183,7 +183,8 @@ def pet_of(word: str) -> str:
 def gesture(name: str, on_charger: bool | None, proud: bool = False) -> str:
     face, steps = GESTURE.get(name, ("", ""))
     if proud and face:  # "who is my dog?" - "me!": proud, chin up
-        face, steps = "expr_proud", "headdeg 14 250;wait 250;" + steps
+        steps = "headdeg 14 250;wait 250;" + steps  # chin up; the dog/cat face stays (expr_proud for others)
+        face = face if face in ("expr_dog", "expr_cat") else "expr_proud"
     if not face:
         return ""
     st = steps.split(";")

@@ -53,12 +53,18 @@ func ClipNames() []string {
 	for k := range clips {
 		out = append(out, k)
 	}
+	for k := range petClips {
+		out = append(out, k)
+	}
 	sort.Strings(out)
 	return out
 }
 
 // ClipLen is the clip duration (0 if unknown).
 func ClipLen(name string) time.Duration {
+	if d, ok := petClips[name]; ok {
+		return d
+	}
 	clipsOnce.Do(loadClips)
 	c, ok := clips[name]
 	if !ok {
@@ -102,6 +108,12 @@ func clipParams(name string, t time.Duration, loop bool) ([]float64, bool) {
 
 // Clip renders clip name at t. ok=false for an unknown clip.
 func Clip(name string, t time.Duration, loop bool) ([]byte, bool) {
+	if d, ok := petClips[name]; ok {
+		if loop {
+			t %= d
+		}
+		return petClip(name, t)
+	}
 	p, ok := clipParams(name, t, loop)
 	if !ok || len(p) < kfLen {
 		return nil, false

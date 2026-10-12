@@ -54,6 +54,8 @@ EXPRESSIONS: dict[str, tuple[str, str, str]] = {
     "disgusted": ("expr_disgusted", "", "yuck, gross food or smells"),
     "suspicious": ("expr_suspicious", "", "skeptical, 'are you sure?', jokes on you"),
     "determined": ("expr_determined", "", "let's do this, ready, focused on a task"),
+    "dog": ("expr_dog", "head nod", "playing a puppy: puppy eyes, floppy ears, tongue (pet_answer dog does this itself)"),
+    "cat": ("expr_cat", "", "playing a cat: almond eyes, ears, whiskers (pet_answer cat does this itself)"),
 }
 NAMES = list(EXPRESSIONS)
 ALIASES = {
