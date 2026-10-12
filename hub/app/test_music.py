@@ -9,6 +9,7 @@ import animals
 import brain
 import intents
 import music
+import router
 from dancer import Dancer
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -172,7 +173,7 @@ def stream(d, clk, pcm, chunk=1600):
 
 
 class WhoIsMyPet(unittest.TestCase):
-    DOG = ["Who is my dog?", "Who's my good dog?", "who is my dock", "whos my dog", "Who is my good boy dog?",
+    DOG = ["Who is my doggy?", "Who is my dog?", "Who's my good dog?", "who is my dock", "whos my dog", "Who is my good boy dog?",
            "Wer ist mein Hund?", "Wer ist mein braver Hund?", "سگ من کیه؟", "سگم کیه؟", "who is my duck"]
     CAT = ["Who is my cat?", "Who's my kitty?", "Wer ist meine Katze?", "گربه من کیه؟", "who is my cad"]
 
@@ -184,6 +185,9 @@ class WhoIsMyPet(unittest.TestCase):
             self.assertEqual(m.name, "intent_pet_whoismy", txt)
             self.assertEqual(animals.pet_of(m.arg), pet, txt)
             self.assertFalse(face_id.is_identity_question(txt), txt)  # no camera / NVIDIA
+            f = router.fast(txt)  # what main uses: STT adds "?" (12 Oct: fell through to the brain)
+            self.assertIsNotNone(f, txt)
+            self.assertEqual(f.name, "intent_pet_whoismy", txt)
 
     def test_identity_still_identity(self):
         import face_id
@@ -196,6 +200,18 @@ class WhoIsMyPet(unittest.TestCase):
         g = animals.gesture("dog", True, proud=True)
         self.assertIn("face expr_proud", g)
         self.assertEqual(intents.match("Forge like a dog.").name, "intent_animal_sound")
+
+
+class BrainPetCommand(unittest.TestCase):
+    def test_pet_answer_survives_guards_and_plans(self):
+        for text, step, pet in [("Who is my dog?", "pet_answer dog", "dog"), ("Wer ist meine Katze?", "pet_answer cat", "cat"),
+                                ("are you my good boy?", {"do": "pet_answer", "name": "puppy"}, "dog")]:
+            d, notes = brain.sanitize({"reply": "", "actions": [step], "intent": "intent_names_username_extend"}, text)
+            self.assertEqual(len(d["actions"]), 1, notes)  # not "no move asked"
+            plan = brain.build_plan(d["actions"], on_charger=True)
+            self.assertIn(("pet_answer", pet), plan["hub"])
+        self.assertIn("pet_answer", brain.DO)
+        self.assertIn("pet_answer <dog|cat>", brain.instructions(""))
 
 
 class HumOut(unittest.TestCase):

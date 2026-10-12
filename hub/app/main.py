@@ -8,6 +8,7 @@ import collections
 import json
 import os
 import queue
+import re
 import socket
 import struct
 import threading
@@ -1081,6 +1082,12 @@ def run_brain(d: dict, text: str) -> str:
                 queue_cmd(CMD_ACTION, b"explore_stop")
             elif kind == "animal_sound":
                 play_animal(str(val))
+            elif kind == "pet_answer":
+                # he IS the pet: no apology / "I'm not a dog" preface, at most a tiny "Me!"
+                if reply and (len(reply.split()) > 3 or re.search(r"sorry|not a|don't|information|leider|nicht|متاسف|نیستم", reply, re.I)):
+                    print(f"pet_answer reply dropped {reply!r}", flush=True)
+                    reply = ""
+                play_animal(str(val), proud=True)
             elif kind == "dance_music":
                 key = DANCER.start_dance(lang, wheels=on is False)
                 if key and not reply:

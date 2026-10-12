@@ -137,7 +137,8 @@ PROMPT = (
 
 
 # exact matches that are questions by nature keep the fast path despite a "?"
-QUESTION_INTENTS = {"intent_clock_time", "intent_clock_checktimer", "intent_character_age", "intent_system_ssh_status"}
+QUESTION_INTENTS = {"intent_clock_time", "intent_clock_checktimer", "intent_character_age", "intent_system_ssh_status",
+                    "intent_pet_whoismy"}  # "Who is my dog?" always ends in "?"
 
 
 def fast(text: str) -> I.Intent | None:
@@ -148,7 +149,7 @@ def fast(text: str) -> I.Intent | None:
     if m.name == "intent_names_username_extend":
         return None  # introductions always go to the router: is it really a name?
     t = I.normalise(text)
-    if len(t.split()) > FAST_MAX_WORDS or text.strip().endswith("?") and m.name not in QUESTION_INTENTS:
+    if len(t.split()) > (8 if m.name == "intent_pet_whoismy" else FAST_MAX_WORDS) or text.strip().endswith("?") and m.name not in QUESTION_INTENTS:
         return None
     return m
 

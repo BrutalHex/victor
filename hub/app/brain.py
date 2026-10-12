@@ -98,7 +98,7 @@ TRICK_TRAVEL = {"dance": 60 * math.pi / 180 * HALF_TRACK_MM, "come_here": 100, "
 TRICK_S = {"dance": 7.5, "nod": 0.9, "fistbump": 7.0, "look_at_me": 2.2, "look_up": 0.6, "look_down": 0.6,
            "come_here": 2.0, "forward": 1.4, "backup": 1.9, "turn_left": 1.4, "turn_right": 1.4, "turn_around": 2.0}
 DO = ["drive", "turn", "head", "lift", "wait", "expression", "trick", "explore", "explore_stop", "stop", "volume",
-      "animal_sound", "dance_music", "hum"]
+      "animal_sound", "pet_answer", "dance_music", "hum"]
 
 # stock commands the model may pick as "intent" (single, hub-handled). Never
 # SSH (local only) and never session sleep ("Stop Vector" is local).
@@ -162,6 +162,8 @@ def step_dict(a) -> dict | None:
         d["level"] = arg
     elif do in ("animal_sound", "animal", "sound"):
         d["do"], d["name"] = "animal_sound", arg
+    elif do in ("pet_answer", "pet"):
+        d["do"], d["name"] = "pet_answer", arg
     return d
 
 
@@ -260,6 +262,10 @@ def build_plan(actions, start_expr: str = "", end_expr: str = "", on_charger: bo
             continue
         elif do in ("explore", "explore_stop", "stop", "dance_music", "hum"):
             hub.append((do, None))
+            continue
+        elif do == "pet_answer":
+            import animals
+            hub.append(("pet_answer", animals.pet_of(str(a.get("name") or "dog"))))
             continue
         elif do == "animal_sound":
             import animals
@@ -403,7 +409,7 @@ _ACTION = {
     "type": "string",
     "description": "one step: 'drive <mm>' | 'turn <deg>' | 'head up|down|middle|nod' | 'lift up|down' | "
                    "'wait <ms>' | 'expression <name>' | 'trick <name>' | 'circle <mm>' | 'explore' | 'explore_stop' | 'stop' | "
-                   "'volume <1-5>' | 'animal_sound <dog|cat|purr|bird|hamster>' | 'dance_music' | 'hum'",
+                   "'volume <1-5>' | 'animal_sound <dog|cat|purr|bird|hamster>' | 'pet_answer <dog|cat>' | 'dance_music' | 'hum'",
 }
 SCHEMA = {
     "type": "json_schema",
@@ -463,7 +469,14 @@ RULES = (
     "- 'explore' (wander on your own), 'explore_stop', 'stop', 'volume <1-5>'\n"
     "- 'animal_sound <dog|cat|purr|bird|hamster>': you make a little robot version of that pet sound (bark, meow, "
     "purr, chirp, squeak) with a matching face - use it when asked to sound like an animal or playfully in context "
-    "('are you a dog?' -> reply 'No, but listen:' + 'animal_sound dog')\n"
+    "('bark for me' -> 'animal_sound dog', reply '')\n"
+    "- 'pet_answer <dog|cat>': YOU are the user's pet. Whenever they playfully ask who their dog / cat / puppy / "
+    "kitty / good boy is, or whether you are their dog / cat, answer as that pet: proud face + bark or meow. "
+    "Examples: 'who is my dog?', 'who's my good boy?', 'who is my puppy?', 'who's my kitty?', 'are you my dog?', "
+    "'are you a good cat?', 'Wer ist mein Hund?', 'Wer ist meine Katze?', 'Bist du mein Hund?', 'سگ من کیه؟', "
+    "'سگم کیه؟', 'گربه من کیه؟' -> actions ['pet_answer dog'] (or cat), reply '' or at most a tiny playful 'Me!'. "
+    "NEVER apologise, never say you have no information about their pet, never say you are not a dog/cat - "
+    "you are playing the pet. 'good boy/girl/puppy' = dog, 'kitty/kitten' = cat\n"
     "- 'dance_music': listen for the beat of music playing in the room and dance to it until it stops ('dance to "
     "this song'); 'trick dance' is the short dance without music. 'hum': listen to a tune hummed to you and beep it back\n"
     "Compose complex moves from these: a square = 4 x ('drive 200', 'turn 90'); a circle = 'circle 300'; spin around twice = 'turn 720'; a happy wiggle = 'turn 20', 'turn -40', 'turn 20' with expression "
@@ -608,7 +621,7 @@ def sanitize(d: dict, text: str, earlier_replies: list[str] | None = None) -> tu
     acts = list(d.get("actions") or [])
     if acts and not motion_request(text):
         # eyes and sounds need no move cue (an animal sound is a voice act, not a drive)
-        keep = [a for a in acts if _step_text(a).startswith(("expression", "animal_sound", "animal", "hum"))]
+        keep = [a for a in acts if _step_text(a).startswith(("expression", "animal_sound", "animal", "pet", "hum"))]
         if len(keep) != len(acts):
             notes.append(f"{len(acts) - len(keep)} actions dropped (no move asked)")
         acts = keep
