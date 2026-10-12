@@ -223,13 +223,14 @@ class Dancer:
                 self._bar(now)
         if self.mode == "hum" and now >= self.until:
             self.mode = ""
-            notes = music.hum_notes(bytes(self.hum_buf))
-            self.log(f"music hum {len(self.hum_buf) / 32000:.1f}s -> {len(notes)} notes")
+            # blips under 90 ms are noise (measured: a 60 ms A2 between real notes)
+            notes = [(h if d >= 0.09 else 0.0, d) for h, d in music.hum_notes(bytes(self.hum_buf))]
+            self.log(f"music hum {len(self.hum_buf) / 32000:.1f}s -> {len(notes)} notes "
+                     f"{[(round(h), round(d, 2)) for h, d in notes if h > 0]} x{music.hum_shift(notes):g}")
             if sum(d for h, d in notes if h > 0) < 0.3:
                 self.say("hum_none", self.lang)
             else:
-                import animals
-                y = animals.vectorize16(music.beeps(notes))
+                y = music.beeps(notes)
                 self.send_plan("plan:face expr_happy;headdeg 6 300;wait 600;headdeg 0 500")
                 self.play((np.clip(y, -1, 1) * 30000).astype("<i2").tobytes())
 

@@ -289,20 +289,40 @@ def hum_notes(pcm: bytes, sr: int = SR, fmin: float = 80, fmax: float = 1000) ->
     return [(h, d) for h, d in out][:40]
 
 
+HUM_LOW_HZ = 850.0  # measured 12 Oct: his speaker drowned fundamentals below ~800 Hz
+HUM_HIGH_HZ = 2600.0  # (G5 784 Hz came out as its 3rd harmonic, A5 880 Hz was clean)
+
+
+def hum_shift(notes: list[tuple[float, float]]) -> float:
+    """One octave factor for the whole melody (keeps its shape) so its lowest
+    note sits at or above HUM_LOW_HZ."""
+    hz = [h for h, _ in notes if h > 0]
+    if not hz:
+        return 1.0
+    k = 1.0
+    while min(hz) * k < HUM_LOW_HZ and max(hz) * k * 2 <= HUM_HIGH_HZ * 1.5:
+        k *= 2
+    while min(hz) * k > HUM_LOW_HZ * 2:
+        k /= 2
+    return k
+
+
 def beeps(notes: list[tuple[float, float]], sr: int = SR) -> np.ndarray:
-    """Vector-style tones: square+sine, moved into 500-2000 Hz, soft edges."""
+    """Vector-style tones, the melody moved by whole octaves into the band his
+    speaker plays (no voice comb: it notched these notes). Mostly sine, a
+    little 2nd harmonic, soft edges, peak 0.8."""
+    k = hum_shift(notes)
     out = []
     for hz, d in notes:
         n = int(d * sr)
         if hz <= 0:
             out.append(np.zeros(n))
             continue
-        while hz < 500:
-            hz *= 2
-        while hz > 2000:
-            hz /= 2
+        hz = min(hz * k, HUM_HIGH_HZ * 1.5)
         t = np.arange(n) / sr
-        y = 0.6 * np.sin(2 * np.pi * hz * t) + 0.25 * np.sign(np.sin(2 * np.pi * hz * t))
-        env = np.minimum(1, np.minimum(np.arange(n) / (0.01 * sr), (n - np.arange(n)) / (0.02 * sr)))
+        y = np.sin(2 * np.pi * hz * t) + 0.2 * np.sin(4 * np.pi * hz * t)
+        env = np.minimum(1, np.minimum(np.arange(n) / (0.01 * sr), (n - np.arange(n)) / (0.03 * sr)))
         out.append(y * np.clip(env, 0, 1))
-    return np.concatenate(out) if out else np.zeros(0)
+    y = np.concatenate(out) if out else np.zeros(0)
+    peak = float(np.max(np.abs(y))) if len(y) else 0.0
+    return y * (0.8 / peak) if peak > 0 else y

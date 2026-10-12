@@ -171,6 +171,19 @@ def stream(d, clk, pcm, chunk=1600):
         d.tick()
 
 
+class HumOut(unittest.TestCase):
+    def test_melody_moved_by_one_octave_factor_into_speaker_band(self):
+        # measured: G5 784 Hz came out as its 3rd harmonic, A5 880 Hz clean
+        mel = [(392, .5), (440, .5), (523.3, .6), (440, .5), (329.6, .5)]
+        k = music.hum_shift(mel)
+        self.assertEqual(k, 4.0)
+        y = music.beeps(mel)
+        self.assertLessEqual(float(np.abs(y).max()), 0.81)
+        seg = y[int(0.1 * SR):int(0.4 * SR)]
+        f = np.fft.rfftfreq(len(seg), 1 / SR)[np.argmax(np.abs(np.fft.rfft(seg)))]
+        self.assertAlmostEqual(f, 392 * 4, delta=8)
+
+
 class DancerFlow(unittest.TestCase):
     def setUp(self):
         os.environ.pop("HUB_MUSIC_AUTO", None)
