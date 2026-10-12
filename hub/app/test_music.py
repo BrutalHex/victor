@@ -189,6 +189,20 @@ class WhoIsMyPet(unittest.TestCase):
             self.assertIsNotNone(f, txt)
             self.assertEqual(f.name, "intent_pet_whoismy", txt)
 
+    def test_live_transcripts_12oct(self):
+        # M.O's real attempts 16:35-16:51 CEST: all must give the pet answer
+        for txt, pet in [("Where is my cat?", "cat"), ("Who is my chat?", "cat"), ("کتی", "cat"), ("Guddagi.", "dog"),
+                         ("Who is my catty?", "cat"), ("Who's my Katie?", "cat"), ("Who is my kitty cat?", "cat"),
+                         ("Hu is my doggy?", "dog"), ("Who is my doggie?", "dog"), ("Who's my doggo?", "dog"),
+                         ("Doggy!", "dog"), ("Kitty?", "cat"), ("Are you my good dog?", "dog"), ("Wo ist meine Katze?", "cat"),
+                         ("Bist du meine Mieze?", "cat"), ("Who is my puppy?", "dog"), ("Who is my kitten?", "cat")]:
+            f = router.fast(txt)
+            self.assertIsNotNone(f, txt)
+            self.assertEqual((f.name, animals.pet_of(f.arg)), ("intent_pet_whoismy", pet), txt)
+        for txt in ["Who is my friend?", "Where is my phone?", "Are you a robot?", "Who is my mother?", "This word...", "Dag."]:
+            f = intents.match(txt)
+            self.assertTrue(f is None or f.name != "intent_pet_whoismy", txt)
+
     def test_identity_still_identity(self):
         import face_id
         for txt in ["who am I", "wer bin ich", "who is my friend"]:

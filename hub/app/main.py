@@ -638,6 +638,7 @@ PLAN_RUN = {"until": 0.0}  # a sent motion plan is expected to run until then (g
 NO_SPEECH_INTENTS = {"intent_imperative_shutup", "intent_animal_sound", "intent_pet_whoismy"}
 
 
+PET_SAYS = r"(?:i'?m|i am|it'?s me,?|me,?) (?:your|ur|the) (?:\w+ )?(?:cat|kitty|kitten|dog|doggy|puppy)|ich bin (?:dein|deine) \w*\s?(?:hund|katze|mieze)|من (?:سگ|گربه)"
 PET_APOLOGY = r"sorry|not a (?:dog|cat)|don't have|information|i'm not|leider|keine information|bin kein|متاسف|نیستم|اطلاعات"
 
 
@@ -1111,7 +1112,15 @@ def run_brain(d: dict, text: str) -> str:
         mode = d.get("speak") or "before"
         if plan["wheels"] and plan["travel_mm"] > 300 and mode == "during":
             mode = "before"  # long drives start after the speech, so the mic hears "stop"
-        TURN_OUT.update(plan=plan["plan"], speak=mode, est=float(plan["est_s"]))
+        if plan["plan"] or not TURN_OUT.get("plan"):  # an empty move plan must not wipe a pet sound's face/gesture
+            TURN_OUT.update(plan=plan["plan"], speak=mode, est=float(plan["est_s"]))
+    if not any(k in ("pet_answer", "animal_sound") for k, _ in ((plan or {}).get("hub") or [])):
+        # never silent: the model said "I'm your cat!" but forgot the command (12 Oct live)
+        m = re.search(PET_SAYS, reply or "", re.I)
+        if m and (animals.pet_word(text) or any(animals.pet_word(w) for w in re.findall(r"\w+", text or ""))):
+            pet = animals.pet_of(m.group(0))
+            print(f"pet_answer added from reply {reply!r}", flush=True)
+            play_animal(pet, proud=True)
     if brain.clip(expr):
         TURN_OUT["show"] = f"anim|{brain.clip(expr)}".encode()
     if not (plan and plan["plan"]):

@@ -141,6 +141,36 @@ GESTURE = {
 }
 
 
+PET_WORDS = {
+    "dog": ["dog", "dogs", "doggy", "doggie", "doggo", "doggies", "dogy", "doge", "dock", "doc", "duck", "dug", "dawg", "dork",
+            "puppy", "pup", "puppie", "guddagi", "gudagi", "goodagi", "good doggy", "good doggie", "good dog", "hund", "hundi",
+            "hündchen", "wauwau", "hundchen", "سگ", "سگه", "سگم", "داگی", "پاپی", "هاپو"],
+    "cat": ["cat", "cats", "catty", "cattie", "catie", "katie", "katy", "kitty", "kittie", "kitten", "kittens", "kit", "kat",
+            "kad", "cad", "cut", "chat", "kitty cat", "pussycat", "pussy cat", "good kitty", "katze", "kätzchen", "katzchen",
+            "mieze", "miezekatze", "kater", "گربه", "گربهه", "گربم", "گربه ام", "گربه‌ام", "کتی", "کیتی", "پیشی"],
+}
+_PET_LOOKUP = {w: k for k, ws in PET_WORDS.items() for w in ws}
+
+
+def pet_word(word: str) -> str:
+    """Fuzzy: the word after 'who is my ...' -> 'dog' | 'cat' | ''. Covers STT
+    slips seen live (12 Oct: 'chat', 'catty', 'کتی', 'Guddagi'); close
+    spellings (edit ratio >= 0.8) count too, other words ('friend') don't."""
+    import difflib
+    w = re.sub(r"[^\w\s]", "", (word or "").lower()).strip()
+    if not w:
+        return ""
+    if w in _PET_LOOKUP:
+        return _PET_LOOKUP[w]
+    m = difflib.get_close_matches(w, list(_PET_LOOKUP), n=1, cutoff=0.8)
+    if m and len(w) >= 4:
+        return _PET_LOOKUP[m[0]]
+    for pre, k in (("dogg", "dog"), ("pupp", "dog"), ("kitt", "cat"), ("catt", "cat")):
+        if w.startswith(pre):
+            return k
+    return ""
+
+
 _CATS = ("cat", "kitt", "kat", "cad", "kit", "pussy", "katz", "kätz", "miez", "kater", "گرب")
 
 

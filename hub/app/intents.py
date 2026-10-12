@@ -157,12 +157,15 @@ _DEF: list[tuple[str, str, str, dict[str, list[str]]]] = [
         "de": [r"summ(?:e)? (?:mit|das|dies|nach|es nach|mal mit)", r"sing(?:e)? (?:mit|das nach|mal mit)", r"(?:mach|mache|sing) (?:die|diese) melodie nach"],
         "fa": [r"(?:اینو |این رو |اینو با من )?زمزمه کن", r"(?:با من |همراه من )?(?:بخون|بخوان|اواز بخون)", r"(?:این )?(?:اهنگ|ملودی) (?:رو )?تکرار کن"],
     }),
-    ("intent_pet_whoismy", "works", "'who is my dog/cat?': he answers as the pet, proud face + bark/meow (no face ID)", {
-        "en": [r"(?:so |and |then |hey )?(?:who|whose|who's|whos|who s|hu|hoo)(?: is| s|'s|s)? (?:is |be )?my (?:good |little |sweet |best |favou?rite |cute |lovely |clever )*(?:boy |girl |little )?"
-               r"(?P<n>dog|dogs|doggy|doggie|doggo|dock|doc|duck|dug|dawg|dork|puppy|pup|cat|cats|kitty|kitten|kat|cad|kit|pussycat)(?: here| then| now)?"],
-        "de": [r"wer ist (?:denn )?(?:mein|meine|mein kleiner|meine kleine) (?:braver |guter |liebe |lieber |süße |süßer |kleine |kleiner )*(?P<n>hund|hundi|hündchen|wauwau|katze|kätzchen|mieze|miezekatze|kater)"],
-        "fa": [r"(?P<n>سگ|سگه|گربه|گربهه)(?: من|م| کوچولوی من| خوشگل من)? (?:کیه|کی هست|کیست|کیه دیگه)", r"(?P<n>سگم|گربه ام|گربم)(?: کیه| کی هست)",
-               r"کیه (?P<n>سگ|گربه)(?: من|م)"],
+    ("intent_pet_whoismy", "works", "'who is my dog/cat?': he answers as the pet, proud face + bark/meow (no face ID); pet word fuzzy-checked", {
+        "en": [r"(?:so |and |then |hey |ok |okay )?(?:who|whose|who's|whos|who s|hu|hoo|where|where's|wheres|where s)(?: is| s|'s|s)? (?:is |be )?(?:my|me|mine|ma|mai|our) (?:good |little |sweet |best |favou?rite |cute |lovely |clever |pretty )*(?:boy |girl |little |kitty |doggy )?"
+               r"(?P<n>[a-z]+(?: cat)?)(?: here| then| now| today)?",
+               r"(?:is (?:it|that|this) |are you )?(?:my )?(?:good |little |sweet |cute )*(?P<n>doggy|doggie|doggo|puppy|kitty|catty|kitty cat|kitten|guddagi|gudagi|goodagi|good doggy|good doggie|good dog|good kitty)",
+               r"(?:are you|you are|you're) (?:my|a|the) (?:good |little |sweet |best )*(?P<n>[a-z]+)"],
+        "de": [r"(?:wer|wo) ist (?:denn )?(?:hier )?(?:mein|meine|mein kleiner|meine kleine) (?:braver |guter |liebe |lieber |süße |süßer |kleine |kleiner )*(?P<n>\w+)",
+               r"bist du (?:mein|meine) (?:braver |guter |liebe |süße |kleine[r]? )*(?P<n>\w+)"],
+        "fa": [r"(?P<n>سگ|سگه|گربه|گربهه)(?: من|م| کوچولوی من| خوشگل من)? (?:کیه|کی هست|کیست|کیه دیگه|کجاست)", r"(?P<n>سگم|گربه ام|گربم|گربه‌ام)(?: کیه| کی هست| کجاست)",
+               r"کیه (?P<n>سگ|گربه)(?: من|م)", r"(?P<n>کتی|کیتی|داگی|پاپی|پیشی|هاپو)", r"تو (?P<n>سگ|گربه|پیشی)(?: من)?(?:ی|ای)"],
     }),
     ("intent_animal_sound", "works", "robotic pet sound (dog, cat, purr, bird, hamster) with a face and head move", {
         "en": [r"(?:s?park|bark|barking|woof|forge|fork|bach|barg|bart)\w* like a (?P<n>dog|puppy)", r"(?:\w+ )?(?P<n>miu|meow|mio|miao|mew)(?: (?:miu|meow|mio|miao|mew))+",
@@ -362,6 +365,12 @@ def match(text: str) -> Intent | None:
                 if not m:
                     continue
                 arg = (m.groupdict().get("n") or "").strip()
+                if name == "intent_pet_whoismy":
+                    import animals
+                    pet = animals.pet_word(arg)
+                    if not pet:
+                        continue  # "who is my friend" -> not a pet
+                    arg = pet
                 if name == "intent_names_username_extend":
                     # "اسم من چیه" / "what's my name" are identity questions, never a name
                     if not arg or _IDENTITY_GUARD.search(arg) or arg in ("چی", "کی", "چیه"):
