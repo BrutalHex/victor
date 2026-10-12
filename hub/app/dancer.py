@@ -208,7 +208,8 @@ class Dancer:
         if self.mode in ("dance", "auto", "asleep"):
             if now >= self.until:
                 self.stop("time cap")
-            elif self.bt.level(2.0) < 0.2 * getattr(self, "start_rms", 0.0):
+            elif self.bt.level(2.0) < _envf("HUB_DANCE_STOP_LEVEL", 0.08) * getattr(self, "start_rms", 0.0):
+                # measured: quiet passages 0.007, room 0.0015 vs 0.05 at start
                 # level dropped (song over); motor noise only ever raises it
                 self.stop(f"music stopped (level {self.bt.level(2.0):.4f})")
                 self.send_plan("plan:keepbase;face expr_happy;headdeg 0 400")
