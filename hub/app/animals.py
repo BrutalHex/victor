@@ -57,26 +57,76 @@ def _bark(rng) -> np.ndarray:
     return v * _env(n, 0.005, 0.06)
 
 
-def _meow(rng) -> np.ndarray:
-    n = int(0.62 * SR)
+# Cat: source-filter synthesis lifted into the band his speaker plays
+# (measured 12 Oct: almost nothing below ~800 Hz). A harmonic source on a
+# pitch contour, each harmonic weighted by moving formant resonances
+# (i/e -> a/o -> u), breathy onset, slight vibrato, soft tail. Not run
+# through the voice comb (it notched these notes); a light robot buzz instead.
+# Formant tracks: (time 0..1, F1, F2, F3) in Hz, already shifted up.
+_VOWELS = {"i": (1000, 2900, 3900), "e": (1150, 2500, 3600), "a": (1400, 2000, 3300),
+           "o": (1100, 1600, 3100), "u": (950, 1300, 3000)}
+MEOWS = {
+    # name: (seconds, pitch contour [(t, Hz)], vowel path [(t, vowel)], trill seconds)
+    "mew": (0.45, [(0, 950), (0.3, 1350), (1, 1100)], [(0, "i"), (0.5, "e"), (1, "a")], 0.0),
+    "meow": (0.8, [(0, 760), (0.35, 1350), (0.7, 1050), (1, 800)], [(0, "i"), (0.3, "e"), (0.55, "a"), (0.8, "o"), (1, "u")], 0.0),
+    "mrrp": (0.6, [(0, 820), (0.45, 900), (1, 1350)], [(0, "u"), (0.4, "o"), (1, "a")], 0.22),
+}
+
+
+def _track(pts, t):
+    return np.interp(t, [p[0] for p in pts], [p[1] for p in pts])
+
+
+def meow(variant: str, rng) -> np.ndarray:
+    secs, pitch, vowels, trill = MEOWS[variant]
+    n = int(secs * SR)
     t = np.linspace(0, 1, n)
-    f = 520 + 330 * np.sin(np.pi * np.clip(t * 1.25, 0, 1)) - 120 * t  # rise then fall
-    v = _osc(f)
-    # "mi" -> "a" -> "u": formant slides
+    ts = np.arange(n) / SR
+    f0 = _track(pitch, t) * (1 + 0.03 * rng.standard_normal())
+    f0 = f0 * (1 + 0.018 * np.sin(2 * np.pi * 6.0 * ts) * np.clip((t - 0.25) * 3, 0, 1))  # vibrato after the rise
+    vt = [p[0] for p in vowels]
+    F = [np.interp(t, vt, [_VOWELS[v][k] for _, v in vowels]) for k in range(3)]
+    bw = (220.0, 260.0, 380.0)
+    gain = (1.0, 0.75, 0.35)
+    ph = 2 * np.pi * np.cumsum(f0) / SR
     out = np.zeros(n)
-    for k, (f1, f2) in enumerate(((700, 2300), (1000, 1600), (600, 1000))):
-        w = np.clip(1 - abs(t * 2 - k), 0, 1)
-        out += w * (_formant(v, f1, 4) + 0.7 * _formant(v, f2, 6))
-    return out * _env(n, 0.04, 0.15)
+    for h in range(1, 12):
+        fh = h * f0
+        a = np.zeros(n)
+        for Fk, b, g in zip(F, bw, gain):
+            a += g / (1 + ((fh - Fk) / b) ** 2)
+        a *= (fh < 7000) / h ** 0.3
+        out += a * np.sin(h * ph)
+    # breathy onset: noise through the same first formant, fading out
+    noise = rng.standard_normal(n) * np.exp(-ts / 0.08)
+    noise = signal.sosfilt(signal.butter(2, [900, 4500], "bandpass", fs=SR, output="sos"), noise)
+    out = out + 0.35 * noise * np.max(np.abs(out))
+    if trill:  # 'mrr': ~28 Hz flutter at the start
+        am = 1 - 0.75 * (0.5 + 0.5 * np.sin(2 * np.pi * 28 * ts)) * np.clip(1 - ts / trill, 0, 1)
+        out *= am
+    out *= _env(n, 0.035, 0.18) * (0.6 + 0.4 * np.sin(np.pi * np.clip(t * 1.3, 0, 1)))
+    out *= 0.9 + 0.1 * np.sign(np.sin(2 * np.pi * 70 * ts))  # light robot buzz
+    out = signal.sosfilt(signal.butter(2, 750, "highpass", fs=SR, output="sos"), out)
+    return out / (np.max(np.abs(out)) + 1e-9) * 0.9
+
+
+def _meow(rng) -> np.ndarray:
+    return meow(str(rng.choice(["mew", "meow", "meow", "mrrp"])), rng)
 
 
 def _purr(rng) -> np.ndarray:
-    n = int(1.4 * SR)
+    """~25 Hz pulsed rumble moved up to 900-2600 Hz, breathing in (softer,
+    a bit higher) and out (louder) at ~0.7 Hz."""
+    n = int(1.6 * SR)
     t = np.arange(n) / SR
-    am = 0.5 + 0.5 * np.sign(np.sin(2 * np.pi * 26 * t))  # 26 Hz flutter
-    v = _osc(np.full(n, 110.0)) * 0.5 + 0.5 * rng.standard_normal(n)
-    v = signal.sosfilt(signal.butter(2, 600, "lowpass", fs=SR, output="sos"), v)
-    return v * am * _env(n, 0.15, 0.3) * (0.7 + 0.3 * np.sin(2 * np.pi * 0.7 * t))
+    rate = 25 + 1.5 * np.sin(2 * np.pi * 0.35 * t)
+    pulse = 0.5 + 0.5 * np.sin(2 * np.pi * np.cumsum(rate) / SR)
+    am = pulse ** 3
+    src = _osc(np.full(n, 230.0)) * 0.6 + 0.6 * rng.standard_normal(n)
+    v = signal.sosfilt(signal.butter(2, [900, 2600], "bandpass", fs=SR, output="sos"), src)
+    breath = 0.65 + 0.35 * np.sin(2 * np.pi * 0.7 * t)
+    v = v * am * breath * _env(n, 0.15, 0.3)
+    return v / (np.max(np.abs(v)) + 1e-9) * 0.85
 
 
 def _chirp(rng) -> np.ndarray:
@@ -114,6 +164,8 @@ def synth(name: str, seed: int = 0) -> np.ndarray:
     else:
         return np.zeros(0)
     x = np.concatenate(parts)
+    if name in ("cat", "purr"):
+        return x  # clean: the voice comb muddied these (own light buzz instead)
     return vectorize16(x)
 
 

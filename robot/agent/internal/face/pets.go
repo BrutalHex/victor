@@ -9,10 +9,10 @@ import (
 // signed-distance style and teal tint as the eyes. Timed to the hub's pet
 // sounds (hub/app/animals.py): the plan shows the face, the sound starts
 // ~0.45 s later (0.25 s hub delay + playback start), barks 0-0.16 s and
-// 0.28-0.42 s, meow 0-0.6 s, purr 0-1.4 s.
+// 0.28-0.42 s, meow 0.45-0.8 s (mew, meow, mrrp), purr 0-1.6 s.
 var petClips = map[string]time.Duration{
 	"expr_dog": 1700 * time.Millisecond,
-	"expr_cat": 1900 * time.Millisecond,
+	"expr_cat": 2100 * time.Millisecond,
 }
 
 const petSoundAt = 0.45 // s from face start to sound start
@@ -207,9 +207,9 @@ func catFace(s float64) []byte {
 	buf := make([]byte, Bytes)
 	L := petClips["expr_cat"].Seconds()
 	in := clamp01(s/0.15) * settle(s, L)
-	meow := clamp01((s-petSoundAt)/0.1) * clamp01((petSoundAt+0.6-s)/0.15) // 0..1 while meowing
+	meow := clamp01((s-petSoundAt)/0.1) * clamp01((petSoundAt+0.8-s)/0.2) // 0..1 while meowing
 	// slow blink after the meow: lids close to 15% and reopen
-	blink := pulse(s, petSoundAt+0.95, 0.3)
+	blink := pulse(s, petSoundAt+1.2, 0.3)
 	open := in * (1 - 0.85*blink) * (1 - 0.35*meow) // eyes narrow while meowing
 	for _, cx := range []float64{52, 108} {
 		hx, hy := 15.0, 11*open+0.6

@@ -229,6 +229,40 @@ class BrainPetCommand(unittest.TestCase):
         self.assertIn("pet_answer <dog|cat>", brain.instructions(""))
 
 
+class CatSound(unittest.TestCase):
+    def test_meow_variants_contour_and_band(self):
+        from scipy import signal
+        for v, (secs, *_r) in animals.MEOWS.items():
+            y = animals.meow(v, np.random.default_rng(3))
+            self.assertAlmostEqual(len(y) / SR, secs, delta=0.01)
+            self.assertLessEqual(float(np.abs(y).max()), 0.91)
+            f, t, S = signal.stft(y, SR, nperseg=512)
+            e = np.abs(S) ** 2
+            self.assertLess(e[f < 800].sum() / e.sum(), 0.03, v)  # his speaker barely plays < 800 Hz
+            pk = f[np.argmax(np.abs(S[(f > 600) & (f < 2000)]), axis=0) + np.argmax(f > 600)]
+            loud = e.sum(axis=0) > 0.05 * e.sum(axis=0).max()
+            pk = pk[loud]
+            if v == "mrrp":
+                self.assertGreater(pk[-1], pk[0] + 250)  # questioning: ends high
+            else:
+                top = int(np.argmax(pk))
+                self.assertTrue(0 < top < len(pk) - 1, (v, pk))  # rises then falls
+        n = {len(animals.synth("cat", s)) for s in range(12)}
+        self.assertGreaterEqual(len(n), 2)  # not canned: variants picked at random
+
+    def test_purr_pulses_25hz_in_band(self):
+        y = animals.synth("purr", 1)
+        env = np.abs(signal_hilbert(y))
+        sp = np.abs(np.fft.rfft(env - env.mean()))
+        fr = np.fft.rfftfreq(len(env), 1 / SR)
+        self.assertTrue(20 < fr[np.argmax(sp[fr > 5]) + np.argmax(fr > 5)] < 30)
+
+
+def signal_hilbert(y):
+    from scipy import signal
+    return signal.hilbert(y)
+
+
 class HumOut(unittest.TestCase):
     def test_melody_moved_by_one_octave_factor_into_speaker_band(self):
         # measured: G5 784 Hz came out as its 3rd harmonic, A5 880 Hz clean
