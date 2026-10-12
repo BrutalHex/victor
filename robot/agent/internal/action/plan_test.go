@@ -281,12 +281,13 @@ func TestGestureLiftSkippedOnChargerHeadStillMoves(t *testing.T) {
 		if out.PWM[3] != 0 {
 			sawHead = true
 		}
-		// measured on the robot: ~4300 counts/s per unit power, gravity worth ~0.2 power
+		// fitted to the robot 2026-10-12 (agent gesture log): ~4300 counts/s
+		// per unit power above friction; up needs > 0.25, down > 0.2
 		pw := float64(out.PWM[3]) / full
 		if pw > 0 {
-			pw = math.Max(0, pw-0.2)
+			pw = math.Max(0, pw-0.25)
 		} else if pw < 0 {
-			pw -= 0.1
+			pw = math.Min(0, pw+0.2)
 		}
 		head += int32(pw * 4300 * 0.02)
 		if head < minHead {

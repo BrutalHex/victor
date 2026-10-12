@@ -300,7 +300,12 @@ func (r *Runner) Tick(in In) Out {
 		r.gLast = pos
 		crossed := (r.gErr0 > 0 && err < 0) || (r.gErr0 < 0 && err > 0)
 		// stop early by what one more tick plus the sensor lag (~2 ticks) would add
-		coasting := (err > 0 && v > 0 && err <= 2*v) || (err < 0 && v < 0 && err >= 2*v)
+		// (capped: a speed spike right after the start must not end the step far away)
+		lead := 2 * abs32(v)
+		if lead > 3*tol {
+			lead = 3 * tol
+		}
+		coasting := (err > 0 && v > 0 && err <= lead) || (err < 0 && v < 0 && -err <= lead)
 		if abs32(err) <= tol || crossed || coasting || el >= st.dur {
 			r.gErr0 = 0
 			if r.Log != nil {
