@@ -124,7 +124,7 @@ class Dancer:
         self.next_bar = 0.0
         self.intended = 0.0
         self.bpm_lock = self.gate.bpm()
-        self.start_rms = self._rms(mean=True)
+        self.start_rms = self.bt.level(4.0)
         self.log(f"music {mode} start bpm={self.gate.bpm():.1f}")
         self.send_plan(f"plan:headdeg {music.POSE_DEG} 300")  # dancing pose; its start is the base
 
@@ -208,18 +208,15 @@ class Dancer:
         if self.mode in ("dance", "auto", "asleep"):
             if now >= self.until:
                 self.stop("time cap")
-            elif self._rms(1.5, mean=True) < 0.15 * getattr(self, "start_rms", 0.0):
+            elif self.bt.level(2.0) < 0.2 * getattr(self, "start_rms", 0.0):
                 # level dropped (song over); motor noise only ever raises it
-                self.stop(f"music stopped (rms {self._rms(1.5, mean=True):.4f})")
+                self.stop(f"music stopped (level {self.bt.level(2.0):.4f})")
                 self.send_plan("plan:keepbase;face expr_happy;headdeg 0 400")
             elif self.listen_check_at and now >= self.listen_check_at:
                 self.listen_check_at = 0
                 r = self.bt.on_beat_ratio(self.bpm_lock or self.gate.bpm())
-                lvl = self._rms(1.5, mean=True)  # listening bar: head still, no motor noise
-                quiet = lvl < 0.15 * getattr(self, "start_rms", 0.0)
-                if quiet or r < _envf("HUB_DANCE_BEAT_RATIO", 1.25):
-                    why = f"music stopped (rms {lvl:.4f})" if quiet else f"ratio {r:.2f}"
-                    self.stop(f"beat lost ({why})")
+                if r < _envf("HUB_DANCE_BEAT_RATIO", 1.25):
+                    self.stop(f"beat lost (ratio {r:.2f})")
                     self.send_plan("plan:keepbase;face expr_happy;headdeg 0 400")
             elif now >= self.next_bar:
                 self._bar(now)

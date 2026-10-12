@@ -182,16 +182,32 @@ class DancerFlow(unittest.TestCase):
         bars = [p for p in sent if "headdeg" in p or "wait" in p]
         self.assertGreaterEqual(len(bars), 3)
         self.assertTrue(all("turn" not in p for p in sent))  # auto: never wheels
-        # room noise after the song (measured: 0.0015 vs 0.05 music): the stale
-        # 10 s tracker must not keep it dancing; stops within ~5 s
-        noise = (np.random.default_rng(1).normal(0, 0.002, SR * 5) * 32767).astype("<i2").tobytes()
-        stream(d, clk, noise)
-        self.assertEqual(d.mode, "")
-        stream(d, clk, bytes(SR * 2 * 7))
+        stream(d, clk, bytes(SR * 2 * 12))  # silence
         n = len(sent)
         stream(d, clk, clicks(120, 15))  # music again within the cooldown
         self.assertEqual(d.mode, "")
         self.assertEqual(len(sent), n)
+
+    def test_song_ends_stops_within_seconds_despite_motor_noise(self):
+        # measured 12 Oct: music 0.05 rms, room 0.0015; the stale 10 s tracker
+        # kept him dancing 9 s after the song. Loud flagged motor frames must
+        # not hold it either.
+        d, clk, sent, *_ = make()
+        song = wav("music_electro_cc0.wav")
+        stream(d, clk, song + song)
+        self.assertEqual(d.mode, "auto")
+        rng = np.random.default_rng(1)
+        t_end = clk.t
+        for k in range(40):  # 4 s of room noise, every other chunk his motors (flagged, 10x louder)
+            loud = k % 2 == 0
+            x = rng.normal(0, 0.02 if loud else 0.0015, 1600)
+            clk.t += 0.1
+            d.feed((x * 32767).astype("<i2").tobytes(), loud)
+            d.tick()
+            if d.mode == "":
+                break
+        self.assertEqual(d.mode, "")
+        self.assertLess(clk.t - t_end, 3.0)
 
     def test_auto_flag_off(self):
         os.environ["HUB_MUSIC_AUTO"] = "0"

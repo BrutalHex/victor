@@ -38,6 +38,7 @@ class BeatTracker:
         self.keep = int(secs * FPS)
         self.env = np.zeros(0)
         self.rms = np.zeros(0)
+        self.quiet = np.zeros(0, dtype=bool)  # frame not flagged as motor noise
         self.frames = 0  # total frames seen
         self._tail = np.zeros(0)
         self._prev = None
@@ -64,8 +65,18 @@ class BeatTracker:
             flux = np.minimum(flux, float(np.median(self.env[-2 * FPS:])))
         self.env = np.concatenate([self.env, flux])[-self.keep:]
         self.rms = np.concatenate([self.rms, np.sqrt((fr ** 2).mean(axis=1))])[-self.keep:]
+        self.quiet = np.concatenate([self.quiet, np.full(n, not noisy)])[-self.keep:]
         self.frames += n
         self._tail = x[n * HOP:]
+
+    def level(self, secs: float = 2.0) -> float:
+        """Music level without the robot's own motors: 30th percentile of the
+        unflagged frames (music is dense; motor bursts the flag misses are
+        short), so it drops when the song ends even while he moves."""
+        n = int(secs * FPS)
+        r, q = self.rms[-n:], self.quiet[-n:]
+        r = r[q] if q.sum() >= n // 4 else r
+        return float(np.percentile(r, 30)) if len(r) else 0.0
 
     def tempo(self) -> tuple[float, float, float]:
         """-> (bpm, confidence 0..1, phase: frames since the last beat)."""
