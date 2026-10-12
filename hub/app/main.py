@@ -502,7 +502,7 @@ def think_loop() -> None:
     while True:
         time.sleep(0.5)
         think_keepalive()
-        if SESSION.check_idle():  # HUB_SESSION_IDLE_S (default 180 s, 0 = never)
+        if SESSION.check_idle():  # HUB_SESSION_IDLE_S (default 0 = never: sleep only on "Stop Vector")
             cue_sleep()
         session_face()
 

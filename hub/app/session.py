@@ -3,7 +3,7 @@
 ASLEEP (default after hub start): utterances only reach the local wake
 detector; nothing goes to OpenAI. "Hey Vector" -> AWAKE. Every utterance in
 AWAKE runs the normal pipeline with this session's history as context.
-"Stop Vector" (or HUB_SESSION_IDLE_S of silence, default 180 s; 0 = never) -> ASLEEP, history
+"Stop Vector" (or HUB_SESSION_IDLE_S of silence, default 0 = never; M.O: sleep only on "Stop Vector") -> ASLEEP, history
 cleared. HUB_WAKE=0 disables all of this (always listening, as before).
 """
 from __future__ import annotations
@@ -23,7 +23,7 @@ class Session:
     def __init__(self, enabled: bool | None = None, idle_s: float | None = None, max_turns: int | None = None,
                  clock=time.time) -> None:
         self.enabled = _env_on("HUB_WAKE", "1") if enabled is None else enabled
-        self.idle_s = float(os.environ.get("HUB_SESSION_IDLE_S", "180") or 0) if idle_s is None else idle_s
+        self.idle_s = float(os.environ.get("HUB_SESSION_IDLE_S", "0") or 0) if idle_s is None else idle_s
         self.max_turns = int(os.environ.get("HUB_SESSION_HISTORY", "8")) if max_turns is None else max_turns
         self.clock = clock
         self.lock = threading.Lock()

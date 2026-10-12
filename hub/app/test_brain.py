@@ -546,3 +546,24 @@ class GuardTests(unittest.TestCase):
         self.assertIsNone(d)
         d, _ = brain.sanitize(self.d(reply="Yes?"), "Vector", ["Yes?"])  # short acks may repeat
         self.assertIsNotNone(d)
+
+
+class SessionDefaults(unittest.TestCase):
+    def test_no_inactivity_sleep_by_default(self):
+        """Owner's decision: once awake, Vector sleeps only on 'Stop Vector'."""
+        from session import Session
+        saved = os.environ.pop("HUB_SESSION_IDLE_S", None)
+        try:
+            t = [0.0]
+            s = Session(enabled=True, clock=lambda: t[0])
+            self.assertEqual(s.idle_s, 0)
+            s.wake()
+            t[0] += 100000
+            self.assertFalse(s.check_idle())
+            self.assertTrue(s.listening())
+            os.environ["HUB_SESSION_IDLE_S"] = "60"
+            self.assertEqual(Session(enabled=True).idle_s, 60)  # setting still available
+        finally:
+            os.environ.pop("HUB_SESSION_IDLE_S", None)
+            if saved is not None:
+                os.environ["HUB_SESSION_IDLE_S"] = saved
