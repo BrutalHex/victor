@@ -51,6 +51,21 @@ const (
 	stTurn
 	stWait
 	stBumpWait
+	stLiftTo // closed loop: lift to base+rel (encoder counts) within dur
+	stHeadTo // closed loop: head to base+rel (encoder counts) within dur
+)
+
+// Encoder scales (DDL/WireOS robot/hal/src/hal_motors.cpp HAL_MOTOR_POSITION_SCALE):
+// lift 0.25*pi/149.7 rad per count on a 66 mm arm (cozmoConfig LIFT_ARM_LENGTH),
+// head 0.25*pi/366.211 rad per count.
+const (
+	LiftMMPerCount    = 66.0 * 0.25 * math.Pi / 149.7 * 0.98 // ~0.34 mm near the low (rest) position
+	HeadDegPerCount   = 0.25 * 180.0 / 366.211               // ~0.123 deg
+	MaxGestureLiftMM  = 25.0                                 // expression gestures stay small
+	MaxGestureHeadDeg = 20.0
+	gestureMaxPower   = 0.6
+	gestureKp         = 0.05 // power per count of error
+	gestureTolCounts  = 3
 )
 
 type step struct {
@@ -60,6 +75,7 @@ type step struct {
 	deg   float64       // turn (+ left)
 	dur   time.Duration // head/lift/wait duration, drive/turn timeout
 	clip  string        // face clip to show from this step on ("" = keep)
+	rel   int32         // stLiftTo/stHeadTo target relative to the plan's start position
 }
 
 // Plan is a named sequence.
@@ -114,6 +130,7 @@ type In struct {
 	EncL      int32 // motors[0] position
 	EncR      int32 // motors[1] position
 	EncLift   int32 // motors[2] position
+	EncHead   int32 // motors[3] position
 	ProxValid bool  // fresh ToF reading
 	ProxMM    uint16
 }
@@ -127,18 +144,21 @@ type Out struct {
 }
 
 type Runner struct {
-	plan    Plan
-	i       int
-	started time.Time
-	stepAt  time.Time
-	encL0   int32
-	encR0   int32
-	lift0   int32
-	ctl     *drivectl.Ctl
-	notes   []string
-	active  bool
-	bumped  bool
-	Log     func(string)
+	plan     Plan
+	i        int
+	started  time.Time
+	stepAt   time.Time
+	encL0    int32
+	encR0    int32
+	lift0    int32
+	baseSet  bool // liftBase/headBase captured at the plan's first tick
+	liftBase int32
+	headBase int32
+	ctl      *drivectl.Ctl
+	notes    []string
+	active   bool
+	bumped   bool
+	Log      func(string)
 }
 
 // Start a named plan; unknown names return false. "stop" just cancels.
@@ -148,6 +168,7 @@ func (r *Runner) Start(name string, now time.Time) bool {
 		return false
 	}
 	r.plan, r.i, r.started, r.active, r.notes, r.bumped = p, 0, now, len(p.Steps) > 0, nil, false
+	r.baseSet = false
 	r.stepAt = time.Time{}
 	return true
 }
@@ -206,6 +227,9 @@ func (r *Runner) Tick(in In) Out {
 	}
 	st := r.plan.Steps[r.i]
 	out := Out{Active: true}
+	if !r.baseSet {
+		r.baseSet, r.liftBase, r.headBase = true, in.EncLift, in.EncHead
+	}
 	if r.stepAt.IsZero() {
 		r.stepAt = in.Now
 		r.encL0, r.encR0, r.lift0 = in.EncL, in.EncR, in.EncLift
@@ -221,7 +245,7 @@ func (r *Runner) Tick(in In) Out {
 		out.Clip = st.clip
 		// skip steps that are not allowed right now
 		switch st.kind {
-		case stLift:
+		case stLift, stLiftTo:
 			if in.OnCharger {
 				r.note("lift skipped on charger")
 				return r.next(out)
@@ -254,6 +278,16 @@ func (r *Runner) Tick(in In) Out {
 			return r.next(out)
 		}
 		out.PWM[2] = int16(st.power * full)
+	case stLiftTo, stHeadTo:
+		pos, base, ch := in.EncLift, r.liftBase, 2
+		if st.kind == stHeadTo {
+			pos, base, ch = in.EncHead, r.headBase, 3
+		}
+		err := base + st.rel - pos
+		if abs32(err) <= gestureTolCounts || el >= st.dur {
+			return r.next(out)
+		}
+		out.PWM[ch] = int16(gesturePower(err) * full)
 	case stWait:
 		if el >= st.dur {
 			return r.next(out)
@@ -386,4 +420,17 @@ func abs32(v int32) int32 {
 		return -v
 	}
 	return v
+}
+
+// gesturePower: proportional, capped, with a small minimum so the motor
+// overcomes friction on tiny moves.
+func gesturePower(err int32) float64 {
+	p := gestureKp * float64(err)
+	p = math.Max(-gestureMaxPower, math.Min(gestureMaxPower, p))
+	if p > 0 && p < 0.2 {
+		p = 0.2
+	} else if p < 0 && p > -0.2 {
+		p = -0.2
+	}
+	return p
 }

@@ -430,7 +430,7 @@ func runDaemon() int {
 				}
 				ain := action.In{Now: time.Now(), OnCharger: vin.OnCharger, Abort: abortWhy != "", ProxValid: win.ProxValid, ProxMM: fr.ProxMM}
 				if have {
-					ain.EncL, ain.EncR, ain.EncLift = fr.Motors[0].Pos, fr.Motors[1].Pos, fr.Motors[2].Pos
+					ain.EncL, ain.EncR, ain.EncLift, ain.EncHead = fr.Motors[0].Pos, fr.Motors[1].Pos, fr.Motors[2].Pos, fr.Motors[3].Pos
 				}
 				out := runner.Tick(ain)
 				pwm = out.PWM

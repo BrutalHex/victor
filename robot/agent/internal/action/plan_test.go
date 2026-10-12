@@ -214,3 +214,71 @@ func TestResultCodes(t *testing.T) {
 		}
 	}
 }
+
+// Expression gestures: closed-loop lift/head moves relative to the start,
+// lift skipped on the charger, always returning to where it started.
+func TestGestureLiftReturnsToStart(t *testing.T) {
+	p, notes := ParsePlan("plan:liftmm 5 120;liftmm 0 120;liftmm 5 120;liftmm 0 120")
+	if len(notes) != 0 || len(p.Steps) != 4 {
+		t.Fatalf("steps %d notes %v", len(p.Steps), notes)
+	}
+	want := int32(math.Round(5 / LiftMMPerCount))
+	if p.Steps[0].rel != want || p.Steps[1].rel != 0 || want < 12 || want > 18 {
+		t.Fatalf("rel %d/%d want %d (5 mm ~ 15 counts)", p.Steps[0].rel, p.Steps[1].rel, want)
+	}
+	var r Runner
+	r.StartText("plan:liftmm 5 300;liftmm 0 300", time.Unix(0, 0))
+	now := time.Unix(0, 0)
+	lift := int32(1000) // simulated lift encoder; moves with the PWM sign
+	maxUp := int32(0)
+	for i := 0; i < 400 && r.Active(); i++ {
+		now = now.Add(10 * time.Millisecond)
+		out := r.Tick(In{Now: now, EncLift: lift})
+		if out.PWM[0] != 0 || out.PWM[1] != 0 {
+			t.Fatal("gesture moved the wheels")
+		}
+		lift += int32(out.PWM[2]) / 3000
+		if lift-1000 > maxUp {
+			maxUp = lift - 1000
+		}
+	}
+	if r.Active() {
+		t.Fatal("gesture did not finish")
+	}
+	if maxUp < want-gestureTolCounts {
+		t.Fatalf("lift only rose %d counts, want ~%d", maxUp, want)
+	}
+	if d := lift - 1000; d > gestureTolCounts || d < -gestureTolCounts {
+		t.Fatalf("lift ended %d counts from start", d)
+	}
+}
+
+func TestGestureLiftSkippedOnChargerHeadStillMoves(t *testing.T) {
+	var r Runner
+	r.StartText("plan:liftmm 5 200;liftmm 0 200;headdeg -5 200;headdeg 0 200", time.Unix(0, 0))
+	now := time.Unix(0, 0)
+	head := int32(0)
+	sawHead := false
+	for i := 0; i < 300 && r.Active(); i++ {
+		now = now.Add(10 * time.Millisecond)
+		out := r.Tick(In{Now: now, OnCharger: true, EncHead: head})
+		if out.PWM[2] != 0 {
+			t.Fatal("lift moved on the charger")
+		}
+		if out.PWM[3] != 0 {
+			sawHead = true
+		}
+		head += int32(out.PWM[3]) / 3000
+	}
+	if !sawHead || head > gestureTolCounts || head < -gestureTolCounts {
+		t.Fatalf("head moved=%v ended %d", sawHead, head)
+	}
+}
+
+func TestGestureCaps(t *testing.T) {
+	p, _ := ParsePlan("plan:liftmm 80 100;liftmm -10 100;headdeg 60 100")
+	if p.Steps[0].rel != int32(math.Round(MaxGestureLiftMM/LiftMMPerCount)) || p.Steps[1].rel != 0 ||
+		p.Steps[2].rel != int32(math.Round(MaxGestureHeadDeg/HeadDegPerCount)) {
+		t.Fatalf("caps not applied: %+v", p.Steps)
+	}
+}

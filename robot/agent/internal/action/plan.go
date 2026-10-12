@@ -153,6 +153,27 @@ func ParsePlan(text string) (Plan, []string) {
 				notes = append(notes, "bad lift "+arg)
 				continue
 			}
+		case "liftmm", "headdeg":
+			// expression gesture (DDL lift/head keyframes): move to <delta> from
+			// where the plan started, within <ms>; "liftmm 0 ..." returns there.
+			ms := 300.0
+			if len(f) > 2 {
+				if v, err := strconv.ParseFloat(f[2], 64); err == nil && v > 0 && !math.IsInf(v, 0) {
+					ms = math.Min(v, 1500)
+				}
+			}
+			if numErr != nil {
+				notes = append(notes, "bad "+f[0]+" "+arg)
+				continue
+			}
+			ms = math.Max(ms, 80)
+			if f[0] == "liftmm" {
+				mm := math.Max(0, math.Min(MaxGestureLiftMM, num)) // never below where it started
+				add = []step{{kind: stLiftTo, rel: int32(math.Round(mm / LiftMMPerCount)), dur: time.Duration(ms) * time.Millisecond}}
+			} else {
+				deg := clampF(num, MaxGestureHeadDeg)
+				add = []step{{kind: stHeadTo, rel: int32(math.Round(deg / HeadDegPerCount)), dur: time.Duration(ms) * time.Millisecond}}
+			}
 		case "wait":
 			if numErr != nil || num < 0 {
 				notes = append(notes, "bad wait "+arg)
@@ -217,6 +238,7 @@ func (r *Runner) StartText(text string, now time.Time) bool {
 	}
 	p, notes := ParsePlan(text)
 	r.plan, r.i, r.started, r.active, r.notes, r.bumped = p, 0, now, len(p.Steps) > 0, nil, false
+	r.baseSet = false
 	r.stepAt = time.Time{}
 	for _, n := range notes {
 		r.note(n)

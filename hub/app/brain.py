@@ -290,12 +290,101 @@ def build_plan(actions, start_expr: str = "", end_expr: str = "", on_charger: bo
             "travel_mm": round(travel), "wheels": wheels, "held": held}
 
 
+# Lift/head motion tracks of the DDL stock animations behind each expression
+# (github.com/digital-dream-labs/vector-animations-build, LiftHeightKeyFrame /
+# HeadAngleKeyFrame; DDL Software Asset License 1.0, personal use). Lift is in
+# mm above where it started (DDL heights minus the 32 mm rest), head in degrees
+# relative to the start, each step "<mm|deg> <ms>" as in the keyframe
+# (duration = DDL durationTime_ms). Body (wheel) tracks are left out. Every
+# track ends back at 0. The agent runs them closed loop on the encoders
+# ("liftmm"/"headdeg" plan steps, caps 25 mm / 20 deg) and skips the lift on
+# the charger.
+DDL_GESTURES: dict[str, tuple[str, list[tuple[str, float, int]]]] = {
+    # badrobot_01: lift 32->37->32 mm (99 ms up, 99 ms down) at the start and
+    # again at the end, with a head snap up; M.O's "0.5 cm up/down when angry"
+    "angry": ("anim_feedback_badrobot_01", [
+        ("head", 10, 99), ("lift", 5, 99), ("lift", 0, 99), ("head", 0, 165),
+        ("wait", 0, 300), ("lift", 5, 99), ("lift", 0, 99)]),
+    # reacttoblock_frustrated_01: head dips -5 deg, lift slams up 13 mm
+    # (32->45, 99 ms) and drops straight back (99 ms), head sinks to -8, back
+    "frustrated": ("anim_reacttoblock_frustrated_01", [
+        ("head", -5, 99), ("lift", 13, 99), ("lift", 0, 99), ("wait", 0, 300),
+        ("head", -8, 99), ("wait", 0, 500), ("head", 0, 198)]),
+    # feedback_meanwords_02: lift twitches 32->46->40->43 mm, head drops -10..-22
+    "hurt": ("anim_feedback_meanwords_02", [
+        ("lift", 14, 99), ("lift", 8, 165), ("lift", 11, 99), ("lift", 0, 198),
+        ("head", -10, 165), ("wait", 0, 400), ("head", 0, 198)]),
+    # feedback_goodrobot_01: fading lift bounce 43/34/42/34/42/32/39/32/37/32 mm, 66 ms steps
+    "happy": ("anim_feedback_goodrobot_01", [
+        ("head", 8, 165), ("lift", 11, 99), ("lift", 2, 80), ("lift", 10, 80), ("lift", 2, 80),
+        ("lift", 10, 80), ("lift", 0, 80), ("lift", 7, 80), ("lift", 0, 80), ("lift", 5, 80),
+        ("lift", 0, 80), ("head", 0, 165)]),
+    # greeting_happy_03: big lift bounces to 45/49/45/53/48 mm and back to rest
+    "joy": ("anim_greeting_happy_03", [
+        ("lift", 13, 132), ("lift", 0, 99), ("lift", 17, 132), ("lift", 0, 99), ("lift", 13, 99),
+        ("lift", 0, 99), ("lift", 21, 99), ("lift", 0, 99), ("lift", 16, 99), ("lift", 0, 132)]),
+    # feedback_iloveyou_01: head up, slow lift rise to 46 mm, then a soft wiggle 50/39/49/37/46
+    "love": ("anim_feedback_iloveyou_01", [
+        ("head", 10, 300), ("lift", 14, 264), ("lift", 8, 165), ("lift", 13, 99), ("lift", 18, 99),
+        ("lift", 7, 80), ("lift", 17, 99), ("lift", 5, 99), ("lift", 14, 132), ("lift", 0, 198),
+        ("head", 0, 300)]),
+    # knowledgegraph_success_01: head up, one quick lift pop 32->40->32 mm
+    "excited": ("anim_knowledgegraph_success_01", [
+        ("head", 10, 165), ("lift", 8, 80), ("lift", 0, 80), ("head", 0, 198)]),
+    # reacttoblock_happydetermined_02: head dips -12 then up, lift raised high (72..92 mm, capped 25)
+    "proud": ("anim_reacttoblock_happydetermined_02", [
+        ("head", -6, 132), ("lift", 25, 165), ("head", 10, 132), ("wait", 0, 400),
+        ("lift", 0, 300), ("head", 0, 198)]),
+    # keepaway_bored_idle_01: head hangs at -16..-20 deg, no lift
+    "bored": ("anim_keepaway_bored_idle_01", [("head", -8, 400), ("wait", 0, 1200), ("head", 0, 300)]),
+}
+
+
+def ddl_gesture(n: str, on_charger: bool | None = False) -> tuple[str, float]:
+    """-> (plan steps, seconds) for an expression's DDL motion track; lift
+    steps dropped on the charger (or unknown charger state)."""
+    steps, ms = [], 0
+    for kind, v, d in DDL_GESTURES.get(n, ("", []))[1]:
+        if kind == "lift" and on_charger is not False:
+            continue
+        if kind == "wait":
+            steps.append(f"wait {d}")
+        else:
+            steps.append(f"{'liftmm' if kind == 'lift' else 'headdeg'} {v:g} {d}")
+        ms += d
+    while steps and steps[-1].startswith("wait"):
+        ms -= int(steps.pop().split()[1])
+    if steps and not any(s.split()[0] in ("liftmm", "headdeg") and s.split()[1] != "0" for s in steps):
+        return "", 0.0
+    return ";".join(steps), ms / 1000.0
+
+
 def gesture_plan(expr: str, on_charger: bool | None = False) -> str:
-    """Small head gesture for a reply's expression (head only, also on the charger)."""
+    """Motion for a reply's expression: the DDL lift/head track when the stock
+    animation has one, else a small head gesture. Never wheels."""
     n = expression(expr)
-    if not GESTURES or not n or not EXPRESSIONS[n][1]:
+    if not GESTURES or not n:
+        return ""
+    if n in DDL_GESTURES:
+        g, _s = ddl_gesture(n, on_charger)
+        return "plan:" + g if g else ""
+    if not EXPRESSIONS[n][1]:
         return ""
     return "plan:" + EXPRESSIONS[n][1]
+
+
+def gesture_seconds(plan: str) -> float:
+    """Rough run time of a gesture plan (for the speech/plan timing)."""
+    t = 0.0
+    for st in (plan or "").removeprefix("plan:").split(";"):
+        f = st.split()
+        if len(f) >= 3 and f[0] in ("liftmm", "headdeg"):
+            t += float(f[2]) / 1000
+        elif len(f) == 2 and f[0] == "wait":
+            t += float(f[1]) / 1000
+        elif f:
+            t += 0.5
+    return round(max(t, 0.5), 2)
 
 
 # ------------------------------------------------------------ the one call

@@ -221,28 +221,35 @@ exact-phrase rules, unchanged), "Stop Vector" (sleep), and identity questions (f
 ### Expressions
 
 Eye animations from the DDL eye poses / stock animations (`robot/agent/tools/ddl_faceclips.py`, clips
-`expr_*`). Each one eases in, holds about 2 s and settles back to normal awake eyes. Some add a small head
-gesture (head only, also on the charger; `HUB_EXPRESSION_GESTURES=0` turns them off).
+`expr_*`). Each one eases in, holds about 2 s and settles back to normal awake eyes. Where the DDL stock
+animation behind an expression moves the lift (arms) or head, the same motion track plays: heights and
+angles taken from its `LiftHeightKeyFrame` / `HeadAngleKeyFrame` tracks (DDL `vector-animations-build`),
+lift in mm above where it started (DDL heights minus the 32 mm rest), head in degrees from the start,
+with DDL's keyframe timing. The agent runs them closed loop on the encoders (`liftmm` / `headdeg` plan
+steps, caps 25 mm / 20 deg) and every track ends where it started. DDL body (wheel) tracks are left out.
+The lift never moves on the charger (or when the charger state is unknown); there only the head part
+plays. Others keep a small head gesture. `HUB_EXPRESSION_GESTURES=0` turns all motion off.
 
-| name | used for | gesture |
+| name | used for | motion (DDL source) |
 |---|---|---|
 | neutral | facts, numbers, the time | - |
-| happy, joy | good news, thanks, jokes | head bob |
-| excited | can't wait, great idea | nod |
-| love | "I love you", compliments | head up |
-| proud | praise, done it | head up |
-| sad | sad news, sympathy | head droops |
-| hurt | insulted, scolded | head droops |
-| angry, frustrated | annoyed / it didn't work | - |
+| angry | annoyed, indignant | head snaps up 10 deg; lift up 5 mm in 99 ms, down in 99 ms; 300 ms pause; again (`anim_feedback_badrobot_01`: lift 32->37->32 mm at start and end) |
+| frustrated | it didn't work, stuck | head dips -5 deg; lift slams up 13 mm (99 ms) and drops (99 ms); head sinks -8 deg, 0.5 s, back (`anim_reacttoblock_frustrated_01`) |
+| hurt | insulted, scolded | lift twitches +14 / +8 / +11 mm then down; head drops -10 deg and back (`anim_feedback_meanwords_02`) |
+| happy | good news, thanks | head up 8 deg; fading lift bounce +11/+2/+10/+2/+10/0/+7/0/+5/0 mm, ~80 ms steps (`anim_feedback_goodrobot_01`) |
+| joy | warm delight | lift bounces +13/+17/+13/+21/+16 mm, each back to rest, ~100-130 ms (`anim_greeting_happy_03`) |
+| love | "I love you", compliments | head up 10 deg; slow lift rise +14 mm (264 ms), soft wiggle +18/+7/+17/+5/+14 mm, down (`anim_feedback_iloveyou_01`) |
+| excited | can't wait, great idea | head up 10 deg; one lift pop +8 mm and back (`anim_knowledgegraph_success_01`) |
+| proud | praise, done it | head dips -6, lift up 25 mm (DDL 40-60, capped), head up 10, hold 0.4 s, all back (`anim_reacttoblock_happydetermined_02`) |
+| bored | boring topic | head hangs -8 deg for 1.2 s, back (`anim_keepaway_bored_idle_01`) |
+| sad, sleepy | sad news / tired | head droops |
 | surprised, awe | wow, unexpected, wonder | head up |
-| confused, curious, thinking | strange / interesting / tricky questions | - |
-| scared, worried | spooky, warnings | - |
-| sleepy | tired, bedtime | head droops |
-| bored, shy, disgusted, suspicious, determined | as named | shy: head down |
+| shy | embarrassed | head down |
+| confused, curious, thinking, scared, worried, disgusted, suspicious, determined | as named | - |
 
 The model picks one for the reply and optionally one for the end (e.g. a dance ends happy). The "thinking"
 squares while waiting for OpenAI are unchanged. Preview them: Face page (`/ui`) -> "expressions" buttons,
-or `curl -X POST localhost:8080/expression -d '{"name":"sad"}'` (`"gesture":true` adds the head move);
+or `curl -X POST localhost:8080/expression -d '{"name":"sad"}'` (`"gesture":true` adds the head/lift motion; lift only off the charger);
 `GET /expressions` lists names, commands and limits.
 
 ### Commands the model can use

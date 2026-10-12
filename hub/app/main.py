@@ -1038,7 +1038,7 @@ def run_brain(d: dict, text: str) -> str:
     if not (plan and plan["plan"]):
         g = brain.gesture_plan(expr, on) if time.time() > PLAN_RUN["until"] else ""
         if g:
-            TURN_OUT.update(plan=g, speak="during", est=1.0)
+            TURN_OUT.update(plan=g, speak="during", est=brain.gesture_seconds(g))
         if brain.clip(end) and end != expr:
             TURN_OUT["end"] = f"anim|{brain.clip(end)}".encode()
     TURN_OUT["intent"] = TURN_OUT.get("intent") or ""
@@ -1526,14 +1526,14 @@ class Status(BaseHTTPRequestHandler):
             self._json({"ok": True, "action": name})
             return
         if path == "/expression":
-            # preview one face expression (eyes only unless gesture=true: head only, never wheels)
+            # preview one face expression (eyes only unless gesture=true: DDL lift/head motion, lift not on the charger, never wheels)
             name = brain.expression(data.get("name"))
             if not name and str(data.get("name") or "").lower() != "neutral":
                 self._json({"ok": False, "error": "names: " + ", ".join(brain.NAMES)}, 400)
                 return
             c = brain.clip(name)
             queue_cmd(CMD_FACEUI, f"anim|{c}".encode() if c else b"idle|")
-            g = brain.gesture_plan(name) if data.get("gesture") else ""
+            g = brain.gesture_plan(name, _on_charger()) if data.get("gesture") else ""
             if g:
                 queue_cmd(CMD_ACTION, g.encode())
             print(f"http expression {name or 'neutral'} clip={c or '-'} gesture={g or '-'}", flush=True)
@@ -1682,8 +1682,8 @@ unsure (hard budget below). You can also just tell Vector "my name is ..." / "ic
 <div class="row" id="seen"></div>
 <div class="row" id="budget"></div>
 <pre id="out"></pre><div id="list"></div>
-<h2>expressions</h2><p>Preview Vector's face expressions (eyes only; tick the box for the small head gesture, never wheels).</p>
-<label><input type="checkbox" id="gest"> with head gesture</label><div class="row" id="expr"></div>
+<h2>expressions</h2><p>Preview Vector's face expressions (eyes only; tick the box for the DDL head/lift motion: lift only off the charger, never wheels).</p>
+<label><input type="checkbox" id="gest"> with head/lift motion</label><div class="row" id="expr"></div>
 <script>
 fetch('/expressions').then(r=>r.json()).then(j=>{const d=document.getElementById('expr');
  for(const [n,e] of Object.entries(j.expressions)){const b=document.createElement('button');b.textContent=n;b.title=e.use;

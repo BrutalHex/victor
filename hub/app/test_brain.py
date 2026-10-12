@@ -93,13 +93,52 @@ class Expressions(unittest.TestCase):
                 self.assertEqual(kf[0][1:], pack["expr_happy"]["kf"][0][1:]) if c.startswith("expr_") and pack[c]["src"].startswith("anim_eyeposes") else None
                 self.assertLessEqual(pack[c]["len"], 5000, n)
 
-    def test_gestures_head_only(self):
+    def test_gestures_never_wheels(self):
         for n in brain.NAMES:
-            g = brain.gesture_plan(n)
-            if g:
-                p = brain.build_plan([], "", "", False)
-                self.assertTrue(g.startswith("plan:head "), g)
+            for on in (False, True, None):
+                g = brain.gesture_plan(n, on)
+                for st in g.removeprefix("plan:").split(";") if g else []:
+                    self.assertIn(st.split()[0], ("head", "headdeg", "liftmm", "wait"), (n, st))
         self.assertEqual(brain.gesture_plan("sad"), "plan:head droop")
+
+    def test_ddl_gestures_match_stock_animations(self):
+        # angry = badrobot_01: lift up 5 mm in 99 ms and back, twice; head snap
+        self.assertEqual(brain.gesture_plan("angry", False),
+                         "plan:headdeg 10 99;liftmm 5 99;liftmm 0 99;headdeg 0 165;wait 300;liftmm 5 99;liftmm 0 99")
+        # frustrated = reacttoblock_frustrated_01: lift slams 13 mm and drops, head dips
+        self.assertIn("liftmm 13 99;liftmm 0 99", brain.gesture_plan("frustrated", False))
+        for n, (src, track) in brain.DDL_GESTURES.items():
+            g = brain.gesture_plan(n, False)
+            steps = g.removeprefix("plan:").split(";")
+            self.assertLessEqual(len(steps), 12, n)  # agent MaxSteps
+            lifts = [s for s in steps if s.startswith("liftmm")]
+            heads = [s for s in steps if s.startswith("headdeg")]
+            if lifts:
+                self.assertEqual(lifts[-1].split()[1], "0", n)  # lift ends where it started
+            if heads:
+                self.assertEqual(heads[-1].split()[1], "0", n)
+            for s in lifts:
+                self.assertLessEqual(float(s.split()[1]), 25, n)
+            self.assertTrue(src.startswith("anim_"), n)
+
+    def test_lift_never_on_charger_head_part_stays(self):
+        for n in brain.DDL_GESTURES:
+            g = brain.gesture_plan(n, True)
+            self.assertNotIn("liftmm", g, n)
+            self.assertNotIn("liftmm", brain.gesture_plan(n, None), n)  # unknown -> as on charger
+        self.assertEqual(brain.gesture_plan("angry", True), "plan:headdeg 10 99;headdeg 0 165")
+        self.assertEqual(brain.gesture_plan("joy", True), "")  # lift-only track: nothing on the charger
+
+    def test_gestures_off_switch(self):
+        saved = brain.GESTURES
+        brain.GESTURES = False
+        try:
+            self.assertEqual(brain.gesture_plan("angry", False), "")
+        finally:
+            brain.GESTURES = saved
+
+    def test_gesture_seconds(self):
+        self.assertAlmostEqual(brain.gesture_seconds(brain.gesture_plan("angry", False)), 0.96, places=2)
 
 
 class Plans(unittest.TestCase):
