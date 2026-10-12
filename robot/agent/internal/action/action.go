@@ -308,7 +308,7 @@ func (r *Runner) Tick(in In) Out {
 				if head {
 					name = "head"
 				}
-				r.Log(fmt.Sprintf("gesture %s target %+d got %+d counts in %d ms", name, st.rel, pos-base, el.Milliseconds()))
+				r.Log(fmt.Sprintf("gesture %s target %+d got %+d counts in %d ms (abs %d)", name, st.rel, pos-base, el.Milliseconds(), pos))
 			}
 			return r.next(out)
 		}
