@@ -451,10 +451,10 @@ func abs32(v int32) int32 {
 // overcomes friction on tiny moves. Lift gets more push upward (gravity).
 func gesturePower(err int32, head bool) float64 {
 	// lift: gravity helps down; head: measured on the robot 2026-10-12, < 0.3
-	// does not raise it and down moves overshoot above ~0.25 (frame lag)
+	// moves the head neither up nor down (gear friction); 0.3 down lands within ~1 deg
 	kp, maxUp, maxDown, minUp, minDown := 0.03, 0.6, 0.6, 0.25, 0.15
 	if head {
-		kp, maxUp, maxDown, minUp, minDown = 0.005, 0.45, 0.2, 0.3, 0.1
+		kp, maxUp, maxDown, minUp, minDown = 0.006, 0.45, 0.35, 0.3, 0.28
 	}
 	p := math.Max(-maxDown, math.Min(maxUp, kp*float64(err)))
 	if p > 0 && p < minUp {
