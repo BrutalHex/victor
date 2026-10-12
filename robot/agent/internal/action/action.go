@@ -442,11 +442,13 @@ func abs32(v int32) int32 {
 // gesturePower: proportional, capped, with a small minimum so the motor
 // overcomes friction on tiny moves. Lift gets more push upward (gravity).
 func gesturePower(err int32, head bool) float64 {
-	kp, max, minUp, minDown := 0.03, 0.6, 0.25, 0.15
+	// lift: gravity helps down; head: measured on the robot 2026-10-12, < 0.3
+	// does not raise it and down moves overshoot above ~0.25 (frame lag)
+	kp, maxUp, maxDown, minUp, minDown := 0.03, 0.6, 0.6, 0.25, 0.15
 	if head {
-		kp, max, minUp, minDown = 0.004, 0.3, 0.16, 0.08 // gravity helps the head down
+		kp, maxUp, maxDown, minUp, minDown = 0.005, 0.45, 0.2, 0.3, 0.1
 	}
-	p := math.Max(-max, math.Min(max, kp*float64(err)))
+	p := math.Max(-maxDown, math.Min(maxUp, kp*float64(err)))
 	if p > 0 && p < minUp {
 		p = minUp
 	} else if p < 0 && p > -minDown {

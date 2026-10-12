@@ -167,6 +167,9 @@ func ParsePlan(text string) (Plan, []string) {
 				continue
 			}
 			ms = math.Max(ms, 80)
+			if num == 0 {
+				ms = math.Max(ms, 500) // the way back always gets time to arrive
+			}
 			if f[0] == "liftmm" {
 				mm := math.Max(0, math.Min(MaxGestureLiftMM, num)) // never below where it started
 				add = []step{{kind: stLiftTo, rel: int32(math.Round(mm / LiftMMPerCount)), dur: time.Duration(ms) * time.Millisecond}}
