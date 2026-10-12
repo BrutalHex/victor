@@ -1546,11 +1546,12 @@ class Status(BaseHTTPRequestHandler):
                 self.wfile.write(body)
                 return
             if path == "/debug/animal":
-                name = animals.name_of(arg) or arg
+                name = "cat" if arg.lower() in animals.MEOWS else (animals.name_of(arg) or arg)
                 plan = animals.gesture(name, _on_charger())
                 if plan:
                     queue_cmd(CMD_ACTION, plan.encode())
-                queue_cmd(CMD_SPEAK, VOLUME.apply(animals.pcm(name)))
+                variant = arg.lower() if arg.lower() in animals.MEOWS else ""  # /debug/animal?name=mrrp
+                queue_cmd(CMD_SPEAK, VOLUME.apply(animals.pcm(name, seed=int(time.time()) & 0xFFFF, variant=variant)))
                 self._json({"played": name, "t": time.time()})
                 return
             if path == "/debug/hum":

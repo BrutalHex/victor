@@ -121,10 +121,10 @@ def _purr(rng) -> np.ndarray:
     t = np.arange(n) / SR
     rate = 25 + 1.5 * np.sin(2 * np.pi * 0.35 * t)
     pulse = 0.5 + 0.5 * np.sin(2 * np.pi * np.cumsum(rate) / SR)
-    am = pulse ** 3
+    am = pulse ** 1.5  # fuller than ^3: louder through his speaker (12 Oct: purr only 3.8x room level)
     src = _osc(np.full(n, 230.0)) * 0.6 + 0.6 * rng.standard_normal(n)
     v = signal.sosfilt(signal.butter(2, [900, 2600], "bandpass", fs=SR, output="sos"), src)
-    breath = 0.65 + 0.35 * np.sin(2 * np.pi * 0.7 * t)
+    breath = 0.8 + 0.2 * np.sin(2 * np.pi * 0.7 * t)
     v = v * am * breath * _env(n, 0.15, 0.3)
     return v / (np.max(np.abs(v)) + 1e-9) * 0.85
 
@@ -178,8 +178,8 @@ def vectorize16(x: np.ndarray) -> np.ndarray:
     return y * (0.85 + 0.15 * np.sin(2 * np.pi * 55 * t))  # light robot ring
 
 
-def pcm(name: str, seed: int = 0) -> bytes:
-    y = synth(name, seed)
+def pcm(name: str, seed: int = 0, variant: str = "") -> bytes:
+    y = meow(variant, np.random.default_rng(seed)) if variant in MEOWS else synth(name, seed)
     return (np.clip(y, -1, 1) * 32000).astype("<i2").tobytes()
 
 
