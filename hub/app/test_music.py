@@ -305,7 +305,7 @@ class Timing(unittest.TestCase):
             self.assertGreaterEqual(len(sends), 5)
             per = 0.5
             for s in sends:
-                accent = s + 0.06 + music.ACCENT_S  # HUB_DANCE_LEAD_MS + accent
+                accent = s + 0.02 + music.ACCENT_S  # HUB_DANCE_LEAD_MS + accent
                 ph = ((accent - t0 - 0.137) / per) % 1.0
                 err = min(ph, 1 - ph) * per
                 self.assertLess(err, 0.04, (s, err))

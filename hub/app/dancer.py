@@ -147,7 +147,7 @@ class Dancer:
         # END on the beat: sent LEAD (audio + command latency, measured) +
         # ACCENT_S early.
         per = music.beat_period(bpm)
-        lead = _envf("HUB_DANCE_LEAD_MS", 60) / 1000 + music.ACCENT_S
+        lead = _envf("HUB_DANCE_LEAD_MS", 20) / 1000 + music.ACCENT_S
         ref = self.audio_end or now
         beat = 60.0 / bpm
         start = ref + beats[0] - lead
@@ -156,10 +156,12 @@ class Dancer:
         if self.bar_n and self.intended:
             # keep bars back to back: the grid beat nearest to where this bar
             # should start (prev start + its length), never in the past
+            # phase locked too: only nudge (<=30 ms) toward the tracker, whose
+            # phase jumped +-70 ms between bars under motor noise (measured)
             k = round((self.intended - start) / beat)
-            cand = start + max(0, k) * beat
-            if abs(cand - self.intended) <= beat / 2 + 1e-6:
-                start = cand
+            cand = start + k * beat
+            err = cand - self.intended if abs(cand - self.intended) <= beat / 2 + 1e-6 else 0.0
+            start = max(now + 0.01, self.intended + max(-0.03, min(0.03, err * 0.5)))
         listen = self.bar_n % 4 == 3
         self._beat_s = per
         plans = music.dance_beats(bpm, on_charger=self.on_charger(), wheels=self.wheels and self.mode == "dance",
@@ -206,7 +208,7 @@ class Dancer:
         if self.mode in ("dance", "auto", "asleep"):
             if now >= self.until:
                 self.stop("time cap")
-            elif self._rms(1.5, mean=True) < 0.35 * getattr(self, "start_rms", 0.0):
+            elif self._rms(1.5, mean=True) < 0.15 * getattr(self, "start_rms", 0.0):
                 # level dropped (song over); motor noise only ever raises it
                 self.stop(f"music stopped (rms {self._rms(1.5, mean=True):.4f})")
                 self.send_plan("plan:keepbase;face expr_happy;headdeg 0 400")
@@ -214,7 +216,7 @@ class Dancer:
                 self.listen_check_at = 0
                 r = self.bt.on_beat_ratio(self.bpm_lock or self.gate.bpm())
                 lvl = self._rms(1.5, mean=True)  # listening bar: head still, no motor noise
-                quiet = lvl < 0.35 * getattr(self, "start_rms", 0.0)
+                quiet = lvl < 0.15 * getattr(self, "start_rms", 0.0)
                 if quiet or r < _envf("HUB_DANCE_BEAT_RATIO", 1.25):
                     why = f"music stopped (rms {lvl:.4f})" if quiet else f"ratio {r:.2f}"
                     self.stop(f"beat lost ({why})")

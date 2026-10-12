@@ -307,8 +307,8 @@ each started just before the predicted beat, and stopped when the beat was lost 
 Here (`hub/app/music.py`, `dancer.py`; numpy only, ~1 ms per 0.5 s of mic audio):
 - Beat tracker: spectral-flux onsets (100 Hz) -> autocorrelation tempo 70-180 BPM -> beat phase. Same
   "music playing" rule as the original (steady +-5 BPM for 6 s, confidence >= 0.18, audible).
-- Dancing: one bar (4 beats) at a time, sent HUB_DANCE_LEAD_MS early, built from the DDL dancebeat keyframes
-  (head up 4 deg / dip 14 deg / back; lift +13 mm / back; eyes) scaled to the beat; songs over ~133 BPM are
+- Dancing: one plan per beat whose first step (a head dip from a +16° pose, DDL dancebeat keyframes) ends on the beat: sent HUB_DANCE_LEAD_MS (measured ~20) + 180 ms early; tempo and phase lock while dancing, every 4th bar a still "listening" bar, stops when the level drops (song over)
+  (dip 12 deg and back up; lift dips; eyes); beats faster than ~133 BPM are
   danced in half time. Every 4th bar he holds still with curious eyes and re-checks the beat on clean audio
   (his motors are quiet); beat gone -> stop. Off the charger and asked by voice: a small 8 deg in-place turn
   per bar. On the charger: head + eyes only (no lift, no wheels). Bars after the first use `keepbase` so the
