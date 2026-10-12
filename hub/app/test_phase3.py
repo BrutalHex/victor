@@ -1223,7 +1223,7 @@ class StockIntents(unittest.TestCase):
         self.assertIn("charger", m.STATE["last_reply"])
         self.turn("Roll your cube")
         self.assertIn("cube", m.STATE["last_reply"])
-        self.assertIn((m.CMD_FACEUI, b"sleep|"), self.turn("Go to sleep"))
+        self.assertIn((m.CMD_FACEUI, b"anim|goodnight"), self.turn("Go to sleep"))  # rule 1: ends the session
         self.assertEqual(self.turn("shut up")[-1], (m.CMD_ACTION, b"stop"))
         self.assertEqual(self.chats, [])
 

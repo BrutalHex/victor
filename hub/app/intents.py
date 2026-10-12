@@ -351,6 +351,22 @@ PASS_THROUGH = {
 }
 
 _COMPILED = [(n, s, note, {lg: [re.compile(p) for p in pats] for lg, pats in d.items()}) for n, s, note, d in _DEF]
+
+
+def _prio(name: str) -> int:
+    # dispatch.py command priority: ssh, exact commands, pets, music, face/name
+    if name.startswith("intent_system_ssh"):
+        return 0
+    if name in ("intent_pet_whoismy", "intent_animal_sound"):
+        return 2
+    if name.startswith("intent_music_"):
+        return 3
+    if name.startswith("intent_names_"):
+        return 4
+    return 1
+
+
+_COMPILED.sort(key=lambda c: _prio(c[0]))  # stable: order inside a category unchanged
 STATUS = {n: (s, note) for n, s, note, _ in _DEF}
 _IDENTITY_GUARD = re.compile(r"(?:what|who|chi|چی|چیه|چیست|کی|wie|wer)\b|\?$")
 

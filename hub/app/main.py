@@ -31,6 +31,7 @@ import dancer as dancer_mod
 import router
 import voice as voice_mod
 import wake as wake_mod
+import dispatch
 from api import Api
 from session import Session
 from protocol import FLAG_FACE, FLAG_ROBOT_NOISE, TYPE_AUDIO, TYPE_SENSOR, TYPE_VIDEO, decode, unpack_sensor
@@ -424,7 +425,8 @@ def asleep_turn(pcm: bytes) -> dict:
     text = VOICE.transcribe(pcm, asleep=True)
     if not text and getattr(VOICE, "last_raw", ""):
         text = VOICE.last_raw  # language check dropped it ("Эй, Вектор!"): still check the wake phrase
-    hit, rest = wake_mod.match_wake(text) if text else (False, "")
+    r = dispatch.route(text, asleep=True)  # command priority (dispatch.py): sleep > wake > asleep gate
+    hit, rest = r.rule == "wake", r.text
     gate = (getattr(VOICE, "utt", {}) or {})
     gate_s = f"gate={gate.get('gate', '?')} snr={gate.get('snr', '?')} voiced={gate.get('voiced', '?')} run={gate.get('voiced_run', '?')}"
     with LOCK:
@@ -432,6 +434,9 @@ def asleep_turn(pcm: bytes) -> dict:
         ASLEEP["ignored"] += 0 if hit or not text else 1
         ASLEEP["woke"] += 1 if hit else 0
         ASLEEP["last"] = text[:80]
+    if r.rule == "sleep":  # 'Stop Vector' again while asleep: no-op, never a wake
+        print(f"asleep stop-again (no-op) text={text!r} {gate_s}", flush=True)
+        return {"hit": False, "text": text, "rule": "sleep"}
     if not hit:
         if text:
             print(f"asleep ignore text={text!r} {gate_s}", flush=True)
@@ -537,10 +542,11 @@ def reply_turn(pcm: bytes, text: str | None = None) -> tuple[str, str, bytes]:
     VOICE.last_via = ""
     t_r = time.time()
     if text and SESSION.enabled:
-        if wake_mod.is_session_stop(text):
+        r = dispatch.route(text, asleep=False)  # command priority, first match wins (dispatch.py)
+        print(f"dispatch rule={r.rule} text={text!r}", flush=True)
+        if r.rule == "sleep":
             return session_stop(text)
-        hit, rest = wake_mod.match_wake(text)
-        bare = "" if hit and not rest else wake_mod.strip_wake(text)
+        bare = r.text
         if not bare:  # just "Hey Vector" again inside the session: never silence
             SESSION.touch()
             lang = getattr(VOICE, "last_lang", "") or "en"
@@ -625,6 +631,7 @@ def session_stop(text: str) -> tuple[str, str, bytes]:
     SSH_CONFIRM["until"] = 0.0
     SCHED.cancel()
     DANCER.stop("stop vector")
+    PLAN_RUN["until"] = 0.0  # cancels a waiting plan; robot "stop" also ends explore
     TURN_OUT.update(show=b"anim|goodnight", action="stop", intent="session_stop")
     print(f"session stop by {text!r} lang={lang}", flush=True)
     return text, reply, VOICE.tts(reply)
@@ -881,8 +888,12 @@ def run_intent(intent) -> str:
         DANCER.stop("voice stop")
         PLAN_RUN["until"] = 0.0  # a plan still waiting for the speech to end never starts
         action, show = "stop", "shutup"
-    elif n == "intent_system_sleep":
-        show = "sleep|"
+    elif n == "intent_system_sleep":  # normally caught as rule 1 first; same effect if it gets here
+        SESSION.sleep("phrase")
+        SCHED.cancel()
+        DANCER.stop("go to sleep")
+        PLAN_RUN["until"] = 0.0
+        action, show = "stop", "sleep|"
     elif n == "intent_clock_time":
         tz, _ = voice_mod.hub_tz()
         import datetime as _dt
@@ -1872,6 +1883,8 @@ def session_restore() -> bool:
         d = json.load(open(SESSION_FILE))
     except (OSError, ValueError):
         return False
+    if d.get("explicit_sleep"):
+        return False  # put to sleep by voice/user: a restart never wakes him
     if d.get("state") == "awake" and 0 <= time.time() - float(d.get("t") or 0) < SESSION_RESTORE_S:
         return SESSION.wake("restored after hub restart")
     return False
@@ -1885,7 +1898,8 @@ def session_save_loop() -> None:
             try:
                 os.makedirs(os.path.dirname(SESSION_FILE), exist_ok=True)
                 with open(SESSION_FILE, "w") as f:
-                    json.dump({"state": st, "t": time.time()}, f)
+                    json.dump({"state": st, "t": time.time(),
+                               "explicit_sleep": st != "awake" and SESSION.last_end == "phrase"}, f)
                 last = st
             except OSError:
                 pass

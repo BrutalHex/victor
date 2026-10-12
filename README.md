@@ -368,3 +368,22 @@ Runs on the robot (`robot/agent/internal/wander`), never from the hub. It drives
 - Refuses to start on the charger, without cliff calibration (`/data/victor/cliffs.cal`), or at an edge.
 - Stop by voice ("stop", "shut up", "stop exploring"), by picking him up, or `rm /data/victor/explore.enabled`.
 - Never moves the lift. Status: `/data/victor/wander.txt`, agent log lines `wander ...`.
+
+## Command priority
+
+Every voice turn goes through one ordered table in `hub/app/dispatch.py`. The first rule that matches wins. Tests are in `hub/app/test_dispatch.py`.
+
+| # | Rule | While asleep | Examples (EN/DE/FA) |
+|---|------|--------------|---------------------|
+| 1 | sleep | yes (asleep already: no-op, never a wake) | Stop Vector, Vector stop, Hey Vector stop, stop listening, go to sleep, Stopp Vektor, geh schlafen, وکتور بسه, بخواب |
+| 2 | halt (stays awake) | no | stop, halt, shut up, stopp, ایست, بسه |
+| 3 | wake (+ command) | yes | Hey Vector → "Yes?"; Hey Vector, what time is it → wakes and answers |
+| 4 | asleep gate | — | while asleep nothing else runs. Only the back button wakes him. Music gives a silent head bob and a known face gets a silent look. |
+| 5 | SSH on/off/status | no | exact phrases |
+| 6 | exact robot commands | no | time, timer, volume, turn, dance, tricks |
+| 7 | pet answers / animal sounds | no | who is my dog/cat, bark, سگم کیه |
+| 8 | music | no | dance to the music, hum |
+| 9 | face / name | no | my name is …, who am I |
+| 10 | brain (OpenAI) | no | everything else |
+
+After a voice sleep, a hub restart never wakes Vector. The state is only restored if he was awake.
