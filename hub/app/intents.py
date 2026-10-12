@@ -286,7 +286,7 @@ _DEF: list[tuple[str, str, str, dict[str, list[str]]]] = [
         "de": [r"hör auf (?:zu erkunden|herumzufahren|zu fahren)", r"nicht mehr (?:erkunden|herumfahren)", r"erkunden (?:stopp|beenden|aus)"],
         "fa": [r"(?:دیگه )?(?:نگرد|گشت نزن)", r"گشتن (?:رو |را )?(?:تموم|بس) کن"],
     }),
-    ("intent_explore_start", "works off the charger (needs explore.enabled)", "slow wander on the robot: cliff stop wins, obstacle <100 mm turn, 10 min cap", {
+    ("intent_explore_start", "works off the charger (needs explore.enabled)", "slow wander on the robot: cliff stop wins, obstacle: back up if close, turn 90-180, bigger turns when boxed in, 10 min cap", {
         "en": [r"(?:go |start |let's |lets )?explor(?:e|ing)(?: around| the room| a bit)?", r"(?:go |start )?(?:wander|drive|roam|look) around(?: a bit)?",
                r"go (?:on an )?adventure"],
         "de": [r"(?:geh |fang an zu )?erkunde[n]?(?: die gegend| den raum)?", r"(?:fahr|fahre) (?:herum|rum|umher)", r"geh auf (?:entdeckungstour|erkundung)"],

@@ -46,6 +46,13 @@ const (
 	mmPerTick    = 0.96 * 29.0 * 0.25 * math.Pi / 172.3
 	halfTrackMM  = drivectl.HalfTrackMM
 	SessionMax   = 10 * time.Minute
+	weakMinMM    = 70
+	weakHold     = 300 * time.Millisecond
+	closeMM      = 60          // valid return this close: back up before turning
+	obsBackMM    = 40.0        // reverse before an obstacle turn
+	bigTurnAfter = 3           // consecutive blocked turns -> bigger turn
+	GiveUpAfter  = 7           // consecutive blocked turns -> stop "boxed in"
+	clearLegMM   = 80          // a leg this long resets the blocked count
 	headPWM      = int16(8192) // 0.25 power
 	// CliffMin mirrors veto: an uncalibrated channel below this is a cliff.
 	CliffMin = 40
@@ -74,6 +81,11 @@ type In struct {
 	HubGone    bool // heartbeat lost > 1 s
 	ProxValid  bool
 	ProxMM     uint16
+	// ProxWeak: a fresh status-11 return too faint for ProxValid (signal
+	// under spine.ProxMinSignal). Live 12 Oct: Vector sat 80-160 mm from an
+	// obstacle with valid=false for minutes and never turned. Only counted
+	// at >= weakMinMM, where the open-floor phantoms (6-65 mm) never read.
+	ProxWeak   bool
 	EncL, EncR int32
 	Busy       bool // voice turn / action / petting: hold still, don't end
 }
@@ -87,20 +99,24 @@ type Out struct {
 }
 
 type W struct {
-	rng      *rand.Rand
-	state    State
-	since    time.Time
-	started  time.Time
-	encL0    int32
-	encR0    int32
-	target   float64 // mm (drive/backoff) or deg (turn)
-	ctl      *drivectl.Ctl
-	obsSince time.Time // close return first seen (zero = none)
-	turnDir  float64
-	pauseFor time.Duration
-	look     int
-	sp       drivectl.Speeds
-	Why      string // last stop / refusal reason
+	rng       *rand.Rand
+	state     State
+	since     time.Time
+	started   time.Time
+	encL0     int32
+	encR0     int32
+	target    float64 // mm (drive/backoff) or deg (turn)
+	ctl       *drivectl.Ctl
+	obsSince  time.Time // close return first seen (zero = none)
+	turnDir   float64
+	pauseFor  time.Duration
+	look      int
+	blocked   int     // consecutive turns without a clear leg since
+	lastDir   float64 // sign of the last obstacle turn
+	afterObs  bool    // current Backoff is for an obstacle, not a cliff
+	weakSince time.Time
+	sp        drivectl.Speeds
+	Why       string // last stop / refusal reason
 }
 
 func New(seed int64) *W {
@@ -166,10 +182,22 @@ func (w *W) enter(s State, in In) {
 		w.ctl.Target = w.sp.Explore
 	}
 	w.obsSince = time.Time{}
+	w.weakSince = time.Time{}
 }
 
-// obstacle: a valid close return that has lasted obstacleHold.
+// obstacle: a valid close return that has lasted obstacleHold, or a faint
+// one (ProxWeak, >= weakMinMM) that has lasted weakHold.
 func (w *W) obstacle(in In) bool {
+	if in.ProxWeak && in.ProxMM >= weakMinMM && in.ProxMM < ObstacleMM+20 {
+		if w.weakSince.IsZero() {
+			w.weakSince = in.Now
+		}
+		if in.Now.Sub(w.weakSince) >= weakHold {
+			return true
+		}
+	} else {
+		w.weakSince = time.Time{}
+	}
 	if !(in.ProxValid && in.ProxMM > 0 && in.ProxMM < ObstacleMM) {
 		w.obsSince = time.Time{}
 		return false
@@ -203,14 +231,43 @@ func wheels(left, right float64) [4]int16 {
 	return [4]int16{int16(left * full), int16(-right * full), 0, 0}
 }
 
+// startTurn: stock-like turn in place, random 90-180 deg; after
+// bigTurnAfter blocked tries 150-210 deg and the other way than last time.
+// Allowed with the obstacle still ahead (turning in place does not close in).
 func (w *W) startTurn(in In, why string) string {
-	deg := 90 + float64(w.rng.Intn(61))
+	deg := 90 + float64(w.rng.Intn(91))
+	dir := 1.0
 	if w.rng.Intn(2) == 0 {
-		deg = -deg
+		dir = -1
 	}
+	if w.blocked >= bigTurnAfter {
+		deg = 150 + float64(w.rng.Intn(61))
+		if w.lastDir != 0 {
+			dir = -w.lastDir
+		}
+	}
+	w.lastDir = dir
 	w.enter(Turn, in)
-	w.target = deg
+	w.target = dir * deg
 	return "turn " + why
+}
+
+// blockedTurn: obstacle/stall/blocked leg. Counts toward boxed-in; backs up
+// first when very close (rear cliffs checked in Backoff).
+func (w *W) blockedTurn(in In, why string, back bool) Out {
+	w.blocked++
+	if w.blocked >= GiveUpAfter {
+		w.Stop("boxed in")
+		return Out{State: Off, Event: "stop: boxed in"}
+	}
+	if back && !w.rearCliff(in) {
+		w.enter(Backoff, in)
+		w.afterObs = true
+		w.target = -obsBackMM
+		return Out{State: Backoff, Event: "backing up: " + why, Active: true}
+	}
+	ev := w.startTurn(in, why)
+	return Out{State: w.state, Event: ev, Active: true}
 }
 
 func (w *W) Tick(in In) Out {
@@ -248,6 +305,11 @@ func (w *W) Tick(in In) Out {
 	}
 	// Cliff wins in every state except a reverse that is moving away from it.
 	if w.frontCliff(in) && w.state != Backoff && w.state != Halt {
+		if w.rearCliff(in) && w.afterObs {
+			out.Event = w.startTurn(in, "rear edge, turning")
+			out.State = w.state
+			return out
+		}
 		if w.rearCliff(in) {
 			w.enter(Halt, in)
 			w.Why = "cliff front and rear"
@@ -256,6 +318,7 @@ func (w *W) Tick(in In) Out {
 		}
 		wasDriving := w.state == Drive
 		w.enter(Backoff, in)
+		w.afterObs = false
 		w.target = -BackMM(w.sp.Explore)
 		out.State, out.Event = Backoff, "cliff: backing off"
 		if wasDriving {
@@ -270,7 +333,12 @@ func (w *W) Tick(in In) Out {
 	case Halt:
 		return out // stopped; needs a person (stop/start again)
 	case Pause:
+		ahead := w.obstacle(in) // tracked every tick so the hold time counts
 		if el >= w.pauseFor {
+			if ahead {
+				// path not clear after the turn: turn again
+				return w.blockedTurn(in, "still blocked", in.ProxValid && in.ProxMM < closeMM)
+			}
 			leg := 150 + float64(w.rng.Intn(250))
 			w.enter(Drive, in)
 			w.target = leg
@@ -290,12 +358,17 @@ func (w *W) Tick(in In) Out {
 		}
 	case Drive:
 		done, _ := w.progress(in)
-		if w.obstacle(in) {
-			out.Event = w.startTurn(in, "obstacle")
-			out.State = w.state
-			return out
+		if done >= clearLegMM {
+			w.blocked = 0
 		}
-		if done >= w.target || el > time.Duration((w.target/w.sp.Explore*3+2)*float64(time.Second)) {
+		if w.obstacle(in) {
+			return w.blockedTurn(in, "obstacle", in.ProxValid && in.ProxMM < closeMM)
+		}
+		if done < w.target && el > time.Duration((w.target/w.sp.Explore*3+2)*float64(time.Second)) {
+			// leg timed out short of its length: something is in the way
+			return w.blockedTurn(in, "blocked leg", true)
+		}
+		if done >= w.target {
 			w.enter(Pause, in)
 			w.pauseFor = 2*time.Second + time.Duration(w.rng.Intn(2000))*time.Millisecond
 			out.State, out.Event = Pause, "pause"
@@ -306,9 +379,7 @@ func (w *W) Tick(in In) Out {
 		w.ctl.SetTarget(math.Min(v, drivectl.Ending(w.sp.Explore, w.target-done)))
 		p := w.ctl.Update(in.Now, done)
 		if w.ctl.Stalled() {
-			out.Event = w.startTurn(in, "stall")
-			out.State = w.state
-			return out
+			return w.blockedTurn(in, "stall", true)
 		}
 		out.PWM = wheels(p, p)
 		out.Moving = true
@@ -322,7 +393,11 @@ func (w *W) Tick(in In) Out {
 		}
 		w.ctl.SetTarget(drivectl.Ending(math.Min(w.sp.Explore, backMMps), done-w.target))
 		if done <= w.target || el > 3*time.Second {
-			out.Event = w.startTurn(in, "after cliff")
+			why := "after cliff"
+			if w.afterObs {
+				why = "after backing up"
+			}
+			out.Event = w.startTurn(in, why)
 			out.State = w.state
 			return out
 		}

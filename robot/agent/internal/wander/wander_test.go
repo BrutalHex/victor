@@ -276,7 +276,7 @@ func TestStallTurnsAndBusyHolds(t *testing.T) {
 	w.Start(s.in, true)
 	sawStall := false
 	run(t, w, s, 6, func(i int, o Out) {
-		if o.Event == "turn stall" {
+		if o.Event == "turn stall" || o.Event == "backing up: stall" {
 			sawStall = true
 		}
 	})

@@ -366,6 +366,8 @@ func runDaemon() int {
 			win := wander.In{Now: time.Now(), OnCharger: vin.OnCharger, CliffCal: cal.Ready(), Cliffs: cliffs, Thresh: cal.Thresh,
 				Pickup: reason == veto.Pickup, Fall: reason == veto.Fall, LowBattery: reason == veto.Battery, HubGone: hubGone,
 				ProxValid: have && fr.ProxValid && time.Since(proxFreshAt) < 500*time.Millisecond, ProxMM: fr.ProxMM,
+				// faint status-11 return (12 Oct: sat at 80-160 mm with valid=false, never turned)
+				ProxWeak: have && !fr.ProxValid && fr.ProxStatus == spine.ProxStatusValid && fr.ProxSignal >= 0.7 && time.Since(proxFreshAt) < 500*time.Millisecond,
 				Busy: runner.Active() || ui.thinking() || ui.muted() || pet.touching()}
 			if have {
 				win.EncL, win.EncR = fr.Motors[0].Pos, fr.Motors[1].Pos
@@ -463,7 +465,10 @@ func runDaemon() int {
 					pwm = o.PWM
 				}
 				if o.Event != "" {
-					fmt.Printf("wander %s state=%s prox=%d valid=%v cliffs=%v\n", o.Event, o.State, fr.ProxMM, win.ProxValid, cliffs)
+					fmt.Printf("wander %s state=%s prox=%d valid=%v weak=%v st=%d sig=%.2f cliffs=%v\n", o.Event, o.State, fr.ProxMM, win.ProxValid, win.ProxWeak, fr.ProxStatus, fr.ProxSignal, cliffs)
+					if o.Event == "stop: boxed in" {
+						ui.set("anim", "cant_help", face.ClipLen("cant_help")) // visible "I can't get out"
+					}
 					status.Put("/data/victor/wander.txt", string(o.State)+" "+o.Event+"\n")
 				}
 				if !wand.Active() {
