@@ -182,8 +182,12 @@ class DancerFlow(unittest.TestCase):
         bars = [p for p in sent if "headdeg" in p or "wait" in p]
         self.assertGreaterEqual(len(bars), 3)
         self.assertTrue(all("turn" not in p for p in sent))  # auto: never wheels
-        stream(d, clk, bytes(SR * 2 * 12))  # silence
+        # room noise after the song (measured: 0.0015 vs 0.05 music): the stale
+        # 10 s tracker must not keep it dancing; stops within ~5 s
+        noise = (np.random.default_rng(1).normal(0, 0.002, SR * 5) * 32767).astype("<i2").tobytes()
+        stream(d, clk, noise)
         self.assertEqual(d.mode, "")
+        stream(d, clk, bytes(SR * 2 * 7))
         n = len(sent)
         stream(d, clk, clicks(120, 15))  # music again within the cooldown
         self.assertEqual(d.mode, "")
