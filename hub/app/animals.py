@@ -16,7 +16,7 @@ SR = 16000
 ALIASES = {
     "dog": "dog", "bark": "dog", "woof": "dog", "puppy": "dog", "hund": "dog", "bellen": "dog", "bell": "dog", "wau": "dog",
     "سگ": "dog", "پارس": "dog", "هاپ": "dog",
-    "cat": "cat", "meow": "cat", "miau": "cat", "kitten": "cat", "katze": "cat", "گربه": "cat", "میو": "cat", "میاو": "cat",
+    "cat": "cat", "meow": "cat", "miu": "cat", "mio": "cat", "miao": "cat", "mew": "cat", "miau": "cat", "kitten": "cat", "katze": "cat", "گربه": "cat", "میو": "cat", "میاو": "cat",
     "purr": "purr", "schnurr": "purr", "schnurren": "purr", "خرخر": "purr",
     "bird": "bird", "chirp": "bird", "tweet": "bird", "vogel": "bird", "zwitschern": "bird", "zwitscher": "bird", "پرنده": "bird", "جیک": "bird",
     "hamster": "hamster", "squeak": "hamster", "همستر": "hamster",

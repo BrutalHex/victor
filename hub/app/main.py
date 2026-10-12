@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import base64
+import collections
 import json
 import os
 import queue
@@ -300,7 +301,13 @@ def _enqueue_utterance(utt: bytes) -> None:
                 return
 
 
+DEBUG_AUDIO = os.environ.get("HUB_DEBUG_AUDIO", "0").strip().lower() in ("1", "true", "on", "yes")
+MIC_RING: "collections.deque[tuple[float, bytes]]" = collections.deque(maxlen=400)  # ~40 s of Vector-mic audio
+
+
 def _on_audio(pcm: bytes, robot_noise: bool = False) -> None:
+    if DEBUG_AUDIO:
+        MIC_RING.append((time.time(), pcm))
     DANCER.feed(pcm)  # beat tracker / hum capture (drops his own playback)
     if DANCER.capturing():
         return  # "hum this": the tune is not a voice turn
@@ -1483,6 +1490,41 @@ class Status(BaseHTTPRequestHandler):
             body["speak_left_s"] = round(max(0.0, SPEAK["until"] - time.time()), 2)
             self._json(body)
             return
+        if path.startswith("/debug/") and DEBUG_AUDIO:
+            q = parse_qs(urlparse(self.path).query)
+            arg = (q.get("name") or q.get("secs") or [""])[0]
+            if path == "/debug/mic.wav":  # Vector-mic audio of the last N s (+ wall clock of the first sample)
+                secs = min(40.0, float(arg or 10))
+                now = time.time()
+                chunks = [(t, c) for t, c in list(MIC_RING) if t >= now - secs]
+                pcm = b"".join(c for _, c in chunks)
+                body = _wav_wrap(pcm)
+                self.send_response(200)
+                self.send_header("Content-Type", "audio/wav")
+                self.send_header("X-First-Chunk-Time", f"{chunks[0][0] - len(chunks[0][1]) / (2 * RATE):.3f}" if chunks else "0")
+                self.send_header("X-End-Time", f"{chunks[-1][0]:.3f}" if chunks else "0")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+                return
+            if path == "/debug/animal":
+                name = animals.name_of(arg) or arg
+                plan = animals.gesture(name, _on_charger())
+                if plan:
+                    queue_cmd(CMD_ACTION, plan.encode())
+                queue_cmd(CMD_SPEAK, VOLUME.apply(animals.pcm(name)))
+                self._json({"played": name, "t": time.time()})
+                return
+            if path == "/debug/hum":
+                DANCER.start_hum("en", 0.0)
+                self._json({"hum": True, "t": time.time()})
+                return
+            if path == "/debug/dance":
+                self._json({"reply": DANCER.start_dance("en", wheels=False), "t": time.time()})
+                return
+            if path == "/debug/stop":
+                self._json({"stopped": DANCER.stop("debug"), "t": time.time()})
+                return
         if path == "/intents":
             self._json({"enabled": INTENTS_ON, "intents": intents_mod.status_table()})
             return

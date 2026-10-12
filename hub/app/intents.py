@@ -158,7 +158,8 @@ _DEF: list[tuple[str, str, str, dict[str, list[str]]]] = [
         "fa": [r"(?:اینو |این رو |اینو با من )?زمزمه کن", r"(?:با من |همراه من )?(?:بخون|بخوان|اواز بخون)", r"(?:این )?(?:اهنگ|ملودی) (?:رو )?تکرار کن"],
     }),
     ("intent_animal_sound", "works", "robotic pet sound (dog, cat, purr, bird, hamster) with a face and head move", {
-        "en": [r"(?P<n>bark|woof)(?: like a dog)?(?: for me)?", r"(?P<n>meow|miaow|mew)(?: like a cat)?(?: for me)?", r"(?P<n>purr)(?: like a cat)?(?: for me)?",
+        "en": [r"(?:s?park|bark|barking|woof)\w* like a (?P<n>dog|puppy)", r"(?:\w+ )?(?P<n>miu|meow|mio|miao|mew)(?: (?:miu|meow|mio|miao|mew))+",
+               r"(?P<n>bark|woof)(?: like a dog)?(?: for me)?", r"(?P<n>meow|miaow|mew)(?: like a cat)?(?: for me)?", r"(?P<n>purr)(?: like a cat)?(?: for me)?",
                r"(?P<n>chirp|tweet)(?: like a bird)?", r"(?P<n>squeak)(?: like a hamster)?", r"(?:make|do) (?:a |the |some )?(?P<n>dog|cat|bird|hamster|puppy|kitten) (?:sound|noise)s?",
                r"(?:act|sound) like a (?P<n>dog|cat|bird|hamster|puppy|kitten)", r"what does (?:a|the) (?P<n>dog|cat|bird|hamster) (?:say|sound like)"],
         "de": [r"wie macht (?:der|die|das) (?P<n>hund|katze|vogel|hamster)", r"(?P<n>bell)(?:e)?(?: mal)?(?: wie ein hund)?", r"(?P<n>miau)(?:e)?(?: mal)?(?: wie eine katze)?",

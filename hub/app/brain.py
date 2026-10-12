@@ -607,7 +607,8 @@ def sanitize(d: dict, text: str, earlier_replies: list[str] | None = None) -> tu
         d["intent"] = None
     acts = list(d.get("actions") or [])
     if acts and not motion_request(text):
-        keep = [a for a in acts if _step_text(a).startswith("expression")]
+        # eyes and sounds need no move cue (an animal sound is a voice act, not a drive)
+        keep = [a for a in acts if _step_text(a).startswith(("expression", "animal_sound", "animal", "hum"))]
         if len(keep) != len(acts):
             notes.append(f"{len(acts) - len(keep)} actions dropped (no move asked)")
         acts = keep

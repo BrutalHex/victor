@@ -61,6 +61,7 @@ class Dancer:
         self._stop = False
         self.schedule = schedule or (lambda d, fn: threading.Timer(d, fn).start())
         self.listen_check_at = 0.0
+        self._beat_s = 0.0
 
     # -- config (read live so .env edits + restart apply)
     @property
@@ -129,6 +130,7 @@ class Dancer:
         while start < now:
             start += 60.0 / bpm
         listen = self.bar_n % 4 == 3
+        self._beat_s = 60.0 / bpm
         if listen:
             plan, dur = "plan:face expr_curious;wait %d" % int(4 * 60000 / bpm), 4 * 60.0 / bpm
         else:
@@ -148,6 +150,7 @@ class Dancer:
 
     def _send_if(self, mode: str, plan: str) -> None:
         if self.mode == mode and mode:
+            self.log(f"music bar sent t={time.time():.3f} beat_s={self._beat_s:.3f}")
             self.send_plan(plan)
 
     def tick(self) -> None:
