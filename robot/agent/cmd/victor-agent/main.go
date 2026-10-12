@@ -25,6 +25,7 @@ import (
 	"github.com/BrutalHex/victor/robot/agent/internal/cliffcal"
 	"github.com/BrutalHex/victor/robot/agent/internal/drivectl"
 	"github.com/BrutalHex/victor/robot/agent/internal/face"
+	"github.com/BrutalHex/victor/robot/agent/internal/hold"
 	"github.com/BrutalHex/victor/robot/agent/internal/hosts"
 	"github.com/BrutalHex/victor/robot/agent/internal/idle"
 	"github.com/BrutalHex/victor/robot/agent/internal/latch"
@@ -243,10 +244,21 @@ func runDaemon() int {
 	var lastProxSamples uint16
 	var proxFreshAt time.Time
 	var lastMotorAt time.Time // audio up to motorNoiseTail after a real motor command is flagged robot-noise
+	var lastWheelsAt time.Time // audio up to motorNoiseTail after wheel power is flagged FlagWheels
+	var hc hold.Ctl            // hub listen hold: wheels paused while someone talks
+	var ramp hold.Ramp         // audio just after a big motor change is flagged FlagRamp
+	rampOn := false
 	face.Boot()
 	var lastFaceAt time.Time
 	// Status files: rewritten on change at most 2/s (was ~300 writes/s).
 	status := statusfile.New()
+	unhold := func(now time.Time, why string) {
+		if d := hc.Release(now); d > 0 {
+			runner.Shift(d, now)
+			fmt.Printf("hold end %s held=%dms\n", why, d.Milliseconds())
+			status.Put("/data/victor/hold.txt", "released: "+why+"\n")
+		}
+	}
 	tick := time.NewTicker(*rate)
 	var btn button.Debouncer // backpack presses -> SENSOR ButtonPresses -> hub button_press
 	var actSeq uint16        // finished voice actions -> SENSOR ActionSeq/ActionResult -> hub says why
@@ -287,6 +299,7 @@ func runDaemon() int {
 					fmt.Printf("button press n=%d\n", btn.Presses)
 					status.Put("/data/victor/button.txt", fmt.Sprintf("presses=%d at=%s\n", btn.Presses, time.Now().Format(time.RFC3339)))
 					// the back button cancels a running voice plan / explore at once
+					unhold(time.Now(), "button")
 					if runner.Cancel("button") {
 						actSeq, actResult = actSeq+1, vct1.ResultCancelled
 						fmt.Printf("action %s cancelled: button\n", runner.Name())
@@ -372,6 +385,18 @@ func runDaemon() int {
 			}
 			select {
 			case name := <-actCh:
+				if d, ok := hold.Parse(name); ok {
+					if name == "release" {
+						unhold(time.Now(), "hub")
+					} else if hc.Hold(time.Now(), d, lastPWM) {
+						fmt.Printf("hold start %dms pwm=%d,%d runner=%v wander=%v\n", d.Milliseconds(), lastPWM[0], lastPWM[1], runner.Active(), wand.Active())
+						status.Put("/data/victor/hold.txt", fmt.Sprintf("held %dms\n", d.Milliseconds()))
+					}
+					break
+				}
+				if !strings.HasPrefix(name, "ssh_") {
+					unhold(time.Now(), "action "+name) // stop or a new command ends the hold; the new command runs
+				}
 				switch name {
 				case "explore":
 					if why := wand.Start(win, wander.FlagOn()); why != "" {
@@ -409,7 +434,16 @@ func runDaemon() int {
 				}
 			default:
 			}
-			if runner.Active() {
+			if d, ok := hc.Expired(time.Now()); ok {
+				runner.Shift(d, time.Now())
+				fmt.Printf("hold end expired held=%dms\n", d.Milliseconds())
+				status.Put("/data/victor/hold.txt", "expired\n")
+			}
+			held := hc.Active(time.Now())
+			win.Hold = held
+			if held && runner.Active() {
+				pwm[0], pwm[1] = 0, 0 // plan frozen (clock shifted on release); brake below
+			} else if runner.Active() {
 				// Hard vetoes stop an action at once. A heartbeat gap only counts
 				// once the hub is really gone (>1 s): WiFi jitter past the 250 ms
 				// skill threshold aborted look_at_me on the first live test.
@@ -458,7 +492,7 @@ func runDaemon() int {
 				}
 			}
 			if wand.Active() {
-				o := wand.Tick(win)
+				o := wand.Tick(win) // win.Hold: stop, resume HoldResume after the hold
 				if !runner.Active() {
 					pwm = o.PWM
 				}
@@ -469,6 +503,9 @@ func runDaemon() int {
 				if !wand.Active() {
 					status.Put("/data/victor/wander.txt", "stopped: "+wand.Why+"\n")
 				}
+			}
+			if held {
+				pwm[0], pwm[1] = hc.Brake(time.Now()) // soft brake from the last power, then still
 			}
 			// Final interlock, after every source of motion: no wheel power at
 			// all on pickup/fall/low battery, and at a front cliff only a pure
@@ -486,6 +523,10 @@ func runDaemon() int {
 				pwm[0], pwm[1] = 0, 0
 			}
 			lastPWM = pwm
+			rampOn = ramp.Feed(time.Now(), pwm)
+			if pwm[0] != 0 || pwm[1] != 0 {
+				lastWheelsAt = time.Now()
+			}
 			// Idle life: glances, head fidgets, look toward a sound. Head only;
 			// never wheels or lift. Only when nothing else owns the face/motors.
 			if have && !runner.Active() && !wand.Active() && !idle.Disabled() && ui.currentMode() == "idle" && !pet.touching() &&
@@ -523,9 +564,18 @@ func runDaemon() int {
 					// speaker comes back as the next utterance.
 					clean := proc.Process(mic)
 					if !ui.thinking() && !ui.muted() {
-						noisy := time.Since(lastMotorAt) < motorNoiseTail
+						var bits uint8
+						if time.Since(lastMotorAt) < motorNoiseTail {
+							bits |= vct1.FlagRobotNoise
+						}
+						if time.Since(lastWheelsAt) < motorNoiseTail {
+							bits |= vct1.FlagWheels
+						}
+						if rampOn {
+							bits |= vct1.FlagRamp
+						}
 						for _, pkt := range pk.Push(clean) {
-							lnk.QueueMedia(hub.SendAudioFlags(pkt, noisy))
+							lnk.QueueMedia(hub.SendAudioBits(pkt, bits))
 						}
 					}
 				}
@@ -567,6 +617,9 @@ func runDaemon() int {
 			}
 			if sshOn.Load() {
 				s.Flags |= vct1.FlagSSHOn
+			}
+			if hc.Active(time.Now()) {
+				s.Flags |= vct1.FlagHeld
 			}
 			s.ButtonPresses = btn.Presses
 			s.ActionSeq, s.ActionResult = actSeq, actResult

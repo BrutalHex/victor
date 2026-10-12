@@ -214,3 +214,25 @@ func TestResultCodes(t *testing.T) {
 		}
 	}
 }
+
+func TestShiftResumesFrozenPlan(t *testing.T) {
+	r := &Runner{}
+	t0 := time.Now()
+	if !r.StartText("plan:wait 1000", t0) {
+		t.Fatal("plan did not start")
+	}
+	r.Tick(In{Now: t0})
+	// held for 5 s: without the shift the wait (and maybe the timeout) is over
+	t1 := t0.Add(5 * time.Second)
+	r.Shift(5*time.Second, t1)
+	if o := r.Tick(In{Now: t1.Add(500 * time.Millisecond)}); o.Done != "" || !r.Active() {
+		t.Fatalf("plan ended after a hold: %+v", o)
+	}
+	var o Out
+	for i := 0; i < 100 && r.Active(); i++ {
+		o = r.Tick(In{Now: t1.Add(time.Duration(600+20*i) * time.Millisecond)})
+	}
+	if o.Done != "ok" {
+		t.Fatalf("plan did not finish its remaining 0.5 s: %q", o.Done)
+	}
+}

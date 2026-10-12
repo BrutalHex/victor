@@ -224,6 +224,22 @@ func (r *Runner) StartText(text string, now time.Time) bool {
 	return len(p.Steps) > 0
 }
 
+// Shift resumes after a listen hold of d: the plan clock skips the held time
+// (timeouts and timed steps continue where they were) and the speed loop
+// restarts from a gentle roll (no jerk after the pause).
+func (r *Runner) Shift(d time.Duration, now time.Time) {
+	if !r.active || d <= 0 {
+		return
+	}
+	r.started = r.started.Add(d)
+	if !r.stepAt.IsZero() {
+		r.stepAt = r.stepAt.Add(d)
+	}
+	if r.ctl != nil {
+		r.ctl.Reset(now)
+	}
+}
+
 // Cancel stops a running plan at once (voice "stop", back button). The
 // caller zeroes the motors this tick (the runner returns no power once idle).
 func (r *Runner) Cancel(why string) bool {

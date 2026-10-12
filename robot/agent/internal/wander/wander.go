@@ -46,6 +46,7 @@ const (
 	mmPerTick    = 0.96 * 29.0 * 0.25 * math.Pi / 172.3
 	halfTrackMM  = drivectl.HalfTrackMM
 	SessionMax   = 10 * time.Minute
+	HoldResume   = 500 * time.Millisecond // pause left after a listen hold ends
 	headPWM      = int16(8192) // 0.25 power
 	// CliffMin mirrors veto: an uncalibrated channel below this is a cliff.
 	CliffMin = 40
@@ -76,6 +77,7 @@ type In struct {
 	ProxMM     uint16
 	EncL, EncR int32
 	Busy       bool // voice turn / action / petting: hold still, don't end
+	Hold       bool // hub listen hold (likely speech while moving): stop, resume after HoldResume
 }
 
 type Out struct {
@@ -237,11 +239,15 @@ func (w *W) Tick(in In) Out {
 	case in.Now.Sub(w.started) > SessionMax:
 		return end("session time cap")
 	}
-	if in.Busy {
-		// a voice turn or command owns the robot: hold still, resume later
+	if in.Busy || in.Hold {
+		// a voice turn or command owns the robot: hold still, resume later.
+		// A listen hold alone (hub heard a likely voice) resumes sooner.
 		if w.state == Drive || w.state == Turn {
 			w.enter(Pause, in)
 			w.pauseFor = 2 * time.Second
+			if !in.Busy {
+				w.pauseFor = HoldResume
+			}
 		}
 		w.since = in.Now
 		return out

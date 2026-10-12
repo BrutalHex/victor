@@ -122,11 +122,20 @@ func (h *Hub) SendAudio(pcm []byte) []byte { return h.SendAudioFlags(pcm, false)
 
 // SendAudioFlags sends one audio packet; robotNoise sets vct1.FlagRobotNoise.
 func (h *Hub) SendAudioFlags(pcm []byte, robotNoise bool) []byte {
+	var bits uint8
+	if robotNoise {
+		bits = vct1.FlagRobotNoise
+	}
+	return h.SendAudioBits(pcm, bits)
+}
+
+// SendAudioBits sends one audio packet with vct1.FlagRobotNoise/FlagWheels/FlagRamp.
+func (h *Hub) SendAudioBits(pcm []byte, bits uint8) []byte {
 	if len(pcm) == 0 {
 		return nil
 	}
 	seq := atomic.AddUint32(&h.aseq, 1)
-	buf := vct1.EncodeAudioFlags(seq, pcm, robotNoise)
+	buf := vct1.EncodeAudioBits(seq, pcm, bits)
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if h.aud != nil {

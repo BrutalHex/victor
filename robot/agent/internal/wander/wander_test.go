@@ -459,3 +459,45 @@ func TestBackMMCoversStoppingDistance(t *testing.T) {
 		}
 	}
 }
+
+func TestListenHoldStopsThenResumesSoon(t *testing.T) {
+	s := newSim()
+	w := New(3)
+	w.Start(s.in, true)
+	driving := false
+	run(t, w, s, 3, func(i int, o Out) {
+		if w.State() == Drive && (o.PWM[0] != 0 || o.PWM[1] != 0) {
+			driving = true
+		}
+	})
+	if !driving {
+		t.Fatal("never drove")
+	}
+	// force a drive leg, then a 700 ms hold
+	w.enter(Drive, s.in)
+	w.target = 300
+	in := s.in
+	in.Hold = true
+	for i := 0; i < 35; i++ {
+		in.Now = in.Now.Add(20 * time.Millisecond)
+		if o := w.Tick(in); o.PWM != ([4]int16{}) || !w.Active() {
+			t.Fatal("hold must stop the wheels and keep the session")
+		}
+	}
+	if w.State() != Pause || w.pauseFor != HoldResume {
+		t.Fatalf("state=%s pause=%v", w.State(), w.pauseFor)
+	}
+	in.Hold = false
+	moved := time.Duration(0)
+	for i := 1; i <= 100; i++ {
+		in.Now = in.Now.Add(20 * time.Millisecond)
+		w.Tick(in)
+		if w.State() == Drive {
+			moved = time.Duration(i) * 20 * time.Millisecond
+			break
+		}
+	}
+	if moved == 0 || moved > HoldResume+100*time.Millisecond {
+		t.Fatalf("explore resumed after %v, want ~%v", moved, HoldResume)
+	}
+}

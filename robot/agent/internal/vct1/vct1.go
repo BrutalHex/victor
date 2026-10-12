@@ -228,6 +228,8 @@ const (
 	FlagWandering uint16 = 1 << 5
 	// FlagSSHOn: ssh.enabled is on (voice "is SSH on?" and the voice toggle's confirmation).
 	FlagSSHOn uint16 = 1 << 6
+	// FlagHeld: the wheels are paused by a hub listen hold.
+	FlagHeld uint16 = 1 << 7
 )
 
 // AudioPacket is 16 kHz s16le mono. 20 ms = 320 samples = 640 bytes.
@@ -238,6 +240,20 @@ func EncodeAudio(seq uint32, pcm []byte) []byte {
 // FlagRobotNoise marks an audio packet recorded while the robot's own motors
 // ran (hub VAD: no floor update, louder threshold).
 const FlagRobotNoise uint8 = 1 << 2
+
+// FlagWheels: recorded while the wheels ran (or within the gear tail after);
+// the hub's listen-while-moving detector runs on these. FlagRamp: within
+// 200 ms of a big motor change (start/stop/flip, head or lift start/stop):
+// gear clunks, no speech onset counts there. Bit 4 is AudioRate16k.
+const (
+	FlagWheels uint8 = 1 << 3
+	FlagRamp   uint8 = 1 << 5
+)
+
+// EncodeAudioBits sends audio with any of FlagRobotNoise|FlagWheels|FlagRamp.
+func EncodeAudioBits(seq uint32, pcm []byte, bits uint8) []byte {
+	return Encode(Header{Type: TypeAudio, Flags: AudioRate16k | bits&(FlagRobotNoise|FlagWheels|FlagRamp), Seq: seq, Tns: NowTns()}, pcm)
+}
 
 func EncodeAudioFlags(seq uint32, pcm []byte, robotNoise bool) []byte {
 	f := AudioRate16k
