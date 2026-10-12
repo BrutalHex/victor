@@ -118,7 +118,7 @@ class LocalFaces:
         self.min_px = int(_f("HUB_FACE_MIN_PX", 48))  # face width in a 640x480 frame (~2 m)
         self.sure = _f("HUB_FACE_LOCAL_SURE", 0.50)
         self.unsure = _f("HUB_FACE_LOCAL_UNSURE", 0.32)
-        self.margin = _f("HUB_FACE_LOCAL_MARGIN", 0.08)  # best name must beat the next name by this
+        self.margin = _f("HUB_FACE_LOCAL_MARGIN", 0.10)  # best name must beat the next name by this
         self.lock = threading.Lock()
         self.error = ""
         self.available = False

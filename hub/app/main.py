@@ -502,7 +502,7 @@ def think_loop() -> None:
     while True:
         time.sleep(0.5)
         think_keepalive()
-        if SESSION.check_idle():  # HUB_SESSION_IDLE_S (0 = never)
+        if SESSION.check_idle():  # HUB_SESSION_IDLE_S (default 180 s, 0 = never)
             cue_sleep()
         session_face()
 
@@ -1196,7 +1196,14 @@ def identify_person() -> dict:
         res["skip"] = "no fresh camera frame"
     else:
         faces, clear, img = FACE_LOCAL.detect(frame)
-        if not clear:
+        recent = dict(FACE_WATCH.last or {})
+        if not clear and recent.get("name") and recent.get("level") == "sure" \
+                and time.time() - float(recent.get("t") or 0) < 5.0:
+            # the face turned away while asking: the background scan saw it clearly a moment ago
+            res.update(person=True, face_visible=True, name=recent["name"], via="local-recent",
+                       confidence=round(min(0.99, 0.7 + float(recent.get("score") or 0) / 2), 2),
+                       score=recent.get("score"), level="sure")
+        elif not clear:
             res["person"] = bool(faces)  # someone there, face not clear -> "don't recognise / face not visible"
             if not faces:
                 res["skip"] = "no face in view"
@@ -1217,6 +1224,9 @@ def identify_person() -> dict:
 ENROLL_WANT = 3
 
 
+CAPTURE_EMBS: dict = {}  # id(frame) -> embedding from the last capture_faces()
+
+
 def capture_faces(want: int, secs: float) -> list[bytes]:
     """New camera frames with exactly one clear face, until `want` or `secs`."""
     out: list[bytes] = []
@@ -1229,10 +1239,31 @@ def capture_faces(want: int, secs: float) -> list[bytes]:
             emb, why = FACE_LOCAL.one_clear_face(img)
             if emb is not None:
                 out.append(img)
+                CAPTURE_EMBS[id(img)] = emb
             else:
                 print(f"face enroll frame skipped: {why}", flush=True)
         time.sleep(0.1)
     return out
+
+
+def enroll_filter(frames: list[bytes], name: str) -> tuple[list[bytes], str]:
+    """Drop frames whose face already matches a DIFFERENT enrolled person
+    (someone else in front of the camera while a name is said; 2026-10-11 the
+    woman in view was stored as 'Mohammad'). -> (kept frames, other name)."""
+    kept, other = [], ""
+    for img in frames:
+        emb = CAPTURE_EMBS.get(id(img))
+        if emb is None:
+            kept.append(img)
+            continue
+        m = FACE_LOCAL.match(emb)
+        if m.get("name") and m["name"].lower() != name.lower() and m.get("level") in ("sure", "unsure") \
+                and float(m.get("score") or 0) >= FACE_LOCAL.sure:
+            other = m["name"]
+            print(f"face enroll frame skipped: looks like {m['name']!r} score={m['score']}", flush=True)
+            continue
+        kept.append(img)
+    return kept, other
 
 
 def voice_enroll(name: str, lang: str) -> tuple[str, str]:
@@ -1255,6 +1286,11 @@ def voice_enroll(name: str, lang: str) -> tuple[str, str]:
         except Exception as exc:  # noqa: BLE001
             print(f"enroll prompt failed {exc!r}", flush=True)
         frames = capture_faces(ENROLL_WANT, float(os.environ.get("HUB_ENROLL_RETRY_S", "6")))
+    frames, other = enroll_filter(frames, name)
+    CAPTURE_EMBS.clear()
+    if other and not frames:
+        print(f"face voice enroll name={name!r} refused: the face in view is {other!r}", flush=True)
+        return I.say("enroll_fail", lang, n=name), ""
     for img in frames:
         FACE_DB.enroll(name, img)
     print(f"face voice enroll name={name!r} stored={len(frames)} known_before={known}", flush=True)

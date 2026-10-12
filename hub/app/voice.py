@@ -735,6 +735,12 @@ class Voice:
         if d is None:
             print(f"voice brain unparsable ms={self.last_chat_ms} raw={raw[:200]!r}", flush=True)
             return None
+        d, why = brain.sanitize(d, text, [m.get("content", "") for m in payload["input"][:-1]
+                                          if m.get("role") == "assistant"])
+        if why:
+            print(f"voice brain guard {'; '.join(why)} text={text[:60]!r}", flush=True)
+        if d is None:
+            return None
         full = speakable(d["reply"])
         d["reply"] = short_reply(full)
         if len(d["reply"]) < len(full):

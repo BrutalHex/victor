@@ -504,3 +504,45 @@ class ActionResult(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class GuardTests(unittest.TestCase):
+    """2026-10-12 live mix-ups: the model's moves/intents must match the words."""
+
+    def d(self, **kw):
+        base = {"reply": "ok", "expression": "neutral", "expression_end": None, "speak": "before", "intent": None,
+                "args": {}, "actions": []}
+        base.update(kw)
+        return base
+
+    def test_no_moves_without_a_move_request(self):
+        sq = ["drive 100", "turn 90"] * 4
+        for t in ("Can you see me now?", "Your face looks dumb.", "بهتون ناراحت باش."):
+            d, why = brain.sanitize(self.d(actions=sq), t)
+            self.assertEqual(d["actions"], [], t)
+        d, _ = brain.sanitize(self.d(actions=["expression happy", "drive 100"]), "Take a happy face.")
+        self.assertEqual(d["actions"], ["expression happy"])
+        for t in ("Drive in a square", "move back", "Zieh einen Kreis", "دو بار دور خودت بچرخ", "dance for me",
+                  "fahr zurück", "برو عقب"):
+            d, _ = brain.sanitize(self.d(actions=sq), t)
+            self.assertEqual(d["actions"], sq, t)
+
+    def test_side_effect_intents_need_matching_words(self):
+        cases = [("intent_system_sleep", "سیگار", None), ("intent_system_sleep", "سلام ویتاژ", None),
+                 ("intent_system_charger", "Can you see me now?", None),
+                 ("intent_play_fistbump", "خوشم", None),
+                 ("intent_names_username_extend", "محمد", None),
+                 ("intent_names_username_extend", "سلام، اسم من بهاره.", "intent_names_username_extend"),
+                 ("intent_names_username_extend", "my name is Mohammad", "intent_names_username_extend"),
+                 ("intent_system_sleep", "go to sleep", "intent_system_sleep"),
+                 ("intent_system_charger", "go to your charger", "intent_system_charger")]
+        for it, t, want in cases:
+            d, _ = brain.sanitize(self.d(intent=it), t)
+            self.assertEqual(d["intent"], want, t)
+
+    def test_repeat_of_earlier_reply_is_dropped(self):
+        r = "I'm sorry if my expression upset you. I'm here to help."
+        d, why = brain.sanitize(self.d(reply=r), "Take a happy face.", [r])
+        self.assertIsNone(d)
+        d, _ = brain.sanitize(self.d(reply="Yes?"), "Vector", ["Yes?"])  # short acks may repeat
+        self.assertIsNotNone(d)

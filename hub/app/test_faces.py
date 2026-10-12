@@ -265,6 +265,22 @@ class WatchTests(unittest.TestCase):
         self.assertEqual(len(db.embeddings()), 1)  # confirmed -> learned as a local reference
         self.assertEqual(local.match(MO_SIDE)["level"], "sure")  # next time no call at all
 
+    def test_no_auto_learn_with_two_people_enrolled(self):
+        w, local, fid, c, db = self.make(sure=0.9)
+        db.enroll("Sara", b"\xff\xd8s")
+        local.refs_.append(("Sara", STRANGER))
+        self.scan(w, local, c, MO_SIDE)
+        self.scan(w, local, c, MO_SIDE)
+        self.assertEqual(fid.calls, ["greeting check"])
+        self.assertEqual(db.embeddings(), [])  # NVIDIA said Mohammad, but nothing is learned with 2 people
+
+    def test_sure_needs_margin_over_second_person(self):
+        local = FakeLocal([("Mohammad", MO), ("Sara", unit(1.0, 0.25))], sure=0.5)
+        local.margin = 0.10
+        m = local.match(MO)
+        self.assertEqual(m["name"], "Mohammad")
+        self.assertEqual(m["level"], "unsure")  # Sara's ref ~0.97: too close to call it sure
+
     def test_no_nvidia_when_greeting_would_not_happen(self):
         w, local, fid, c, _ = self.make(sure=0.9)
         w.mark_greeted("Mohammad")
@@ -411,6 +427,27 @@ class MainVoiceEnroll(unittest.TestCase):
         self.assertIn("I can't see your face. Please look at me.", self.spoken)
         self.assertIn("didn't save", reply)
         self.assertEqual(self.m.FACE_DB.list(), [])
+
+    def test_enroll_refuses_someone_else_in_view(self):
+        m = self.m
+        SARA = unit(0, 0, 1.0)
+        m.FACE_DB.enroll("Sara", b"\xff\xd8s")
+        self.local.refs_ = [("Sara", SARA)]
+        th = self.feed([SARA, SARA, SARA])
+        reply, _ = m.voice_enroll("Mohammad", "en")
+        th.join()
+        self.assertEqual([f["name"] for f in m.FACE_DB.list()], ["Sara"])  # Sara's face not stored as Mohammad
+        self.assertIn("didn't save", reply)
+
+    def test_who_am_i_uses_clear_view_from_a_moment_ago(self):
+        m = self.m
+        m.FACE_DB.enroll("Mohammad", b"\xff\xd8m")
+        import time as _t
+        m.FACE_WATCH.last = {"t": _t.time(), "name": "Mohammad", "level": "sure", "score": 0.6}
+        m.FACE_ID.on_frame(b"\xff\xd8x")
+        self.local.next = [None]
+        res = m.identify_person()
+        self.assertEqual((res["name"], res["via"]), ("Mohammad", "local-recent"))
 
     def test_intent_rejects_non_name(self):
         import intents as I

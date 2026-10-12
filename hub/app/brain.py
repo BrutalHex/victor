@@ -438,6 +438,82 @@ def parse(raw_text: str) -> dict | None:
             "args": {k: args.get(k) for k in ("duration", "level", "name")}, "actions": acts}
 
 
+# ------------------------------------------------------------ guards
+# The search model sometimes returns moves, stock intents or a copy of an
+# earlier reply that have nothing to do with what was just said (2026-10-12:
+# 'Can you see me now?' -> a square drive, 'سیگار' -> go to sleep, a bare
+# 'محمد' -> face enrollment, 'Take a happy face' -> the previous apology).
+# These checks are on the user's own words, so the model cannot move the
+# robot, put it to sleep or learn a face unless the person asked for it.
+_MOTION = re.compile(
+    r"\b(?:move|moving|drive|driv|go|come|back|backward|backwards|forward|forwards|turn|spin|rotate|dance|wiggle|"
+    r"square|circle|zigzag|nod|head|lift|look\s+(?:up|down|at|around|left|right)|explore|wander|stop|reverse|step|left|right|around|volume|louder|"
+    r"quieter|twice|fahr|dreh|tanz|komm|geh|zurück|zuruck|vorwärts|vor|kreis|quadrat|kopf|schau|stopp|lauter|"
+    r"leiser|links|rechts|erkunde)\w*", re.I)
+_MOTION_FA = re.compile(r"برو|بیا|بچرخ|چرخ|برقص|رقص|عقب|جلو|چپ|راست|دور|دایره|مربع|سرت|نگاه|بالا|پایین|حرکت|"
+                        r"وایستا|بایست|صدات|بلندتر|آرومتر|بگرد")
+_INTENT_CUES = {
+    "intent_system_sleep": r"sleep|schlaf|بخواب|خواب",
+    "intent_system_charger": r"charg|lade|شارژ",
+    "intent_system_leavecharger": r"charg|lade|شارژ",
+    "intent_play_fistbump": r"fist|faust|bump|مشت",
+    "intent_photo_take_extend": r"photo|picture|selfie|foto|bild|عکس",
+    "intent_clock_settimer_extend": r"timer|wecker|تایمر|زمان\s*سنج",
+    "intent_clock_checktimer": r"timer|wecker|تایمر|زمان\s*سنج",
+    "intent_global_stop_extend": r"stop|halt|cancel|enough|بسه|وایستا|ایست|توقف|بس\b",
+    "intent_character_age": r"\bold\b|\bage\b|\balt\b|سن|ساله|چند\s*سال",
+}
+
+
+def motion_request(text: str) -> bool:
+    t = text or ""
+    return bool(_MOTION.search(t) or _MOTION_FA.search(t))
+
+
+def intent_plausible(intent: str | None, text: str) -> bool:
+    if not intent:
+        return True
+    if intent == "intent_names_username_extend":
+        import names
+        return names.intro_candidate(text)
+    cue = _INTENT_CUES.get(intent)
+    return True if cue is None else bool(re.search(cue, text or "", re.I))
+
+
+def _step_text(a) -> str:
+    if isinstance(a, dict):
+        return " ".join(str(v) for v in a.values() if v is not None).strip().lower()
+    return str(a).strip().lower()
+
+
+def _norm_reply(s: str) -> str:
+    return re.sub(r"[\W_]+", " ", (s or "").lower()).strip()
+
+
+def sanitize(d: dict, text: str, earlier_replies: list[str] | None = None) -> tuple[dict | None, list[str]]:
+    """-> (decision with implausible parts removed, notes); None = drop the
+    whole decision (a repeat of an earlier reply), the caller falls back."""
+    notes: list[str] = []
+    if d is None:
+        return None, notes
+    d = dict(d)
+    if d.get("intent") and not intent_plausible(d["intent"], text):
+        notes.append(f"intent {d['intent']} dropped")
+        d["intent"] = None
+    acts = list(d.get("actions") or [])
+    if acts and not motion_request(text):
+        keep = [a for a in acts if _step_text(a).startswith("expression")]
+        if len(keep) != len(acts):
+            notes.append(f"{len(acts) - len(keep)} actions dropped (no move asked)")
+        acts = keep
+    d["actions"] = acts
+    r = _norm_reply(d.get("reply"))
+    if r and len(r) >= 20 and any(_norm_reply(e) == r for e in (earlier_replies or [])):
+        notes.append("repeat of an earlier reply")
+        return None, notes
+    return d, notes
+
+
 def ssh_text(text: str) -> bool:
     """SSH talk never reaches this model: it keeps the local/legacy path."""
     return bool(re.search(r"\bssh\b|\bs\s?s\s?h\b|es es ha|اس ?اس ?اچ|اس ?اس ?اج", text or "", re.I))

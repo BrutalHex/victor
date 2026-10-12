@@ -52,6 +52,7 @@ class Watcher:
         self.bg_reserve = int(_f("HUB_FACE_BG_RESERVE", 50))
         self.confirm_first = _on("HUB_FACE_CONFIRM_FIRST", "0")
         self.learn_conf = _f("HUB_FACE_LEARN_CONF", 0.85)
+        self.learn_margin = _f("HUB_FACE_LEARN_MARGIN", 0.15)
         self.min_conf = _f("HUB_FACE_MIN_CONF", 0.7)
         self.greet_on = _on("HUB_GREET", "1")
         self.cooldown = _f("HUB_GREET_COOLDOWN_S", 7200)
@@ -222,7 +223,8 @@ class Watcher:
                 out.update(via="nvidia", confidence=round(conf, 2), person=res.get("person"))
                 if name and conf >= self.min_conf:
                     out["name"] = name
-                    if name == m["name"] and conf >= self.learn_conf and self.db is not None:
+                    if name == m["name"] and conf >= self.learn_conf and self.db is not None \
+                            and self.may_learn(m):
                         self.learn(name, emb)
                 self.cache_put(emb, out, now)
                 return out
@@ -232,6 +234,20 @@ class Watcher:
         if purpose == "greet" and why != "would not greet now":
             self.cache_put(emb, out, now)
         return out
+
+    def may_learn(self, m: dict) -> bool:
+        """Auto-learning an NVIDIA-confirmed view only while ONE person is
+        enrolled and the local match is clearly that person: with several
+        people a wrong confirmation would poison the gallery for good."""
+        try:
+            people = {n.lower() for n in self.db.names()}
+        except Exception:  # noqa: BLE001
+            return False
+        margin = float(m.get("score") or 0) - float(m.get("second") or 0)
+        ok = len(people) == 1 and margin >= self.learn_margin
+        if not ok:
+            print(f"face learn skipped people={len(people)} margin={margin:.3f}", flush=True)
+        return ok
 
     def learn(self, name: str, emb) -> None:
         """NVIDIA confirmed an uncertain local match: keep that embedding as an
