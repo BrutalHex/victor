@@ -16,6 +16,7 @@
 package action
 
 import (
+	"fmt"
 	"math"
 	"os"
 	"strings"
@@ -302,6 +303,13 @@ func (r *Runner) Tick(in In) Out {
 		coasting := (err > 0 && v > 0 && err <= 2*v) || (err < 0 && v < 0 && err >= 2*v)
 		if abs32(err) <= tol || crossed || coasting || el >= st.dur {
 			r.gErr0 = 0
+			if r.Log != nil {
+				name := "lift"
+				if head {
+					name = "head"
+				}
+				r.Log(fmt.Sprintf("gesture %s target %+d got %+d counts in %d ms", name, st.rel, pos-base, el.Milliseconds()))
+			}
 			return r.next(out)
 		}
 		out.PWM[ch] = int16(gesturePower(err, head) * full)
