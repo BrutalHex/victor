@@ -68,7 +68,7 @@ _VOWELS = {"i": (1000, 2900, 3900), "e": (1150, 2500, 3600), "a": (1400, 2000, 3
 MEOWS = {
     # name: (seconds, pitch contour [(t, Hz)], vowel path [(t, vowel)], trill seconds)
     "mew": (0.45, [(0, 950), (0.3, 1350), (1, 1100)], [(0, "i"), (0.5, "e"), (1, "a")], 0.0),
-    "meow": (0.8, [(0, 760), (0.35, 1350), (0.7, 1050), (1, 800)], [(0, "i"), (0.3, "e"), (0.55, "a"), (0.8, "o"), (1, "u")], 0.0),
+    "meow": (0.8, [(0, 860), (0.35, 1350), (0.7, 1050), (1, 800)], [(0, "i"), (0.3, "e"), (0.55, "a"), (0.8, "o"), (1, "u")], 0.0),
     "mrrp": (0.6, [(0, 820), (0.45, 900), (1, 1350)], [(0, "u"), (0.4, "o"), (1, "a")], 0.22),
 }
 
@@ -107,7 +107,10 @@ def meow(variant: str, rng) -> np.ndarray:
     out *= _env(n, 0.035, 0.18) * (0.6 + 0.4 * np.sin(np.pi * np.clip(t * 1.3, 0, 1)))
     out *= 0.9 + 0.1 * np.sign(np.sin(2 * np.pi * 70 * ts))  # light robot buzz
     out = signal.sosfilt(signal.butter(2, 750, "highpass", fs=SR, output="sos"), out)
-    return out / (np.max(np.abs(out)) + 1e-9) * 0.9
+    out = out / (np.max(np.abs(out)) + 1e-9)
+    # soft limiter: ~+3 dB louder at the same peak (12 Oct: meow 3.9x, mew 5.1x vs mrrp 13x room level)
+    out = np.tanh(2.2 * out) / np.tanh(2.2)
+    return out * 0.9
 
 
 def _meow(rng) -> np.ndarray:
