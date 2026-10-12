@@ -231,9 +231,15 @@ func TestGestureLiftReturnsToStart(t *testing.T) {
 	now := time.Unix(0, 0)
 	lift := int32(1000) // simulated lift encoder; moves with the PWM sign
 	maxUp := int32(0)
+	var lag []int32
 	for i := 0; i < 400 && r.Active(); i++ {
-		now = now.Add(10 * time.Millisecond)
-		out := r.Tick(In{Now: now, EncLift: lift})
+		now = now.Add(20 * time.Millisecond)
+		lag = append(lag, lift)
+		seen := lag[0] // frame lag ~2 ticks
+		if len(lag) > 2 {
+			lag = lag[1:]
+		}
+		out := r.Tick(In{Now: now, EncLift: seen})
 		if out.PWM[0] != 0 || out.PWM[1] != 0 {
 			t.Fatal("gesture moved the wheels")
 		}
@@ -245,7 +251,7 @@ func TestGestureLiftReturnsToStart(t *testing.T) {
 	if r.Active() {
 		t.Fatal("gesture did not finish")
 	}
-	if maxUp < want-gestureTolCounts {
+	if maxUp < want-4 || maxUp > want+6 {
 		t.Fatalf("lift only rose %d counts, want ~%d", maxUp, want)
 	}
 	if d := lift - 1000; d > gestureTolCounts || d < -gestureTolCounts {
@@ -260,9 +266,15 @@ func TestGestureLiftSkippedOnChargerHeadStillMoves(t *testing.T) {
 	head := int32(0)
 	sawHead := false
 	minHead := int32(0)
+	var lag []int32
 	for i := 0; i < 300 && r.Active(); i++ {
 		now = now.Add(20 * time.Millisecond) // 50 Hz loop
-		out := r.Tick(In{Now: now, OnCharger: true, EncHead: head})
+		lag = append(lag, head)
+		seen := lag[0] // the spine frame lags the motor by ~2 ticks
+		if len(lag) > 2 {
+			lag = lag[1:]
+		}
+		out := r.Tick(In{Now: now, OnCharger: true, EncHead: seen})
 		if out.PWM[2] != 0 {
 			t.Fatal("lift moved on the charger")
 		}
@@ -275,7 +287,7 @@ func TestGestureLiftSkippedOnChargerHeadStillMoves(t *testing.T) {
 		}
 	}
 	want := int32(math.Round(-5 / HeadDegPerCount))
-	if !sawHead || head > headTolCounts || head < -headTolCounts {
+	if !sawHead || head > 2*headTolCounts || head < -2*headTolCounts { // within ~2 deg with the frame lag
 		t.Fatalf("head moved=%v ended %d", sawHead, head)
 	}
 	if minHead > want+headTolCounts || minHead < want-25 {

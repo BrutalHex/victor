@@ -152,6 +152,7 @@ type Runner struct {
 	encL0    int32
 	encR0    int32
 	lift0    int32
+	gLast    int32 // last encoder reading of the current gesture step
 	gErr0    int32 // error at the start of the current gesture step (crossing = done)
 	baseSet  bool  // liftBase/headBase captured at the plan's first tick
 	liftBase int32
@@ -292,10 +293,14 @@ func (r *Runner) Tick(in In) Out {
 			tol = headTolCounts
 		}
 		if el == 0 || r.gErr0 == 0 {
-			r.gErr0 = err
+			r.gErr0, r.gLast = err, pos
 		}
+		v := pos - r.gLast // counts per tick, toward the target if same sign as err
+		r.gLast = pos
 		crossed := (r.gErr0 > 0 && err < 0) || (r.gErr0 < 0 && err > 0)
-		if abs32(err) <= tol || crossed || el >= st.dur {
+		// stop early by what one more tick plus the sensor lag (~2 ticks) would add
+		coasting := (err > 0 && v > 0 && err <= 2*v) || (err < 0 && v < 0 && err >= 2*v)
+		if abs32(err) <= tol || crossed || coasting || el >= st.dur {
 			r.gErr0 = 0
 			return r.next(out)
 		}
@@ -439,7 +444,7 @@ func abs32(v int32) int32 {
 func gesturePower(err int32, head bool) float64 {
 	kp, max, minUp, minDown := 0.03, 0.6, 0.25, 0.15
 	if head {
-		kp, max, minUp, minDown = 0.006, 0.4, 0.12, 0.12
+		kp, max, minUp, minDown = 0.004, 0.3, 0.16, 0.08 // gravity helps the head down
 	}
 	p := math.Max(-max, math.Min(max, kp*float64(err)))
 	if p > 0 && p < minUp {
