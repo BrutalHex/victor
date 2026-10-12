@@ -195,11 +195,12 @@ class WhoIsMyPet(unittest.TestCase):
                          ("Who is my catty?", "cat"), ("Who's my Katie?", "cat"), ("Who is my kitty cat?", "cat"),
                          ("Hu is my doggy?", "dog"), ("Who is my doggie?", "dog"), ("Who's my doggo?", "dog"),
                          ("Doggy!", "dog"), ("Kitty?", "cat"), ("Are you my good dog?", "dog"), ("Wo ist meine Katze?", "cat"),
-                         ("Bist du meine Mieze?", "cat"), ("Who is my puppy?", "dog"), ("Who is my kitten?", "cat")]:
+                         ("Bist du meine Mieze?", "cat"), ("Who is my puppy?", "dog"), ("Who is my kitten?", "cat"),
+                         ("Who is my caddy?", "cat"), ("My cat.", "cat"), ("My doggy.", "dog"), ("Is my kitty here?", "cat")]:
             f = router.fast(txt)
             self.assertIsNotNone(f, txt)
             self.assertEqual((f.name, animals.pet_of(f.arg)), ("intent_pet_whoismy", pet), txt)
-        for txt in ["Who is my friend?", "Where is my phone?", "Are you a robot?", "Who is my mother?", "This word...", "Dag."]:
+        for txt in ["Who is my friend?", "Where is my phone?", "Are you a robot?", "Who is my mother?", "This word...", "Dag.", "My phone.", "My name is Ann."]:
             f = intents.match(txt)
             self.assertTrue(f is None or f.name != "intent_pet_whoismy", txt)
 

@@ -146,7 +146,7 @@ PET_WORDS = {
             "puppy", "pup", "puppie", "guddagi", "gudagi", "goodagi", "good doggy", "good doggie", "good dog", "hund", "hundi",
             "hündchen", "wauwau", "hundchen", "سگ", "سگه", "سگم", "داگی", "پاپی", "هاپو"],
     "cat": ["cat", "cats", "catty", "cattie", "catie", "katie", "katy", "kitty", "kittie", "kitten", "kittens", "kit", "kat",
-            "kad", "cad", "cut", "chat", "kitty cat", "pussycat", "pussy cat", "good kitty", "katze", "kätzchen", "katzchen",
+            "kad", "cad", "caddy", "caddie", "kady", "katty", "cut", "chat", "kitty cat", "pussycat", "pussy cat", "good kitty", "katze", "kätzchen", "katzchen",
             "mieze", "miezekatze", "kater", "گربه", "گربهه", "گربم", "گربه ام", "گربه‌ام", "کتی", "کیتی", "پیشی"],
 }
 _PET_LOOKUP = {w: k for k, ws in PET_WORDS.items() for w in ws}

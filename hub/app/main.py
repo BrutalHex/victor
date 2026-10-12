@@ -1117,10 +1117,17 @@ def run_brain(d: dict, text: str) -> str:
     if not any(k in ("pet_answer", "animal_sound") for k, _ in ((plan or {}).get("hub") or [])):
         # never silent: the model said "I'm your cat!" but forgot the command (12 Oct live)
         m = re.search(PET_SAYS, reply or "", re.I)
-        if m and (animals.pet_word(text) or any(animals.pet_word(w) for w in re.findall(r"\w+", text or ""))):
-            pet = animals.pet_of(m.group(0))
+        pm = re.search(r"(?:my|mein|meine|me)\s+(?:\w+\s+)?(\w+)\W*$", text or "", re.I)
+        pet_in_text = animals.pet_word(pm.group(1)) if pm else ""
+        fa_pet = re.search(r"(سگ|گربه|کتی|پیشی)", text or "")
+        if m and (pet_in_text or fa_pet or any(animals.pet_word(w) for w in re.findall(r"\w+", text or ""))):
             print(f"pet_answer added from reply {reply!r}", flush=True)
-            play_animal(pet, proud=True)
+            play_animal(animals.pet_of(m.group(0)), proud=True)
+        elif (pet_in_text or fa_pet) and re.search(PET_APOLOGY, reply or "", re.I):
+            # "I don't have information about your cat" -> he IS the cat (12 Oct live, 'Who is my caddy?')
+            print(f"pet_answer replaces apology {reply!r}", flush=True)
+            reply = ""
+            play_animal(pet_in_text or animals.pet_of(fa_pet.group(1)), proud=True)
     if brain.clip(expr):
         TURN_OUT["show"] = f"anim|{brain.clip(expr)}".encode()
     if not (plan and plan["plan"]):
