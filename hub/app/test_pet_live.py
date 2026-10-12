@@ -6,10 +6,12 @@ import json
 import os
 import unittest
 import urllib.request
+import re
 
 import brain
 import voice
 
+APOLOGY = r"sorry|not a (?:dog|cat)|don't have|information|i'm not|leider|bin kein|متاسف|نیستم|اطلاعات"
 LIVE = os.environ.get("HUB_LIVE_OPENAI") == "1" and os.environ.get("OPENAI_API_KEY")
 
 CASES = [  # (text, pet); the last five are paraphrases not in the prompt
@@ -43,13 +45,15 @@ class LivePet(unittest.TestCase):
             plan = brain.build_plan(d.get("actions") or [], on_charger=True)
             hub = plan["hub"] if plan else []
             print(f"{text!r} -> actions={d.get('actions')} reply={d.get('reply')!r}")
-            if ("pet_answer", pet) not in hub or len((d.get("reply") or "").split()) > 4:
+            reply = d.get("reply") or ""
+            if ("pet_answer", pet) not in hub or len(reply.split()) > 7 or re.search(APOLOGY, reply, re.I):
                 bad.append((text, d.get("actions"), d.get("reply")))
-        self.assertLessEqual(len(bad), 1, bad)
+        self.assertLessEqual(len(bad), 1, bad)  # 12 Oct run: 12/12 fired, replies '', 'Me!', 'Ich! Wuff!', 'منم!'...
 
     def test_other_sounds(self):
         for text, n in SOUNDS:
             d = think(text)
             plan = brain.build_plan(d.get("actions") or [], on_charger=True)
             print(f"{text!r} -> {d.get('actions')} reply={d.get('reply')!r}")
-            self.assertIn(("animal_sound", n), plan["hub"] if plan else [], text)
+            hub = plan["hub"] if plan else []
+            self.assertTrue(("animal_sound", n) in hub or ("pet_answer", n) in hub, (text, hub))

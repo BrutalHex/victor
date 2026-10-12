@@ -638,6 +638,9 @@ PLAN_RUN = {"until": 0.0}  # a sent motion plan is expected to run until then (g
 NO_SPEECH_INTENTS = {"intent_imperative_shutup", "intent_animal_sound", "intent_pet_whoismy"}
 
 
+PET_APOLOGY = r"sorry|not a (?:dog|cat)|don't have|information|i'm not|leider|keine information|bin kein|متاسف|نیستم|اطلاعات"
+
+
 def play_animal(name: str, proud: bool = False) -> None:
     """Robot pet sound + face/gesture (animals.py); after the turn's own output."""
     plan = animals.gesture(name, _on_charger(), proud=proud)
@@ -1084,7 +1087,7 @@ def run_brain(d: dict, text: str) -> str:
                 play_animal(str(val))
             elif kind == "pet_answer":
                 # he IS the pet: no apology / "I'm not a dog" preface, at most a tiny "Me!"
-                if reply and (len(reply.split()) > 3 or re.search(r"sorry|not a|don't|information|leider|nicht|متاسف|نیستم", reply, re.I)):
+                if reply and (len(reply.split()) > 7 or re.search(PET_APOLOGY, reply, re.I)):
                     print(f"pet_answer reply dropped {reply!r}", flush=True)
                     reply = ""
                 play_animal(str(val), proud=True)
