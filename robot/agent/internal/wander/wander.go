@@ -115,6 +115,9 @@ type W struct {
 	lastDir   float64 // sign of the last obstacle turn
 	afterObs  bool    // current Backoff is for an obstacle, not a cliff
 	weakSince time.Time
+	lastTick  time.Time
+	pushAt    time.Time // last time the wheels made progress while powered
+	pushMM    float64   // wheel travel at pushAt
 	sp        drivectl.Speeds
 	Why       string // last stop / refusal reason
 }
@@ -183,6 +186,24 @@ func (w *W) enter(s State, in In) {
 	}
 	w.obsSince = time.Time{}
 	w.weakSince = time.Time{}
+	w.pushAt, w.pushMM = in.Now, 0
+}
+
+// PushMax: wheels powered with no encoder progress this long = blocked
+// (watchdog: explore never sits still pushing).
+const PushMax = 600 * time.Millisecond
+
+// pushPower: below this the wheels are not really pushing (ramp-up).
+const pushPower = 0.35
+
+// pushing tracks travel (mm, any sign) while powered; true once it has not
+// grown by drivectl.BreakMM for PushMax.
+func (w *W) pushing(in In, travel, power float64) bool {
+	if power < pushPower || math.Abs(travel)-w.pushMM >= drivectl.BreakMM {
+		w.pushAt, w.pushMM = in.Now, math.Abs(travel)
+		return false
+	}
+	return in.Now.Sub(w.pushAt) >= PushMax
 }
 
 // obstacle: a valid close return that has lasted obstacleHold, or a faint
@@ -294,13 +315,22 @@ func (w *W) Tick(in In) Out {
 	case in.Now.Sub(w.started) > SessionMax:
 		return end("session time cap")
 	}
+	dt := time.Duration(0)
+	if !w.lastTick.IsZero() {
+		dt = in.Now.Sub(w.lastTick)
+	}
+	w.lastTick = in.Now
 	if in.Busy {
-		// a voice turn or command owns the robot: hold still, resume later
+		// a command or petting owns the robot: hold still, resume later.
+		// The pause clock stops (not restarts) while busy, so short repeated
+		// holds can no longer freeze explore forever (12 Oct 14:35 "stuck").
 		if w.state == Drive || w.state == Turn {
 			w.enter(Pause, in)
-			w.pauseFor = 2 * time.Second
+			w.pauseFor = 1500 * time.Millisecond
+			out.Event = "hold: busy"
 		}
-		w.since = in.Now
+		w.since = w.since.Add(dt)
+		out.State = w.state
 		return out
 	}
 	// Cliff wins in every state except a reverse that is moving away from it.
@@ -378,7 +408,7 @@ func (w *W) Tick(in In) Out {
 		v := drivectl.Approach(w.sp.Explore, in.ProxValid, float64(in.ProxMM), ObstacleMM)
 		w.ctl.SetTarget(math.Min(v, drivectl.Ending(w.sp.Explore, w.target-done)))
 		p := w.ctl.Update(in.Now, done)
-		if w.ctl.Stalled() {
+		if w.ctl.Stalled() || w.pushing(in, done, p) {
 			return w.blockedTurn(in, "stall", true)
 		}
 		out.PWM = wheels(p, p)
@@ -420,6 +450,13 @@ func (w *W) Tick(in In) Out {
 		// wheel travel (arc mm), same breakaway controller as driving.
 		w.ctl.SetTarget(drivectl.Ending(w.sp.TurnMMps(), (math.Abs(w.target)-math.Abs(deg))*math.Pi/180*halfTrackMM))
 		p := w.ctl.Update(in.Now, deg*math.Pi/180*halfTrackMM)
+		if w.pushing(in, deg*math.Pi/180*halfTrackMM, p) {
+			// turn wedged: give up this turn, the pause re-checks the path
+			w.enter(Pause, in)
+			w.pauseFor = 1500 * time.Millisecond
+			out.State, out.Event = Pause, "pause: turn blocked"
+			return out
+		}
 		out.PWM = wheels(-s*p, s*p)
 		out.Moving = true
 	}

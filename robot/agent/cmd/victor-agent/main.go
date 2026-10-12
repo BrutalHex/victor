@@ -368,7 +368,9 @@ func runDaemon() int {
 				ProxValid: have && fr.ProxValid && time.Since(proxFreshAt) < 500*time.Millisecond, ProxMM: fr.ProxMM,
 				// faint status-11 return (12 Oct: sat at 80-160 mm with valid=false, never turned)
 				ProxWeak: have && !fr.ProxValid && fr.ProxStatus == spine.ProxStatusValid && fr.ProxSignal >= 0.7 && time.Since(proxFreshAt) < 500*time.Millisecond,
-				Busy: runner.Active() || ui.thinking() || ui.muted() || pet.touching()}
+				// not ui.thinking(): wheel noise triggers the hub's VAD every ~3 s and
+				// held explore still for good (12 Oct 14:35); "stop" still arrives as a command.
+				Busy: runner.Active() || ui.muted() || pet.touching()}
 			if have {
 				win.EncL, win.EncR = fr.Motors[0].Pos, fr.Motors[1].Pos
 			}
