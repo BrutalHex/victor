@@ -634,12 +634,12 @@ INTENTS_ON = os.environ.get("HUB_INTENTS", "1").strip().lower() not in ("0", "fa
 TURN_OUT = {"show": b"", "action": "", "intent": "", "plan": "", "speak": "", "est": 0.0, "end": b""}
 SCHED = brain.Scheduler()  # plan after speech / speech after plan; cancelled by stop
 PLAN_RUN = {"until": 0.0}  # a sent motion plan is expected to run until then (gestures wait)
-NO_SPEECH_INTENTS = {"intent_imperative_shutup", "intent_animal_sound"}
+NO_SPEECH_INTENTS = {"intent_imperative_shutup", "intent_animal_sound", "intent_pet_whoismy"}
 
 
-def play_animal(name: str) -> None:
+def play_animal(name: str, proud: bool = False) -> None:
     """Robot pet sound + face/gesture (animals.py); after the turn's own output."""
-    plan = animals.gesture(name, _on_charger())
+    plan = animals.gesture(name, _on_charger(), proud=proud)
     pcm = animals.pcm(name, seed=int(time.time()) & 0xFFFF)
     if plan:
         TURN_OUT.update(plan=plan, speak="during", est=1.5)
@@ -938,6 +938,10 @@ def run_intent(intent) -> str:
     elif n == "intent_music_hum":
         reply = I.say("hum_go", lang)
         DANCER.start_hum(lang, 0.5)
+    elif n == "intent_pet_whoismy":
+        # "who is my dog?" -> "me!": proud face, head up, then the bark / meow
+        play_animal(animals.pet_of(intent.arg or intent.text or ""), proud=True)
+        show = ""
     elif n == "intent_animal_sound":
         name = animals.name_of(intent.arg or intent.text or "") or "dog"
         play_animal(name)

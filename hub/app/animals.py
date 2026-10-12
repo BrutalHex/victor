@@ -141,8 +141,19 @@ GESTURE = {
 }
 
 
-def gesture(name: str, on_charger: bool | None) -> str:
+_CATS = ("cat", "kitt", "kat", "cad", "kit", "pussy", "katz", "kätz", "miez", "kater", "گرب")
+
+
+def pet_of(word: str) -> str:
+    """'who is my <pet>' word (incl. STT slips: dock, duck, cad) -> dog | cat."""
+    w = (word or "").lower()
+    return "cat" if any(c in w for c in _CATS) else "dog"
+
+
+def gesture(name: str, on_charger: bool | None, proud: bool = False) -> str:
     face, steps = GESTURE.get(name, ("", ""))
+    if proud and face:  # "who is my dog?" - "me!": proud, chin up
+        face, steps = "expr_proud", "headdeg 14 250;wait 250;" + steps
     if not face:
         return ""
     st = steps.split(";")

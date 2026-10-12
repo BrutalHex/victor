@@ -157,8 +157,15 @@ _DEF: list[tuple[str, str, str, dict[str, list[str]]]] = [
         "de": [r"summ(?:e)? (?:mit|das|dies|nach|es nach|mal mit)", r"sing(?:e)? (?:mit|das nach|mal mit)", r"(?:mach|mache|sing) (?:die|diese) melodie nach"],
         "fa": [r"(?:اینو |این رو |اینو با من )?زمزمه کن", r"(?:با من |همراه من )?(?:بخون|بخوان|اواز بخون)", r"(?:این )?(?:اهنگ|ملودی) (?:رو )?تکرار کن"],
     }),
+    ("intent_pet_whoismy", "works", "'who is my dog/cat?': he answers as the pet, proud face + bark/meow (no face ID)", {
+        "en": [r"(?:so |and |then |hey )?(?:who|whose|who's|whos|who s|hu|hoo)(?: is| s|'s|s)? (?:is |be )?my (?:good |little |sweet |best |favou?rite |cute |lovely |clever )*(?:boy |girl |little )?"
+               r"(?P<n>dog|dogs|doggy|doggie|doggo|dock|doc|duck|dug|dawg|dork|puppy|pup|cat|cats|kitty|kitten|kat|cad|kit|pussycat)(?: here| then| now)?"],
+        "de": [r"wer ist (?:denn )?(?:mein|meine|mein kleiner|meine kleine) (?:braver |guter |liebe |lieber |süße |süßer |kleine |kleiner )*(?P<n>hund|hundi|hündchen|wauwau|katze|kätzchen|mieze|miezekatze|kater)"],
+        "fa": [r"(?P<n>سگ|سگه|گربه|گربهه)(?: من|م| کوچولوی من| خوشگل من)? (?:کیه|کی هست|کیست|کیه دیگه)", r"(?P<n>سگم|گربه ام|گربم)(?: کیه| کی هست)",
+               r"کیه (?P<n>سگ|گربه)(?: من|م)"],
+    }),
     ("intent_animal_sound", "works", "robotic pet sound (dog, cat, purr, bird, hamster) with a face and head move", {
-        "en": [r"(?:s?park|bark|barking|woof)\w* like a (?P<n>dog|puppy)", r"(?:\w+ )?(?P<n>miu|meow|mio|miao|mew)(?: (?:miu|meow|mio|miao|mew))+",
+        "en": [r"(?:s?park|bark|barking|woof|forge|fork|bach|barg|bart)\w* like a (?P<n>dog|puppy)", r"(?:\w+ )?(?P<n>miu|meow|mio|miao|mew)(?: (?:miu|meow|mio|miao|mew))+",
                r"(?P<n>bark|woof)(?: like a dog)?(?: for me)?", r"(?P<n>meow|miaow|mew)(?: like a cat)?(?: for me)?", r"(?P<n>purr)(?: like a cat)?(?: for me)?",
                r"(?P<n>chirp|tweet)(?: like a bird)?", r"(?P<n>squeak)(?: like a hamster)?", r"(?:make|do) (?:a |the |some )?(?P<n>dog|cat|bird|hamster|puppy|kitten) (?:sound|noise)s?",
                r"(?:act|sound) like a (?P<n>dog|cat|bird|hamster|puppy|kitten)", r"what does (?:a|the) (?P<n>dog|cat|bird|hamster) (?:say|sound like)"],

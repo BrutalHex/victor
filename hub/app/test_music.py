@@ -171,6 +171,33 @@ def stream(d, clk, pcm, chunk=1600):
         d.tick()
 
 
+class WhoIsMyPet(unittest.TestCase):
+    DOG = ["Who is my dog?", "Who's my good dog?", "who is my dock", "whos my dog", "Who is my good boy dog?",
+           "Wer ist mein Hund?", "Wer ist mein braver Hund?", "سگ من کیه؟", "سگم کیه؟", "who is my duck"]
+    CAT = ["Who is my cat?", "Who's my kitty?", "Wer ist meine Katze?", "گربه من کیه؟", "who is my cad"]
+
+    def test_fast_path_and_pet(self):
+        import face_id
+        for txt, pet in [(t, "dog") for t in self.DOG] + [(t, "cat") for t in self.CAT]:
+            m = intents.match(txt)
+            self.assertIsNotNone(m, txt)
+            self.assertEqual(m.name, "intent_pet_whoismy", txt)
+            self.assertEqual(animals.pet_of(m.arg), pet, txt)
+            self.assertFalse(face_id.is_identity_question(txt), txt)  # no camera / NVIDIA
+
+    def test_identity_still_identity(self):
+        import face_id
+        for txt in ["who am I", "wer bin ich", "who is my friend"]:
+            m = intents.match(txt)
+            self.assertTrue(m is None or m.name != "intent_pet_whoismy", txt)
+        self.assertTrue(face_id.is_identity_question("who am I"))
+
+    def test_proud_gesture_and_mishear(self):
+        g = animals.gesture("dog", True, proud=True)
+        self.assertIn("face expr_proud", g)
+        self.assertEqual(intents.match("Forge like a dog.").name, "intent_animal_sound")
+
+
 class HumOut(unittest.TestCase):
     def test_melody_moved_by_one_octave_factor_into_speaker_band(self):
         # measured: G5 784 Hz came out as its 3rd harmonic, A5 880 Hz clean

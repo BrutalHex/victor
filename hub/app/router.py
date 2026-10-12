@@ -44,6 +44,7 @@ DESC = {
     "intent_character_age": "how old are you",
     "intent_music_dance": "dance to the music/beat/song playing now (tanz zur Musik / با آهنگ برقص)",
     "intent_music_hum": "hum/sing along: listen to a tune and sing it back (summ mit / زمزمه کن)",
+    "intent_pet_whoismy": "'who is my dog / good dog / cat?' asked playfully: he answers as the pet with a proud bark or meow (NOT face recognition)",
     "intent_animal_sound": "make a pet sound: bark like a dog, meow like a cat, purr, chirp, squeak (args.name = the animal or sound)",
     "intent_imperative_dance": "dance (now, no music)",
     "intent_play_anytrick": "do a trick",
