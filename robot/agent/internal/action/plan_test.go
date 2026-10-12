@@ -310,3 +310,27 @@ func TestGestureCaps(t *testing.T) {
 		t.Fatalf("caps not applied: %+v", p.Steps)
 	}
 }
+
+func TestKeepBaseAcrossBackToBackPlans(t *testing.T) {
+	r := &Runner{}
+	now := time.Unix(100, 0)
+	if !r.StartText("plan:headdeg 10 200;headdeg 0.3 200", now) {
+		t.Fatal("start")
+	}
+	r.Tick(In{Now: now, EncHead: 50})
+	if !r.baseSet || r.headBase != 50 {
+		t.Fatalf("base %v %d", r.baseSet, r.headBase)
+	}
+	// next bar arrives while the head is mid-move at 120 counts
+	r.StartText("plan:keepbase;headdeg 10 200", now.Add(time.Second))
+	r.Tick(In{Now: now.Add(time.Second), EncHead: 120})
+	if r.headBase != 50 {
+		t.Fatalf("base crept to %d", r.headBase)
+	}
+	// without keepbase, or too late, the base is re-taken
+	r.StartText("plan:keepbase;headdeg 10 200", now.Add(5*time.Second))
+	r.Tick(In{Now: now.Add(5 * time.Second), EncHead: 120})
+	if r.headBase != 120 {
+		t.Fatalf("stale base kept: %d", r.headBase)
+	}
+}

@@ -97,7 +97,8 @@ TRICK_TRAVEL = {"dance": 60 * math.pi / 180 * HALF_TRACK_MM, "come_here": 100, "
                 "turn_around": math.pi * HALF_TRACK_MM}
 TRICK_S = {"dance": 7.5, "nod": 0.9, "fistbump": 7.0, "look_at_me": 2.2, "look_up": 0.6, "look_down": 0.6,
            "come_here": 2.0, "forward": 1.4, "backup": 1.9, "turn_left": 1.4, "turn_right": 1.4, "turn_around": 2.0}
-DO = ["drive", "turn", "head", "lift", "wait", "expression", "trick", "explore", "explore_stop", "stop", "volume"]
+DO = ["drive", "turn", "head", "lift", "wait", "expression", "trick", "explore", "explore_stop", "stop", "volume",
+      "animal_sound", "dance_music", "hum"]
 
 # stock commands the model may pick as "intent" (single, hub-handled). Never
 # SSH (local only) and never session sleep ("Stop Vector" is local).
@@ -159,6 +160,8 @@ def step_dict(a) -> dict | None:
         d["name"] = arg
     elif do == "volume":
         d["level"] = arg
+    elif do in ("animal_sound", "animal", "sound"):
+        d["do"], d["name"] = "animal_sound", arg
     return d
 
 
@@ -255,8 +258,16 @@ def build_plan(actions, start_expr: str = "", end_expr: str = "", on_charger: bo
             if lvl is not None:
                 hub.append(("volume", int(max(1, min(5, round(lvl))))))
             continue
-        elif do in ("explore", "explore_stop", "stop"):
+        elif do in ("explore", "explore_stop", "stop", "dance_music", "hum"):
             hub.append((do, None))
+            continue
+        elif do == "animal_sound":
+            import animals
+            n = animals.name_of(str(a.get("name") or "")) or (str(a.get("name") or "").lower() if str(a.get("name") or "").lower() in animals.NAMES else "")
+            if not n:
+                notes.append(f"animal_sound {a.get('name')!r} dropped")
+                continue
+            hub.append(("animal_sound", n))
             continue
         else:
             notes.append(f"unknown {do!r} dropped")
@@ -392,7 +403,7 @@ _ACTION = {
     "type": "string",
     "description": "one step: 'drive <mm>' | 'turn <deg>' | 'head up|down|middle|nod' | 'lift up|down' | "
                    "'wait <ms>' | 'expression <name>' | 'trick <name>' | 'circle <mm>' | 'explore' | 'explore_stop' | 'stop' | "
-                   "'volume <1-5>'",
+                   "'volume <1-5>' | 'animal_sound <dog|cat|purr|bird|hamster>' | 'dance_music' | 'hum'",
 }
 SCHEMA = {
     "type": "json_schema",
@@ -450,6 +461,11 @@ RULES = (
     "- 'trick <name>' with name one of: " + ", ".join(TRICKS) + "\n"
     "- 'circle <diameter mm> [left|right]': a whole circle in one step (default 300, uses all 12 steps)\n"
     "- 'explore' (wander on your own), 'explore_stop', 'stop', 'volume <1-5>'\n"
+    "- 'animal_sound <dog|cat|purr|bird|hamster>': you make a little robot version of that pet sound (bark, meow, "
+    "purr, chirp, squeak) with a matching face - use it when asked to sound like an animal or playfully in context "
+    "('are you a dog?' -> reply 'No, but listen:' + 'animal_sound dog')\n"
+    "- 'dance_music': listen for the beat of music playing in the room and dance to it until it stops ('dance to "
+    "this song'); 'trick dance' is the short dance without music. 'hum': listen to a tune hummed to you and beep it back\n"
     "Compose complex moves from these: a square = 4 x ('drive 200', 'turn 90'); a circle = 'circle 300'; spin around twice = 'turn 720'; a happy wiggle = 'turn 20', 'turn -40', 'turn 20' with expression "
     "happy; zigzag = 'turn 30', 'drive 100', 'turn -60', 'drive 100', 'turn 30'; look at me = 'trick look_at_me'. "
     "Closed shapes must turn 360 in total (a square: 4 x turn 90). Keep it small (you are 10 cm long and live "

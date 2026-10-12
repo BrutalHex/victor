@@ -86,7 +86,13 @@ type Plan struct {
 	Steps          []step
 	AllowOnCharger bool          // wheels may turn on the charger (leave_charger only)
 	Timeout        time.Duration // 0 = planTimeout
+	// KeepBase ("keepbase" step): gesture deltas stay relative to the base of
+	// the previous plan if it started < KeepBaseWindow ago (dance bars sent
+	// back to back must not creep when one is cut mid-move).
+	KeepBase bool
 }
+
+const KeepBaseWindow = 3 * time.Second
 
 // Plans the hub may name. Anything else is ignored.
 var Plans = map[string]Plan{
@@ -150,6 +156,7 @@ type Runner struct {
 	i        int
 	started  time.Time
 	stepAt   time.Time
+	planAt   time.Time // last StartText
 	encL0    int32
 	encR0    int32
 	lift0    int32

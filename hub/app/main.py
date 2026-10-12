@@ -24,6 +24,8 @@ from nv_budget import Budget
 import names as names_mod
 import intents as intents_mod
 import brain
+import animals
+import dancer as dancer_mod
 import router
 import voice as voice_mod
 import wake as wake_mod
@@ -225,6 +227,8 @@ def _action_events(sensor: dict) -> None:
     ACTION["last"] = {"seq": seq, "result": res, "t": time.time()}
     key = WHY.get(int(res or 0))
     print(f"action result seq={seq} result={res} -> {key or '-'} recent={recent}", flush=True)
+    if key and DANCER.mode:
+        DANCER.stop("robot refused: " + key)  # cliff/pickup/...: no more bars
     if key and recent:
         text = intents_mod.say(key, lang)
         threading.Thread(target=speak_turn, args=(text, "action " + key, b"anim|expr_worried"), daemon=True).start()
@@ -260,6 +264,7 @@ def _button_events(sensor: dict) -> None:
 def button_press() -> str:
     """Backpack press: asleep -> wake (same cue as 'Hey Vector'). Awake: logged only."""
     SCHED.cancel()  # the agent cancels a running plan on the press itself
+    DANCER.stop("button")
     with LOCK:
         BUTTON["presses"] += 1
         BUTTON["last_at"] = time.time()
@@ -296,6 +301,9 @@ def _enqueue_utterance(utt: bytes) -> None:
 
 
 def _on_audio(pcm: bytes, robot_noise: bool = False) -> None:
+    DANCER.feed(pcm)  # beat tracker / hum capture (drops his own playback)
+    if DANCER.capturing():
+        return  # "hum this": the tune is not a voice turn
     with LOCK:
         busy = bool(STATE.get("voice_busy"))
     if busy:
@@ -606,6 +614,7 @@ def session_stop(text: str) -> tuple[str, str, bytes]:
     SESSION.sleep("phrase")
     SSH_CONFIRM["until"] = 0.0
     SCHED.cancel()
+    DANCER.stop("stop vector")
     TURN_OUT.update(show=b"anim|goodnight", action="stop", intent="session_stop")
     print(f"session stop by {text!r} lang={lang}", flush=True)
     return text, reply, VOICE.tts(reply)
@@ -616,7 +625,33 @@ INTENTS_ON = os.environ.get("HUB_INTENTS", "1").strip().lower() not in ("0", "fa
 TURN_OUT = {"show": b"", "action": "", "intent": "", "plan": "", "speak": "", "est": 0.0, "end": b""}
 SCHED = brain.Scheduler()  # plan after speech / speech after plan; cancelled by stop
 PLAN_RUN = {"until": 0.0}  # a sent motion plan is expected to run until then (gestures wait)
-NO_SPEECH_INTENTS = {"intent_imperative_shutup"}
+NO_SPEECH_INTENTS = {"intent_imperative_shutup", "intent_animal_sound"}
+
+
+def play_animal(name: str) -> None:
+    """Robot pet sound + face/gesture (animals.py); after the turn's own output."""
+    plan = animals.gesture(name, _on_charger())
+    pcm = animals.pcm(name, seed=int(time.time()) & 0xFFFF)
+    if plan:
+        TURN_OUT.update(plan=plan, speak="during", est=1.5)
+    SCHED.later(0.25, lambda: queue_cmd(CMD_SPEAK, VOLUME.apply(pcm)))
+    print(f"animal sound {name} {len(pcm) / (2 * RATE):.2f}s", flush=True)
+
+
+def _music_say(key: str, lang: str) -> None:
+    text = intents_mod.say(key, lang)
+    threading.Thread(target=speak_turn, args=(text, "music " + key), daemon=True).start()
+
+
+DANCER = dancer_mod.Dancer(
+    send_plan=lambda p: queue_cmd(CMD_ACTION, p.encode()),
+    on_charger=lambda: _on_charger(),
+    awake=lambda: SESSION.listening(),
+    speaking=lambda: time.time() < SPEAK["until"] + 0.3,
+    say=_music_say,
+    play=lambda pcm: queue_cmd(CMD_SPEAK, VOLUME.apply(pcm)),
+    log=lambda m: print(m, flush=True),
+)
 PHOTO_DIR = os.environ.get("HUB_PHOTO_DIR") or "/app/data/photos"
 
 
@@ -825,9 +860,11 @@ def run_intent(intent) -> str:
         reply = I.say("ssh_unknown", lang) if not sens else I.say("ssh_on" if sens.get("ssh_on") else "ssh_off", lang)
     elif n == "intent_explore_stop":
         SCHED.cancel()
+        DANCER.stop("explore stop")
         action, reply = "explore_stop", I.say("explore_stop", lang)
     elif n == "intent_imperative_shutup":
         SCHED.cancel()
+        DANCER.stop("voice stop")
         PLAN_RUN["until"] = 0.0  # a plan still waiting for the speech to end never starts
         action, show = "stop", "shutup"
     elif n == "intent_system_sleep":
@@ -886,6 +923,16 @@ def run_intent(intent) -> str:
             reply = I.say("cant", lang)
         else:
             reply, show = voice_enroll(name, lang)
+    elif n == "intent_music_dance":
+        key = DANCER.start_dance(lang, wheels=_on_charger() is False)
+        reply = I.say(key, lang) if key else ""
+    elif n == "intent_music_hum":
+        reply = I.say("hum_go", lang)
+        DANCER.start_hum(lang, 0.5)
+    elif n == "intent_animal_sound":
+        name = animals.name_of(intent.arg or intent.text or "") or "dog"
+        play_animal(name)
+        show = ""
     elif n in I.CUBE:
         reply, show = I.say("cube", lang), "cant_help"
     else:  # I.CANT and anything unhandled
@@ -1013,11 +1060,20 @@ def run_brain(d: dict, text: str) -> str:
                 VOLUME.set(int(val))
             elif kind == "stop":
                 SCHED.cancel()
+                DANCER.stop("brain stop")
                 PLAN_RUN["until"] = 0.0
                 queue_cmd(CMD_ACTION, b"stop")
             elif kind == "explore_stop":
                 SCHED.cancel()
                 queue_cmd(CMD_ACTION, b"explore_stop")
+            elif kind == "animal_sound":
+                play_animal(str(val))
+            elif kind == "dance_music":
+                key = DANCER.start_dance(lang, wheels=on is False)
+                if key and not reply:
+                    reply = I.say(key, lang)
+            elif kind == "hum":
+                DANCER.start_hum(lang, 0.5)
             elif kind == "explore":
                 with LOCK:
                     sens = STATE.get("last_sensor") or {}
@@ -1037,7 +1093,7 @@ def run_brain(d: dict, text: str) -> str:
         TURN_OUT["show"] = f"anim|{brain.clip(expr)}".encode()
     if not (plan and plan["plan"]):
         g = brain.gesture_plan(expr, on) if time.time() > PLAN_RUN["until"] else ""
-        if g:
+        if g and not TURN_OUT.get("plan"):  # an animal sound's own gesture wins
             TURN_OUT.update(plan=g, speak="during", est=brain.gesture_seconds(g))
         if brain.clip(end) and end != expr:
             TURN_OUT["end"] = f"anim|{brain.clip(end)}".encode()
@@ -1421,6 +1477,7 @@ class Status(BaseHTTPRequestHandler):
             body["person"]["watch"] = FACE_WATCH.status()
             body["nvidia_budget"] = NV_BUDGET.status()
             body["intents"] = {"enabled": INTENTS_ON, "volume": VOLUME.level, "timer_left_s": TIMER.left()}
+            body["music"] = DANCER.status()
             body["session"] = dict(SESSION.status(), asleep=dict(ASLEEP), chime=WAKE_CHIME, button=dict(BUTTON))
             body["openai_calls"] = dict(Api.CALLS)
             body["speak_left_s"] = round(max(0.0, SPEAK["until"] - time.time()), 2)
@@ -1793,6 +1850,9 @@ def main() -> None:
     print(f"nvidia budget {b['used']}/{b['max']} window={b['window']} rpm={b['rpm']}", flush=True)
     threading.Thread(target=face_loop, daemon=True).start()
     threading.Thread(target=think_loop, daemon=True).start()
+    threading.Thread(target=DANCER.run, daemon=True).start()
+    print(f"music: auto={DANCER.auto} (HUB_MUSIC_AUTO) asleep_bob={dancer_mod._on('HUB_MUSIC_ASLEEP_BOB')} "
+          f"cooldown={dancer_mod._envf('HUB_MUSIC_COOLDOWN_S', 300):.0f}s", flush=True)
     threading.Thread(target=udp_loop, args=(host, udp_sensor), daemon=True).start()
     threading.Thread(target=udp_loop, args=(host, udp_audio), daemon=True).start()
     threading.Thread(target=udp_loop, args=(host, udp_video), daemon=True).start()

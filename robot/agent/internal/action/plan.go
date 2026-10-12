@@ -87,6 +87,10 @@ func ParsePlan(text string) (Plan, []string) {
 		if len(f) == 0 {
 			continue
 		}
+		if f[0] == "keepbase" {
+			p.KeepBase = true
+			continue
+		}
 		if f[0] == "face" && faces >= 2*MaxSteps {
 			continue
 		}
@@ -240,9 +244,11 @@ func (r *Runner) StartText(text string, now time.Time) bool {
 		return r.Start(text, now)
 	}
 	p, notes := ParsePlan(text)
+	keep := p.KeepBase && r.baseSet && !r.planAt.IsZero() && now.Sub(r.planAt) < KeepBaseWindow
 	r.plan, r.i, r.started, r.active, r.notes, r.bumped = p, 0, now, len(p.Steps) > 0, nil, false
-	r.baseSet = false
+	r.baseSet = keep
 	r.stepAt = time.Time{}
+	r.planAt = now
 	for _, n := range notes {
 		r.note(n)
 	}

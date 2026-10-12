@@ -264,6 +264,9 @@ or `curl -X POST localhost:8080/expression -d '{"name":"sad"}'` (`"gesture":true
 | `trick <name>` | dance, nod, fistbump, look_at_me, look_up, look_down, come_here, forward, backup, turn_left/right/around | |
 | `circle <mm>` | hexagon "circle" of that diameter | uses all 12 steps |
 | `explore`, `explore_stop`, `stop`, `volume <1-5>` | handled on the hub | explore needs `explore.enabled` |
+| `animal_sound <dog\|cat\|purr\|bird\|hamster>` | robot pet sound + face + head move (hub) | |
+| `dance_music`, `hum` | dance to the music playing / hum a tune back (hub, see Music) | |
+| `keepbase` (wire only) | gesture deltas keep the previous plan's base if it started < 3 s ago (dance bars) | |
 
 Plus stock commands that need hub state: timers, photo, "my name is", go to / get off the charger, go to
 sleep, how old are you, fist bump.
@@ -291,6 +294,48 @@ Cancel at once: say "stop" / "halt" / "stopp" / "ایست" (fast path, no model 
 Dry run without moving: `curl -X POST localhost:8080/brain -d '{"text":"drive in a square"}'` returns the
 model's decision and the clamped plan. `docker exec -w /app hub python brain_eval.py` runs ~17 EN/DE/FA
 prompts (text only). `HUB_BRAIN=0` in `.env` (+ `make hub`) goes back to the old router + chat path.
+
+## Music and pet sounds
+
+### Dance to the beat (the original DDL feature, rebuilt on the hub)
+Original Vector (wire-os-victor `BeatDetectorComponent` + `BehaviorDanceToTheBeat`): the anim process ran an
+aubio tempo tracker on the mic; a beat counted as "detected" when the last ~9-10 s had >= 6 beats, confidence
+>= 0.18 and a tempo steady within 5 BPM. "Dance to the beat" (or the coordinator, automatically) then played
+`anim_dancebeat_*` moves (headlift, headnod, eyebeat, headliftbody left/right small/med/large, pivot, scoot),
+each started just before the predicted beat, and stopped when the beat was lost during its listening moves.
+
+Here (`hub/app/music.py`, `dancer.py`; numpy only, ~1 ms per 0.5 s of mic audio):
+- Beat tracker: spectral-flux onsets (100 Hz) -> autocorrelation tempo 70-180 BPM -> beat phase. Same
+  "music playing" rule as the original (steady +-5 BPM for 6 s, confidence >= 0.18, audible).
+- Dancing: one bar (4 beats) at a time, sent HUB_DANCE_LEAD_MS early, built from the DDL dancebeat keyframes
+  (head up 4 deg / dip 14 deg / back; lift +13 mm / back; eyes) scaled to the beat; songs over ~133 BPM are
+  danced in half time. Every 4th bar he holds still with curious eyes and re-checks the beat on clean audio
+  (his motors are quiet); beat gone -> stop. Off the charger and asked by voice: a small 8 deg in-place turn
+  per bar. On the charger: head + eyes only (no lift, no wheels). Bars after the first use `keepbase` so the
+  head does not creep.
+- Voice: "dance to the music / to the beat / to this", "tanz zur Musik", "با آهنگ برقص" (plain "dance" is
+  still the short trick dance). He listens up to 12 s ("Let me hear the beat!"); no beat -> "I can't hear a beat."
+- Automatic (HUB_MUSIC_AUTO=1, default): music steady for ~6 s while awake -> he dances (never wheels); asleep
+  -> head nods only, no face, no sound (HUB_MUSIC_ASLEEP_BOB). Cooldown HUB_MUSIC_COOLDOWN_S after each dance.
+- Stops on "stop" / "Stop Vector" / the back button / the music stopping / HUB_DANCE_MAX_S.
+- "Hum this" / "sing along" / "summ mit" / "زمزمه کن": after "Okay, hum it!" he records HUB_HUM_S, pitch-tracks
+  the tune (semitones) and beeps it back in his own voice.
+- Accuracy (tests): click tracks 72-180 BPM all within 3 % (12 of 56 at exactly half tempo above 145 BPM,
+  which is how he dances them anyway); CC0 songs within 1 % (electro 139.6 vs 142-144) and 1 % (rock 115.7 vs
+  117); 0/20 speech-like clips taken for music.
+
+### Pet sounds
+"bark like a dog", "meow like a cat", "purr", "chirp", "squeak like a hamster", "wie macht der Hund",
+"miau mal", "مثل سگ پارس کن", "میو میو کن", "خرخر کن": a robot version of the sound with a face and a head (or
+lift, off the charger) move. The model can use it too: `animal_sound <dog|cat|purr|bird|hamster>` (e.g. "are
+you a dog?" -> "No, but listen:" + a bark). Sounds are synthesised from oscillators and filtered noise in
+`hub/app/animals.py` and run through the voice chain EQ (no recordings, nothing to license). He does not
+listen for real animals (no sound classifier, by choice).
+
+Test audio (`hub/app/testdata/`, only for tests): "New Rock microSong" by Steve Combs and "High Technologic
+Beat Explosion" by Loyalty Freak Music, both CC0 (Wikimedia Commons), 12 s excerpts at 16 kHz.
+
+Undo: HUB_MUSIC_AUTO=0 stops automatic dancing; the voice commands stay. Reverting the commit removes all of it.
 
 ## Back touch (petting)
 

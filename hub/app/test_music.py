@@ -1,0 +1,286 @@
+"""Dance to the beat, hum along, pet sounds (music.py, dancer.py, animals.py)."""
+import os
+import unittest
+import wave
+
+import numpy as np
+
+import animals
+import brain
+import intents
+import music
+from dancer import Dancer
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+SR = 16000
+
+
+def clicks(bpm, secs=10.0, start=0.137, noise=0.003, seed=0):
+    rng = np.random.default_rng(seed)
+    x = rng.normal(0, noise, int(secs * SR))
+    t, per = start, 60.0 / bpm
+    while t < secs - 0.05:
+        i, n = int(t * SR), 400
+        x[i:i + n] += 0.6 * np.exp(-np.arange(n) / 60) * np.sin(2 * np.pi * 1500 * np.arange(n) / SR)
+        t += per
+    return (np.clip(x, -1, 1) * 32767).astype("<i2").tobytes()
+
+
+def speechish(secs=10.0, seed=1):
+    """Irregular voiced syllables (no steady beat): stands in for talk / TV / his TTS."""
+    rng = np.random.default_rng(seed)
+    x = rng.normal(0, 0.003, int(secs * SR))
+    t = 0.1
+    while t < secs - 0.4:
+        d = rng.uniform(0.08, 0.3)
+        n = int(d * SR)
+        f0 = rng.uniform(110, 220)
+        tt = np.arange(n) / SR
+        x[int(t * SR):int(t * SR) + n] += 0.3 * np.sin(2 * np.pi * f0 * tt) * np.hanning(n)
+        t += d + rng.exponential(0.12)
+    return (np.clip(x, -1, 1) * 32767).astype("<i2").tobytes()
+
+
+def wav(name):
+    w = wave.open(os.path.join(HERE, "testdata", name))
+    return w.readframes(w.getnframes())
+
+
+class Intents(unittest.TestCase):
+    def test_phrases(self):
+        cases = {
+            "intent_music_dance": ["dance to the music", "dance to the beat", "dance to this", "tanz zur Musik",
+                                   "tanz zum Beat", "با آهنگ برقص", "با این آهنگ برقص"],
+            "intent_music_hum": ["hum this", "sing along", "sing it back", "summ mit", "sing mit", "زمزمه کن", "اینو زمزمه کن"],
+            "intent_animal_sound": ["bark like a dog", "meow like a cat", "purr", "what does the cat say", "chirp like a bird",
+                                    "wie macht der Hund", "miau mal", "schnurr mal", "مثل سگ پارس کن", "میو میو کن", "خرخر کن"],
+            "intent_imperative_dance": ["dance", "tanz", "برقص"],
+        }
+        for want, phrases in cases.items():
+            for p in phrases:
+                m = intents.match(p)
+                self.assertIsNotNone(m, p)
+                self.assertEqual(m.name, want, p)
+
+    def test_animal_names(self):
+        for t, want in {"bark like a dog": "dog", "wie macht der hund": "dog", "مثل سگ پارس کن": "dog",
+                        "میو میو کن": "cat", "meow": "cat", "purr": "purr", "خرخر": "purr", "vogel": "bird",
+                        "squeak like a hamster": "hamster"}.items():
+            self.assertEqual(animals.name_of(t), want, t)
+
+
+class Beat(unittest.TestCase):
+    def test_click_tracks(self):
+        for bpm in (80, 100, 120, 128, 150, 170):
+            b = music.BeatTracker()
+            b.push(clicks(bpm))
+            got, conf, _ = b.tempo()
+            self.assertLess(abs(got - bpm) / bpm, 0.02, (bpm, got))
+            self.assertGreater(conf, 0.5)
+
+    def test_phase_predicts_next_click(self):
+        bpm, start, secs = 120, 0.137, 8.0
+        b = music.BeatTracker()
+        b.push(clicks(bpm, secs, start))
+        _, beats = b.next_beats()
+        per = 60 / bpm
+        nxt = secs + beats[0]
+        err = ((nxt - start) / per - round((nxt - start) / per)) * per
+        self.assertLess(abs(err), 0.05, err)
+
+    def test_real_music(self):
+        # CC0 clips (testdata/README): librosa reference 117 and 144 BPM
+        for f, ref, tol in (("music_rock_cc0.wav", 117.2, 0.06), ("music_electro_cc0.wav", 142.0, 0.05)):
+            b = music.BeatTracker()
+            b.push(wav(f))
+            got, conf, _ = b.tempo()
+            self.assertLess(abs(got - ref) / ref, tol, (f, got))
+            self.assertGreater(conf, 0.3, f)
+
+    def _gate(self, pcm):
+        b, g = music.BeatTracker(), music.MusicGate()
+        playing = False
+        for i in range(0, len(pcm), SR):  # 0.5 s steps
+            b.push(pcm[i:i + SR])
+            bpm, conf, _ = b.tempo()
+            playing = g.update(bpm, conf, float(np.median(b.rms[-200:])) if len(b.rms) else 0)
+        return playing
+
+    def test_gate_music_vs_not(self):
+        self.assertTrue(self._gate(wav("music_electro_cc0.wav")))
+        self.assertTrue(self._gate(clicks(110, 12)))
+        self.assertFalse(self._gate(speechish(12)))
+        self.assertFalse(self._gate(np.random.default_rng(2).normal(0, 300, 12 * SR).astype("<i2").tobytes()))
+        self.assertFalse(self._gate(bytes(12 * SR * 2)))
+
+
+class Bars(unittest.TestCase):
+    def steps(self, plan):
+        return [s for s in plan[5:].split(";") if s]
+
+    def test_caps_and_safety(self):
+        import random
+        for bpm in (70, 100, 128, 175):
+            for seed in range(20):
+                rng = random.Random(seed)
+                p, dur = music.dance_bar(bpm, on_charger=True, wheels=True, rng=rng)
+                st = self.steps(p)
+                moves = [s for s in st if not s.startswith("face")]
+                self.assertLessEqual(len(moves), 12)
+                self.assertFalse(any(s.startswith(("liftmm", "turn")) for s in st), p)  # charger: head + eyes only
+                p, _ = music.dance_bar(bpm, on_charger=False, wheels=False, rng=rng)
+                self.assertFalse(any(s.startswith("turn") for s in self.steps(p)), p)
+                p, _ = music.dance_bar(bpm, on_charger=False, wheels=False, head_only=True, rng=rng)
+                self.assertTrue(all(s.startswith(("face", "headdeg")) for s in self.steps(p)), p)
+                self.assertGreater(dur, 1.0)
+
+    def test_floor_bar_can_turn_small(self):
+        import random
+        p, _ = music.dance_bar(120, on_charger=False, wheels=True, rng=random.Random(1))
+        turns = [abs(float(s.split()[1])) for s in self.steps(p) if s.startswith("turn")]
+        self.assertTrue(turns and max(turns) <= 10)
+
+    def test_bar_fits_the_beat(self):
+        import random
+        p, dur = music.dance_bar(120, on_charger=True, wheels=False, rng=random.Random(3))
+        ms = sum(int(s.split()[-1]) for s in self.steps(p) if s.startswith(("headdeg", "liftmm", "wait")))
+        self.assertLess(abs(ms / 1000 - dur), 0.5, (ms, dur))
+
+
+class FakeClock:
+    def __init__(self):
+        self.t = 1000.0
+
+    def __call__(self):
+        return self.t
+
+
+def make(awake=True, on_charger=True, speaking=lambda: False):
+    clk = FakeClock()
+    sent, said, played = [], [], []
+    d = Dancer(send_plan=sent.append, on_charger=lambda: on_charger, awake=lambda: awake, speaking=speaking,
+               say=lambda k, l: said.append(k), play=played.append, log=lambda m: None, clock=clk,
+               schedule=lambda delay, fn: fn())
+    return d, clk, sent, said, played
+
+
+def stream(d, clk, pcm, chunk=1600):
+    for i in range(0, len(pcm), chunk * 2):
+        d.feed(pcm[i:i + chunk * 2])
+        clk.t += chunk / SR
+        d.tick()
+
+
+class DancerFlow(unittest.TestCase):
+    def setUp(self):
+        os.environ.pop("HUB_MUSIC_AUTO", None)
+
+    def test_auto_dance_then_stops_when_music_stops_then_cooldown(self):
+        d, clk, sent, *_ = make()
+        stream(d, clk, clicks(120, 20))
+        self.assertEqual(d.mode, "auto")
+        bars = [p for p in sent if "headdeg" in p or "wait" in p]
+        self.assertGreaterEqual(len(bars), 3)
+        self.assertTrue(all("turn" not in p for p in sent))  # auto: never wheels
+        stream(d, clk, bytes(SR * 2 * 12))  # silence
+        self.assertEqual(d.mode, "")
+        n = len(sent)
+        stream(d, clk, clicks(120, 15))  # music again within the cooldown
+        self.assertEqual(d.mode, "")
+        self.assertEqual(len(sent), n)
+
+    def test_auto_flag_off(self):
+        os.environ["HUB_MUSIC_AUTO"] = "0"
+        try:
+            d, clk, sent, *_ = make()
+            stream(d, clk, clicks(120, 15))
+            self.assertEqual(d.mode, "")
+            self.assertEqual(sent, [])
+        finally:
+            os.environ.pop("HUB_MUSIC_AUTO")
+
+    def test_asleep_head_bob_only(self):
+        d, clk, sent, said, played = make(awake=False, on_charger=False)
+        stream(d, clk, clicks(100, 16))
+        self.assertEqual(d.mode, "asleep")
+        for p in sent:
+            self.assertTrue(all(s.startswith(("headdeg", "wait", "keepbase")) or s == "" for s in p[5:].split(";")), p)
+        self.assertEqual((said, played), ([], []))
+
+    def test_voice_dance_listens_then_no_beat(self):
+        d, clk, sent, said, _ = make()
+        self.assertEqual(d.start_dance("en", wheels=True), "dance_listen")
+        stream(d, clk, speechish(14))
+        self.assertEqual(d.mode, "")
+        self.assertIn("dance_nobeat", said)
+
+    def test_voice_dance_off_charger_turns_small_and_stop(self):
+        d, clk, sent, *_ = make(on_charger=False)
+        os.environ["HUB_MUSIC_AUTO"] = "0"
+        try:
+            d.start_dance("en", wheels=True)
+            stream(d, clk, clicks(120, 20))
+            self.assertEqual(d.mode, "dance")
+            self.assertTrue(any("turn" in p for p in sent))
+            self.assertTrue(any(p.startswith("plan:keepbase;") for p in sent))
+            self.assertTrue(d.stop("button"))
+            n = len(sent)
+            stream(d, clk, clicks(120, 3))
+            self.assertEqual(len(sent), n)
+        finally:
+            os.environ.pop("HUB_MUSIC_AUTO")
+
+    def test_own_playback_ignored(self):
+        d, clk, sent, *_ = make(speaking=lambda: True)
+        stream(d, clk, clicks(120, 15))
+        self.assertEqual((d.mode, sent), ("", []))
+
+    def test_hum_round_trip(self):
+        d, clk, sent, said, played = make()
+        d.start_hum("en", 0.0)
+        notes = [(392.0, 0.4), (440.0, 0.4), (523.25, 0.6), (440.0, 0.4)]
+        t = np.concatenate([0.4 * np.sin(2 * np.pi * f * np.arange(int(s * SR)) / SR) for f, s in notes])
+        pcm = (t * 32767).astype("<i2").tobytes() + bytes(SR * 2 * 4)
+        stream(d, clk, pcm)
+        self.assertEqual(d.mode, "")
+        self.assertEqual(len(played), 1)
+        got = [round(h) for h, s in music.hum_notes((t * 32767).astype("<i2").tobytes()) if h > 0]
+        self.assertEqual(got, [392, 440, 523, 440])
+
+    def test_hum_silence(self):
+        d, clk, sent, said, played = make()
+        d.start_hum("en", 0.0)
+        stream(d, clk, bytes(SR * 2 * 7))
+        self.assertEqual((said, played), (["hum_none"], []))
+
+
+class Pets(unittest.TestCase):
+    def test_synth(self):
+        for n in animals.NAMES:
+            y = animals.synth(n)
+            self.assertGreater(len(y) / SR, 0.3, n)
+            self.assertLess(len(y) / SR, 2.0, n)
+            self.assertLessEqual(float(np.max(np.abs(y))), 1.0)
+            self.assertGreater(float(np.max(np.abs(y))), 0.5)
+
+    def test_gestures(self):
+        for n in animals.NAMES:
+            on = animals.gesture(n, True)
+            self.assertTrue(on.startswith("plan:face "), n)
+            self.assertNotIn("liftmm", on)
+        self.assertIn("liftmm", animals.gesture("hamster", False))
+
+    def test_brain_tool(self):
+        p = brain.build_plan(["animal_sound dog", "expression happy"], "", "", True)
+        self.assertIn(("animal_sound", "dog"), p["hub"])
+        p = brain.build_plan(["animal_sound bark"], "", "", True)
+        self.assertIn(("animal_sound", "dog"), p["hub"])
+        p = brain.build_plan(["animal_sound dragon"], "", "", True)
+        self.assertEqual(p["hub"], [])
+        p = brain.build_plan(["dance_music"], "", "", True)
+        self.assertIn(("dance_music", None), p["hub"])
+        self.assertIn("animal_sound", brain.RULES)
+
+
+if __name__ == "__main__":
+    unittest.main()
