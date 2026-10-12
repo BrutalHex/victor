@@ -187,6 +187,7 @@ def _ingest_vct1(buf: bytes, src: str = "") -> None:
             if REC["active"]:
                 REC["buf"] += payload
                 return
+        AUDIO_META.update(t_ns=hdr.t_ns, seq=hdr.seq)
         _on_audio(payload, bool(hdr.flags & FLAG_ROBOT_NOISE))
         return
     if hdr.type == TYPE_VIDEO:
@@ -302,12 +303,13 @@ def _enqueue_utterance(utt: bytes) -> None:
 
 
 DEBUG_AUDIO = os.environ.get("HUB_DEBUG_AUDIO", "0").strip().lower() in ("1", "true", "on", "yes")
-MIC_RING: "collections.deque[tuple[float, bytes]]" = collections.deque(maxlen=400)  # ~40 s of Vector-mic audio
+AUDIO_META: dict = {}
+MIC_RING: "collections.deque[tuple[float, bytes]]" = collections.deque(maxlen=6000)  # >= 40 s of Vector-mic audio (chunks are small)
 
 
 def _on_audio(pcm: bytes, robot_noise: bool = False) -> None:
     if DEBUG_AUDIO:
-        MIC_RING.append((time.time(), pcm))
+        MIC_RING.append((time.time(), pcm, AUDIO_META.get("t_ns", 0), AUDIO_META.get("seq", 0), robot_noise))
     DANCER.feed(pcm)  # beat tracker / hum capture (drops his own playback)
     if DANCER.capturing():
         return  # "hum this": the tune is not a voice turn
@@ -1493,10 +1495,16 @@ class Status(BaseHTTPRequestHandler):
         if path.startswith("/debug/") and DEBUG_AUDIO:
             q = parse_qs(urlparse(self.path).query)
             arg = (q.get("name") or q.get("secs") or [""])[0]
+            if path == "/debug/mic.json":
+                q["meta"], path = ["1"], "/debug/mic.wav"
             if path == "/debug/mic.wav":  # Vector-mic audio of the last N s (+ wall clock of the first sample)
                 secs = min(40.0, float(arg or 10))
                 now = time.time()
-                chunks = [(t, c) for t, c in list(MIC_RING) if t >= now - secs]
+                ring = [m for m in list(MIC_RING) if m[0] >= now - secs]
+                if q.get("meta"):
+                    self._json({"chunks": [[m[0], m[2], m[3], len(m[1]), m[4]] for m in ring]})
+                    return
+                chunks = [(m[0], m[1]) for m in ring]
                 pcm = b"".join(c for _, c in chunks)
                 body = _wav_wrap(pcm)
                 self.send_response(200)
