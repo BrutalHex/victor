@@ -310,7 +310,7 @@ MIC_RING: "collections.deque[tuple[float, bytes]]" = collections.deque(maxlen=60
 def _on_audio(pcm: bytes, robot_noise: bool = False) -> None:
     if DEBUG_AUDIO:
         MIC_RING.append((time.time(), pcm, AUDIO_META.get("t_ns", 0), AUDIO_META.get("seq", 0), robot_noise))
-    DANCER.feed(pcm)  # beat tracker / hum capture (drops his own playback)
+    DANCER.feed(pcm, robot_noise)  # beat tracker / hum capture (drops his own playback)
     if DANCER.capturing():
         return  # "hum this": the tune is not a voice turn
     with LOCK:

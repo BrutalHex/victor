@@ -28,6 +28,9 @@ HOP = 160  # 10 ms
 FPS = SR // HOP
 WIN = 512
 MIN_BPM, MAX_BPM = 70.0, 180.0
+# flux frames register an onset ~27 ms late (window + local-mean filter),
+# measured on click tracks 90-150 BPM (std 5 ms)
+ONSET_DELAY_S = 0.027
 
 
 class BeatTracker:
@@ -40,7 +43,11 @@ class BeatTracker:
         self._prev = None
         self._win = np.hanning(WIN)
 
-    def push(self, pcm: bytes | np.ndarray) -> None:
+    def push(self, pcm: bytes | np.ndarray, noisy: bool = False) -> None:
+        """noisy: the robot flagged its own motors in this chunk. Measured
+        12 Oct: his head motors were 5-20x louder at the mic than the music and
+        dropped the beat confidence from 0.6 to 0.25, so those frames are
+        clamped to the recent median onset level instead of counted."""
         x = np.frombuffer(pcm, dtype="<i2").astype(np.float32) / 32768 if isinstance(pcm, (bytes, bytearray)) else pcm
         x = np.concatenate([self._tail, x])
         n = (len(x) - WIN) // HOP + 1
@@ -53,6 +60,8 @@ class BeatTracker:
         prev = np.vstack([self._prev[None, :] if self._prev is not None else mag[:1], mag[:-1]])
         flux = np.maximum(0, mag - prev).sum(axis=1)
         self._prev = mag[-1]
+        if noisy and len(self.env) > FPS:
+            flux = np.minimum(flux, float(np.median(self.env[-2 * FPS:])))
         self.env = np.concatenate([self.env, flux])[-self.keep:]
         self.rms = np.concatenate([self.rms, np.sqrt((fr ** 2).mean(axis=1))])[-self.keep:]
         self.frames += n
@@ -103,7 +112,7 @@ class BeatTracker:
         if bpm <= 0:
             return 0.0, []
         per = 60.0 / bpm
-        first = per - (ph / FPS) % per
+        first = (per - (ph / FPS) % per - ONSET_DELAY_S) % per
         return bpm, [first + k * per for k in range(n)]
 
     def on_beat_ratio(self, bpm: float, secs: float = 2.0) -> float:
@@ -125,7 +134,7 @@ class MusicGate:
     """Original rule: steady tempo (+-5 BPM, octave errors folded) over the
     last `need_s`, confidence >= thr every time, audible level."""
 
-    def __init__(self, need_s: float = 6.0, thr: float = 0.18, min_rms: float = 0.002, step_s: float = 0.5):
+    def __init__(self, need_s: float = 6.0, thr: float = 0.18, min_rms: float = 0.0008, step_s: float = 0.5):
         self.need = max(1, int(need_s / step_s))
         self.thr, self.min_rms = thr, min_rms
         self.hist: list[tuple[float, float, float]] = []
@@ -164,13 +173,19 @@ class MusicGate:
 #   headliftbody_left/right_small: + TURN_IN_PLACE ~6 deg
 #   eyebeat: eyes only
 # Here as deltas from where the dance started; times are fractions of a beat.
+# Each move starts with its accent (the DDL dip / lift bump) so the accent can
+# be timed to land ON the beat: the bar is sent ACCENT_FRAC beats early. Live
+# 12 Oct: a +4 deg "up" step never moved (head 5 of 33 counts in 150 ms) and
+# put the dip half a beat late, so it is gone. Moves use <= 0.85 beat so a bar
+# never overruns the next one (it re-anchors to the beat grid each bar).
+ACCENT_FRAC = 0.30
 MOVES = {
-    "headlift": [("headdeg", 4, 0.30), ("liftmm", 13, 0.35), ("headdeg", -14, 0.20), ("liftmm", 0.5, 0.15)],
-    "headnod": [("headdeg", 4, 0.30), ("headdeg", -14, 0.20), ("headdeg", 0.3, 0.50)],
-    "liftbeat": [("liftmm", 13, 0.45), ("liftmm", 0.5, 0.55)],
-    "body_left": [("turn", 8, 0.6), ("headdeg", -8, 0.2), ("headdeg", 0.3, 0.2)],
-    "body_right": [("turn", -8, 0.6), ("headdeg", -8, 0.2), ("headdeg", 0.3, 0.2)],
-    "eyebeat": [("wait", 0, 1.0)],
+    "headlift": [("headdeg", -12, 0.30), ("liftmm", 13, 0.25), ("headdeg", 0.3, 0.15), ("liftmm", 0.5, 0.15)],
+    "headnod": [("headdeg", -12, 0.30), ("headdeg", 0.3, 0.55)],
+    "liftbeat": [("liftmm", 13, 0.30), ("liftmm", 0.5, 0.55)],
+    "body_left": [("headdeg", -8, 0.30), ("turn", 8, 0.35), ("headdeg", 0.3, 0.2)],
+    "body_right": [("headdeg", -8, 0.30), ("turn", -8, 0.35), ("headdeg", 0.3, 0.2)],
+    "eyebeat": [("wait", 0, 0.85)],
 }
 EYES = ["expr_happy", "expr_excited", "expr_love", "expr_proud"]
 

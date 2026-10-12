@@ -166,8 +166,8 @@ def make(awake=True, on_charger=True, speaking=lambda: False):
 
 def stream(d, clk, pcm, chunk=1600):
     for i in range(0, len(pcm), chunk * 2):
+        clk.t += chunk / SR  # a chunk arrives when its last sample is captured
         d.feed(pcm[i:i + chunk * 2])
-        clk.t += chunk / SR
         d.tick()
 
 
@@ -284,3 +284,35 @@ class Pets(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class Timing(unittest.TestCase):
+    def test_accent_lands_on_the_beat_and_bars_are_contiguous(self):
+        os.environ["HUB_MUSIC_AUTO"] = "0"
+        try:
+            clk = FakeClock()
+            t0 = clk.t
+            sends = []
+            d = Dancer(send_plan=lambda p: None, on_charger=lambda: True, awake=lambda: True, speaking=lambda: False,
+                       say=lambda k, l: None, play=lambda p: None, log=lambda m: None, clock=clk,
+                       schedule=lambda delay, fn: sends.append(clk.t + delay))
+            d.start_dance("en", wheels=False)
+            stream(d, clk, clicks(120, 24, start=0.137))
+            self.assertGreaterEqual(len(sends), 5)
+            per = 0.5
+            for s in sends:
+                accent = s + 0.06 + 0.30 * per  # HUB_DANCE_LEAD_MS + accent
+                ph = ((accent - t0 - 0.137) / per) % 1.0
+                err = min(ph, 1 - ph) * per
+                self.assertLess(err, 0.04, (s, err))
+            gaps = np.diff(sends)
+            self.assertTrue(all(abs(g - 4 * per) < 0.03 for g in gaps), gaps)
+        finally:
+            os.environ.pop("HUB_MUSIC_AUTO")
+
+    def test_motor_noise_frames_do_not_fake_a_beat(self):
+        b = music.BeatTracker()
+        pcm = speechish(10)
+        for i in range(0, len(pcm), 3200):
+            b.push(pcm[i:i + 3200], noisy=True)
+        self.assertLess(b.tempo()[1], 0.3)

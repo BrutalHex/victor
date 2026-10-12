@@ -62,6 +62,7 @@ class Dancer:
         self.schedule = schedule or (lambda d, fn: threading.Timer(d, fn).start())
         self.listen_check_at = 0.0
         self._beat_s = 0.0
+        self.audio_end = 0.0  # hub time the newest tracked audio arrived
 
     # -- config (read live so .env edits + restart apply)
     @property
@@ -72,11 +73,11 @@ class Dancer:
     def capturing(self) -> bool:
         return self.mode == "hum" and self.clock() >= self.hum_from
 
-    def feed(self, pcm: bytes) -> None:
+    def feed(self, pcm: bytes, noisy: bool = False) -> None:
         if self.speaking():
             return
         try:
-            self.q.put_nowait(pcm)
+            self.q.put_nowait((pcm, noisy, self.clock()))
         except queue.Full:
             pass
 
@@ -125,10 +126,17 @@ class Dancer:
         _, beats = self.bt.next_beats()
         if not beats:
             return
-        lead = _envf("HUB_DANCE_LEAD_MS", 250) / 1000
-        start = now + beats[0] - lead
-        while start < now:
-            start += 60.0 / bpm
+        # beats are relative to the end of the tracked audio (its arrival time,
+        # not this tick). The accent (first step) must END on the beat: send
+        # LEAD (audio + command latency, measured) + the accent time early.
+        per = 60.0 / bpm
+        if per < 0.45:
+            per *= 2  # dance_bar dances fast songs in half time
+        lead = _envf("HUB_DANCE_LEAD_MS", 60) / 1000 + music.ACCENT_FRAC * per
+        ref = self.audio_end or now
+        start = ref + beats[0] - lead
+        while start < now + 0.02:
+            start += per
         listen = self.bar_n % 4 == 3
         self._beat_s = 60.0 / bpm
         if listen:
@@ -144,7 +152,7 @@ class Dancer:
         delay = max(0.0, start - now)
         mode = self.mode
         self.schedule(delay, lambda: self._send_if(mode, plan))
-        self.next_bar = start + dur - 0.05
+        self.next_bar = start + dur - 0.15  # plan the next bar before its send time
         self.bar_n += 1
         self.listen_check_at = start + dur - 0.1 if listen else 0.0
 
@@ -158,10 +166,11 @@ class Dancer:
         n = 0
         while True:
             try:
-                pcm = self.q.get_nowait()
+                pcm, noisy, t_in = self.q.get_nowait()
             except queue.Empty:
                 break
-            self.bt.push(pcm)
+            self.bt.push(pcm, noisy)
+            self.audio_end = t_in
             n += len(pcm) // 2
             if self.capturing():
                 if not self.hum_buf:
