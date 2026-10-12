@@ -144,7 +144,7 @@ class Bars(unittest.TestCase):
         import random
         p, dur = music.dance_bar(120, on_charger=True, wheels=False, rng=random.Random(3))
         ms = sum(int(s.split()[-1]) for s in self.steps(p) if s.startswith(("headdeg", "liftmm", "wait")))
-        self.assertLess(abs(ms / 1000 - dur), 0.5, (ms, dur))
+        self.assertLessEqual(ms / 1000, dur, (ms, dur))  # never overruns its beats
 
 
 class FakeClock:
@@ -301,12 +301,28 @@ class Timing(unittest.TestCase):
             self.assertGreaterEqual(len(sends), 5)
             per = 0.5
             for s in sends:
-                accent = s + 0.06 + 0.30 * per  # HUB_DANCE_LEAD_MS + accent
+                accent = s + 0.06 + music.ACCENT_S  # HUB_DANCE_LEAD_MS + accent
                 ph = ((accent - t0 - 0.137) / per) % 1.0
                 err = min(ph, 1 - ph) * per
                 self.assertLess(err, 0.04, (s, err))
             gaps = np.diff(sends)
-            self.assertTrue(all(abs(g - 4 * per) < 0.03 for g in gaps), gaps)
+            self.assertTrue(all(abs(g - per) < 0.015 for g in gaps), gaps)  # one plan per beat, no skips
+        finally:
+            os.environ.pop("HUB_MUSIC_AUTO")
+
+    def test_fast_song_half_time_bars_back_to_back(self):
+        os.environ["HUB_MUSIC_AUTO"] = "0"
+        try:
+            clk = FakeClock()
+            sends = []
+            d = Dancer(send_plan=lambda p: None, on_charger=lambda: True, awake=lambda: True, speaking=lambda: False,
+                       say=lambda k, l: None, play=lambda p: None, log=lambda m: None, clock=clk,
+                       schedule=lambda delay, fn: sends.append(clk.t + delay))
+            d.start_dance("en", wheels=False)
+            stream(d, clk, clicks(140, 24))
+            gaps = np.diff(sends)
+            half = 2 * 60 / 140  # half time
+            self.assertTrue(len(gaps) >= 8 and all(abs(g - half) < 0.015 for g in gaps), gaps)
         finally:
             os.environ.pop("HUB_MUSIC_AUTO")
 

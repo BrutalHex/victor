@@ -62,6 +62,7 @@ class Dancer:
         self.schedule = schedule or (lambda d, fn: threading.Timer(d, fn).start())
         self.listen_check_at = 0.0
         self._beat_s = 0.0
+        self.intended = 0.0
         self.audio_end = 0.0  # hub time the newest tracked audio arrived
 
     # -- config (read live so .env edits + restart apply)
@@ -110,6 +111,8 @@ class Dancer:
             if was in ("dance", "auto", "asleep"):
                 self.cool_until = self.clock() + _envf("HUB_MUSIC_COOLDOWN_S", 300)
             self.mode = ""
+        if was in ("dance", "auto", "asleep"):
+            self.send_plan("plan:keepbase;headdeg 0 400")  # back to where the dance started
         if was:
             self.log(f"music stop {was}: {why}")
         return bool(was)
@@ -119,42 +122,46 @@ class Dancer:
         self.mode, self.bar_n = mode, 0
         self.until = self.clock() + _envf("HUB_DANCE_MAX_S", 90.0 if mode == "dance" else 45.0)
         self.next_bar = 0.0
+        self.intended = 0.0
         self.log(f"music {mode} start bpm={self.gate.bpm():.1f}")
+        self.send_plan(f"plan:headdeg {music.POSE_DEG} 300")  # dancing pose; its start is the base
 
     def _bar(self, now: float) -> None:
         bpm = self.gate.bpm() or self.bt.tempo()[0]
         _, beats = self.bt.next_beats()
-        if not beats:
+        if not beats or bpm <= 0:
             return
-        # beats are relative to the end of the tracked audio (its arrival time,
-        # not this tick). The accent (first step) must END on the beat: send
-        # LEAD (audio + command latency, measured) + the accent time early.
-        per = 60.0 / bpm
-        if per < 0.45:
-            per *= 2  # dance_bar dances fast songs in half time
-        lead = _envf("HUB_DANCE_LEAD_MS", 60) / 1000 + music.ACCENT_FRAC * per
+        # beats are relative to the end of the tracked audio (its arrival
+        # time). Each beat is its own plan whose first step (the accent) must
+        # END on the beat: sent LEAD (audio + command latency, measured) +
+        # ACCENT_S early.
+        per = music.beat_period(bpm)
+        lead = _envf("HUB_DANCE_LEAD_MS", 60) / 1000 + music.ACCENT_S
         ref = self.audio_end or now
+        beat = 60.0 / bpm
         start = ref + beats[0] - lead
         while start < now + 0.02:
-            start += per
+            start += beat
+        if self.bar_n and self.intended:
+            # keep bars back to back: the grid beat nearest to where this bar
+            # should start (prev start + its length), never in the past
+            k = round((self.intended - start) / beat)
+            cand = start + max(0, k) * beat
+            if abs(cand - self.intended) <= beat / 2 + 1e-6:
+                start = cand
         listen = self.bar_n % 4 == 3
-        self._beat_s = 60.0 / bpm
-        if listen:
-            plan, dur = "plan:face expr_curious;wait %d" % int(4 * 60000 / bpm), 4 * 60.0 / bpm
-        else:
-            on = self.on_charger()
-            plan, dur = music.dance_bar(bpm, on_charger=on, wheels=self.wheels and self.mode == "dance",
-                                        head_only=self.mode == "asleep", rng=self.rng)
-            if self.mode == "asleep":
-                plan = "plan:" + ";".join(s for s in plan[5:].split(";") if not s.startswith("face"))
-        if self.bar_n > 0:
-            plan = plan.replace("plan:", "plan:keepbase;", 1)
-        delay = max(0.0, start - now)
+        self._beat_s = per
+        plans = music.dance_beats(bpm, on_charger=self.on_charger(), wheels=self.wheels and self.mode == "dance",
+                                  head_only=self.mode == "asleep", rng=self.rng, listen=listen)
         mode = self.mode
-        self.schedule(delay, lambda: self._send_if(mode, plan))
+        for k, plan in enumerate(plans):
+            delay = max(0.0, start + k * per - now)
+            self.schedule(delay, (lambda p=plan: self._send_if(mode, p)))
+        dur = per * len(plans)
         self.next_bar = start + dur - 0.15  # plan the next bar before its send time
+        self.intended = start + dur
         self.bar_n += 1
-        self.listen_check_at = start + dur - 0.1 if listen else 0.0
+        self.listen_check_at = start + dur - 0.3 if listen else 0.0  # before the next bar is planned
 
     def _send_if(self, mode: str, plan: str) -> None:
         if self.mode == mode and mode:
@@ -193,7 +200,7 @@ class Dancer:
                 r = self.bt.on_beat_ratio(self.gate.bpm())
                 if r < _envf("HUB_DANCE_BEAT_RATIO", 1.25):
                     self.stop(f"beat lost (ratio {r:.2f})")
-                    self.send_plan("plan:face expr_happy;headdeg 0 400")
+                    self.send_plan("plan:keepbase;face expr_happy;headdeg 0 400")
             elif now >= self.next_bar:
                 self._bar(now)
         if self.mode == "hum" and now >= self.until:

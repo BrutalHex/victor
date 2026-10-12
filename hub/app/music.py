@@ -173,61 +173,71 @@ class MusicGate:
 #   headliftbody_left/right_small: + TURN_IN_PLACE ~6 deg
 #   eyebeat: eyes only
 # Here as deltas from where the dance started; times are fractions of a beat.
-# Each move starts with its accent (the DDL dip / lift bump) so the accent can
-# be timed to land ON the beat: the bar is sent ACCENT_FRAC beats early. Live
-# 12 Oct: a +4 deg "up" step never moved (head 5 of 33 counts in 150 ms) and
-# put the dip half a beat late, so it is gone. Moves use <= 0.85 beat so a bar
-# never overruns the next one (it re-anchors to the beat grid each bar).
-ACCENT_FRAC = 0.30
+# Live 12 Oct (robot log): gesture steps end when the target is reached
+# (12 deg dip in 176-199 ms), not at their nominal ms, so a multi-beat plan
+# drifts within the bar; a +4 deg "up" step from rest never moved (5 of 33
+# counts). So: one tiny plan PER BEAT, sent at its own time, each starting with
+# the accent (dip / lift bump). Dancing pose: head up POSE_DEG first (the DDL
+# clips hold the head ~30 deg up and dip to ~7), dips go from the pose.
+ACCENT_S = 0.18  # measured time for the accent step to arrive
+POSE_DEG = 16
+DIP_DEG = POSE_DEG - 12
 MOVES = {
-    "headlift": [("headdeg", -12, 0.30), ("liftmm", 13, 0.25), ("headdeg", 0.3, 0.15), ("liftmm", 0.5, 0.15)],
-    "headnod": [("headdeg", -12, 0.30), ("headdeg", 0.3, 0.55)],
-    "liftbeat": [("liftmm", 13, 0.30), ("liftmm", 0.5, 0.55)],
-    "body_left": [("headdeg", -8, 0.30), ("turn", 8, 0.35), ("headdeg", 0.3, 0.2)],
-    "body_right": [("headdeg", -8, 0.30), ("turn", -8, 0.35), ("headdeg", 0.3, 0.2)],
-    "eyebeat": [("wait", 0, 0.85)],
+    "headnod": [("headdeg", DIP_DEG, 0.30), ("headdeg", POSE_DEG, 0.40)],
+    "headlift": [("headdeg", DIP_DEG, 0.30), ("liftmm", 13, 0.20), ("headdeg", POSE_DEG, 0.20), ("liftmm", 0.5, 0.20)],
+    "liftbeat": [("liftmm", 13, 0.30), ("liftmm", 0.5, 0.40)],
+    "body_left": [("headdeg", DIP_DEG + 4, 0.30), ("turn", 8, 0.35), ("headdeg", POSE_DEG, 0.20)],
+    "body_right": [("headdeg", DIP_DEG + 4, 0.30), ("turn", -8, 0.35), ("headdeg", POSE_DEG, 0.20)],
+    "eyebeat": [],
 }
 EYES = ["expr_happy", "expr_excited", "expr_love", "expr_proud"]
 
 
-def dance_bar(bpm: float, *, on_charger: bool | None, wheels: bool, lift: bool = True, head_only: bool = False,
-              rng: random.Random | None = None, beats: int = 4) -> tuple[str, float]:
-    """One bar as 'plan:...' (<= 12 movement steps) and its length in s.
-    on_charger (or unknown) -> no lift, no wheels; head_only -> nods only."""
-    rng = rng or random.Random()
+def beat_period(bpm: float) -> float:
+    """Seconds between the beats he moves on (fast songs in half time)."""
     per = 60.0 / max(MIN_BPM, min(MAX_BPM, bpm))
-    if per < 0.45:  # very fast songs: move on every other beat (half time)
-        per *= 2
-        beats = max(1, beats // 2)
+    return per * 2 if per < 0.45 else per
+
+
+def dance_beats(bpm: float, *, on_charger: bool | None, wheels: bool, lift: bool = True, head_only: bool = False,
+                rng: random.Random | None = None, beats: int = 4, listen: bool = False) -> list[str]:
+    """One bar = `beats` tiny plans, one per (half-time) beat, each sent so its
+    first step lands on the beat. All use keepbase (deltas from the dance's
+    rest base). on_charger (or unknown) -> no lift, no wheels."""
+    rng = rng or random.Random()
     on = on_charger is not False
-    pool = ["headnod"] if head_only else ["headnod", "headlift", "liftbeat", "eyebeat"]
+    pool = ["headnod"] if head_only else ["headnod", "headnod", "headlift", "liftbeat", "eyebeat"]
     if on or not lift:
         pool = [m for m in pool if m not in ("headlift", "liftbeat")] or ["headnod"]
     use_wheels = wheels and not on and not head_only
-    steps = [f"face {rng.choice(EYES)}"]
-    n = 0
+    per = beat_period(bpm)
+    face = rng.choice(EYES)
+    out = []
     for b in range(beats):
-        m = rng.choice(pool)
-        if use_wheels and b == beats - 1:
+        m = "eyebeat" if listen else rng.choice(pool)
+        if use_wheels and not listen and b == beats - 1:
             m = rng.choice(["body_left", "body_right"])
+        steps = ["keepbase"]
+        if b == 0 and not head_only:
+            steps.append(f"face {'expr_curious' if listen else face}")
         for kind, v, frac in MOVES[m]:
             ms = max(80, int(frac * per * 1000))
-            if kind == "wait":
-                steps.append(f"wait {ms}")
-            elif kind == "turn":
-                steps.append(f"turn {v}")
-            else:
-                steps.append(f"{kind} {v} {ms}")
-            n += 1
-    # cap 12 movement steps (agent MaxSteps)
-    out, k = [], 0
-    for s in steps:
-        if not s.startswith("face"):
-            if k >= 12:
-                break
-            k += 1
-        out.append(s)
-    return "plan:" + ";".join(out), per * beats
+            steps.append(f"turn {v}" if kind == "turn" else f"{kind} {v} {ms}")
+        if len(steps) == 1 or steps[-1].startswith("face"):
+            steps.append(f"headdeg {POSE_DEG} 150")  # hold the pose (keeps the base window alive)
+        out.append("plan:" + ";".join(steps))
+    return out
+
+
+def dance_bar(bpm: float, *, on_charger: bool | None, wheels: bool, lift: bool = True, head_only: bool = False,
+              rng: random.Random | None = None, beats: int = 4) -> tuple[str, float]:
+    """The bar's beats joined (tests / inspection) and the bar length in s."""
+    per = beat_period(bpm)
+    if per > 60.0 / max(MIN_BPM, min(MAX_BPM, bpm)) + 1e-9:
+        beats = max(1, beats // 2)
+    pl = dance_beats(bpm, on_charger=on_charger, wheels=wheels, lift=lift, head_only=head_only, rng=rng, beats=beats)
+    steps = [st for p in pl for st in p[5:].split(";") if st != "keepbase"]
+    return "plan:" + ";".join(steps), per * beats
 
 
 # ---- hum along: pitch track a clip and play it back as beeps.
