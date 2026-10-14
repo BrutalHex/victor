@@ -80,7 +80,40 @@ UTTERANCES: queue.Queue[bytes] = queue.Queue(maxsize=2)
 # STT, but the transcript is only checked for "Hey Vector": a miss is dropped
 # silently (no router, chat, TTS or thinking face). Awake until "Stop Vector".
 SESSION = Session()
-ASLEEP = {"heard": 0, "ignored": 0, "woke": 0, "last": ""}
+ASLEEP = {"heard": 0, "ignored": 0, "woke": 0, "last": "", "dropped_locked": 0, "dropped_long": 0,
+          "dropped_rate": 0, "stt": 0}
+# Asleep (not button-locked) the only OpenAI call is one STT per utterance, to hear "Hey Vector".
+# Locally we drop clips too long to be a wake phrase and cap the rate (M.O 14 Oct 2026).
+ASLEEP_MAX_S = float(os.environ.get("HUB_ASLEEP_MAX_S", "4.5"))
+ASLEEP_STT_PER_MIN = int(os.environ.get("HUB_ASLEEP_STT_PER_MIN", "6"))
+ASLEEP_STT_T: list[float] = []
+
+
+def session_phase() -> str:
+    """'awake', 'asleep' (Hey Vector still works) or 'locked' (voice sleep: back button only)."""
+    if not SESSION.enabled or SESSION.state == "awake":
+        return "awake"
+    if SESSION.clock() - SESSION.since < 5:
+        return "awake"  # the spoken goodbye of the stop turn itself
+    return "locked" if SESSION.button_only else "asleep"
+
+
+Api.PHASE = session_phase
+
+
+def asleep_stt_allowed(pcm: bytes) -> str:
+    """Local gate before any asleep STT. '' = send it, else the reason it was dropped."""
+    if SESSION.button_only:
+        return "locked"
+    if len(pcm) / 32000.0 > ASLEEP_MAX_S:  # 16 kHz s16 mono
+        return "long"
+    now = time.time()
+    with LOCK:
+        ASLEEP_STT_T[:] = [t for t in ASLEEP_STT_T if now - t < 60]
+        if ASLEEP_STT_PER_MIN > 0 and len(ASLEEP_STT_T) >= ASLEEP_STT_PER_MIN:
+            return "rate"
+        ASLEEP_STT_T.append(now)
+    return ""
 WAKE_CHIME = os.environ.get("HUB_WAKE_CHIME", "1").strip().lower() not in ("0", "false", "no", "off", "")
 LAST_JPEG = {"nav": b"", "face": b""}
 # Mic test recorder (POST /record). While it runs the VAD/OpenAI turn is paused so
@@ -334,6 +367,13 @@ def _on_audio(pcm: bytes, robot_noise: bool = False) -> None:
         print(f"voice skip rumble {len(utt)} bytes rms={VOICE.last_rms} noise={int(VOICE.noise)}", flush=True)
         return
     if not SESSION.listening():
+        why = asleep_stt_allowed(utt)
+        if why:  # locked: voice can never wake him, so nothing is transcribed at all
+            with LOCK:
+                ASLEEP[f"dropped_{why}"] += 1
+            if why != "locked":
+                print(f"asleep drop ({why}) {len(utt)} bytes, no STT", flush=True)
+            return
         _enqueue_utterance(("asleep", utt))  # STT + wake check only; no thinking face
         return
     if not begin_think("vad"):
@@ -422,6 +462,12 @@ def asleep_turn(pcm: bytes) -> dict:
     if SESSION.listening():  # woke while this waited: a normal turn
         run_turn(pcm)
         return {"hit": False, "queued": True}
+    if SESSION.button_only:  # locked while it waited in the queue: no STT
+        with LOCK:
+            ASLEEP["dropped_locked"] += 1
+        return {"hit": False, "rule": "locked"}
+    with LOCK:
+        ASLEEP["stt"] += 1
     text = VOICE.transcribe(pcm, asleep=True)
     if not text and getattr(VOICE, "last_raw", ""):
         text = VOICE.last_raw  # language check dropped it ("Эй, Вектор!"): still check the wake phrase
@@ -1538,6 +1584,7 @@ class Status(BaseHTTPRequestHandler):
             body["music"] = DANCER.status()
             body["session"] = dict(SESSION.status(), asleep=dict(ASLEEP), chime=WAKE_CHIME, button=dict(BUTTON))
             body["openai_calls"] = dict(Api.CALLS)
+            body["openai_calls_by_phase"] = {k: dict(v) for k, v in Api.BY_PHASE.items()}
             body["speak_left_s"] = round(max(0.0, SPEAK["until"] - time.time()), 2)
             self._json(body)
             return
