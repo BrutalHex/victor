@@ -40,6 +40,8 @@ type Body struct {
 	leds        [12]byte
 	drive       [4]int16
 	mic         []int16
+	dumpLeft    int
+	dumpCheck   time.Time
 	shortLogs   int
 	lastFrame   time.Time
 	lastMode    time.Time
@@ -266,6 +268,7 @@ func (b *Body) appendRX(p []byte) {
 		if err != nil {
 			continue
 		}
+		b.maybeDump(fr.Payload)
 		b.last = f
 		b.ok = true
 		b.lastFrame = time.Now()
@@ -473,4 +476,33 @@ func setRaw3M(fd int) error {
 	}
 	_ = syscall.SetNonblock(fd, true)
 	return nil
+}
+
+// DumpFlag asks the agent to save the next raw body dataframes, for checking
+// the mic layout on hardware: touch /data/victor/spine-dump, read spine-raw.bin.
+const (
+	DumpFlag   = "/data/victor/spine-dump"
+	DumpFile   = "/data/victor/spine-raw.bin"
+	dumpFrames = 200
+)
+
+// maybeDump runs under b.mu.
+func (b *Body) maybeDump(payload []byte) {
+	if b.dumpLeft == 0 {
+		if time.Since(b.dumpCheck) < time.Second {
+			return
+		}
+		b.dumpCheck = time.Now()
+		if _, err := os.Stat(DumpFlag); err != nil {
+			return
+		}
+		_ = os.Remove(DumpFlag)
+		_ = os.Remove(DumpFile)
+		b.dumpLeft = dumpFrames
+	}
+	if f, err := os.OpenFile(DumpFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644); err == nil {
+		_, _ = f.Write(payload)
+		_ = f.Close()
+	}
+	b.dumpLeft--
 }

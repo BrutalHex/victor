@@ -4,9 +4,11 @@
 from __future__ import annotations
 
 import base64
+import collections
 import json
 import os
 import queue
+import re
 import socket
 import struct
 import threading
@@ -17,9 +19,24 @@ from urllib.parse import parse_qs, urlparse
 from edge import Edge
 from explore import NAMES, Explorer
 from faces import FaceDB
-from protocol import FLAG_FACE, TYPE_AUDIO, TYPE_SENSOR, TYPE_VIDEO, decode, unpack_sensor
+from face_id import NO_CONTEXT, FaceID, is_identity_question, person_context
+from face_local import LocalFaces
+from face_watch import Watcher
+from nv_budget import Budget
+import names as names_mod
+import intents as intents_mod
+import brain
+import animals
+import dancer as dancer_mod
+import router
+import voice as voice_mod
+import wake as wake_mod
+import dispatch
+from api import Api
+from session import Session
+from protocol import FLAG_FACE, FLAG_ROBOT_NOISE, TYPE_AUDIO, TYPE_SENSOR, TYPE_VIDEO, decode, unpack_sensor
 from safety import classical_vote
-from voice import MIN_UTTERANCE_BYTES, Voice, _wav_wrap, speech_like, tone
+from voice import MIN_UTTERANCE_BYTES, RATE, Voice, _wav_wrap, speech_like, tone
 
 STATE = {
     "sensors": 0,
@@ -45,25 +62,86 @@ STATE = {
 _WINDOW = []
 LOCK = threading.Lock()
 EXPLORER = Explorer()
-FACE_DB = FaceDB(os.environ.get("HUB_FACE_DB", "/tmp/victor-faces.db"))
-VOICE = Voice()
+FACE_DB = FaceDB()  # HUB_FACE_DB or /app/data/faces.db (persistent volume)
+try:  # numpy once, in the main thread, before Voice() starts its scipy warm-up thread:
+    import numpy  # noqa: F401  # the two imports raced and onnxruntime's failed (edge model absent, 10 Oct)
+except ImportError:
+    pass
+NV_BUDGET = Budget()  # every NVIDIA request takes a slot (NVIDIA_RPM, NVIDIA_MAX_CALLS, NVIDIA_CAP_WINDOW)
+FACE_ID = FaceID(FACE_DB, NV_BUDGET)
+FACE_LOCAL = LocalFaces(download=False)  # YuNet + SFace on the hub CPU; main() fetches missing models
+FACE_WATCH = Watcher(FACE_LOCAL, FACE_ID, NV_BUDGET, FACE_DB)
+LAST_TURN = {"t": 0.0}  # end of the last voice turn (greetings wait HUB_GREET_QUIET_S after it)
 EDGE = Edge()
+VOICE = Voice()
 PENDING: list[tuple[int, bytes]] = []
 UTTERANCES: queue.Queue[bytes] = queue.Queue(maxsize=2)
+# Wake word (HUB_WAKE, default on). Asleep, an utterance still gets the normal
+# STT, but the transcript is only checked for "Hey Vector": a miss is dropped
+# silently (no router, chat, TTS or thinking face). Awake until "Stop Vector".
+SESSION = Session()
+ASLEEP = {"heard": 0, "ignored": 0, "woke": 0, "last": ""}
+WAKE_CHIME = os.environ.get("HUB_WAKE_CHIME", "1").strip().lower() not in ("0", "false", "no", "off", "")
 LAST_JPEG = {"nav": b"", "face": b""}
-LAST_FACE_SPOKEN = {"name": "", "t": 0.0}
+# Mic test recorder (POST /record). While it runs the VAD/OpenAI turn is paused so
+# the file is the continuous robot stream, not VAD-gated pieces.
+REC = {"active": False, "buf": bytearray()}
+REC_DIR = "/app/data/rec"
+
+
+class SeqDedupe:
+    """The agent sends every media packet on UDP and again on the TCP link.
+
+    Feeding both copies to the VAD doubles and interleaves the stream (half the
+    20 ms packets play twice, out of order), which sounds like a buzzing comb.
+    Keep the first copy of each seq. A seq far below the newest one means the
+    agent restarted and its counter began again.
+    """
+
+    def __init__(self, window: int = 4096) -> None:
+        self.window = window
+        self.seen: set[int] = set()
+        self.newest = -1
+
+    def first(self, seq: int) -> bool:
+        if self.newest >= 0 and seq < self.newest - self.window:
+            self.seen.clear()
+            self.newest = -1
+        if seq in self.seen:
+            return False
+        self.seen.add(seq)
+        if seq > self.newest:
+            self.newest = seq
+        if len(self.seen) > self.window * 2:
+            floor = self.newest - self.window
+            self.seen = {s for s in self.seen if s >= floor}
+        return True
+
+
+AUDIO_SEQ = SeqDedupe()
+VIDEO_SEQ = SeqDedupe(window=128)  # ~8 s of video: an agent restart resets seq
 CMD_FACEUI, CMD_SPEAK, CMD_DISPLAY = 1, 2, 3
+CMD_ACTION = 4  # payload: action name; the agent's runner executes it under the on-robot veto
 
 
 def queue_cmd(kind: int, payload: bytes) -> None:
+    if kind == CMD_ACTION:
+        _note_action_sent(payload)
     with LOCK:
         PENDING.append((kind, payload))
+
+
+SPEAK = {"until": 0.0}  # when the robot finishes playing what we sent (its mic is muted until then)
 
 
 def pop_cmds() -> list[tuple[int, bytes]]:
     with LOCK:
         out = list(PENDING)
         PENDING.clear()
+        now = time.time()
+        for kind, payload in out:
+            if kind == CMD_SPEAK:
+                SPEAK["until"] = max(now, SPEAK["until"]) + len(payload) / (2 * RATE)
         return out
 
 
@@ -87,6 +165,8 @@ def _ingest_vct1(buf: bytes, src: str = "") -> None:
             sensor = unpack_sensor(payload)
         except ValueError:
             return
+        _button_events(sensor)
+        _action_events(sensor)
         with LOCK:
             STATE["sensors"] += 1
             STATE["last_seq"] = hdr.seq
@@ -102,11 +182,20 @@ def _ingest_vct1(buf: bytes, src: str = "") -> None:
         return
     if hdr.type == TYPE_AUDIO:
         with LOCK:
+            if not AUDIO_SEQ.first(hdr.seq):
+                STATE["audio_dup"] = STATE.get("audio_dup", 0) + 1
+                return
             STATE["audio"] += 1
-        _on_audio(payload)
+            if REC["active"]:
+                REC["buf"] += payload
+                return
+        AUDIO_META.update(t_ns=hdr.t_ns, seq=hdr.seq)
+        _on_audio(payload, bool(hdr.flags & FLAG_ROBOT_NOISE))
         return
     if hdr.type == TYPE_VIDEO:
         with LOCK:
+            if not VIDEO_SEQ.first(hdr.seq):
+                return
             STATE["video"] += 1
         if hdr.flags & FLAG_FACE:
             LAST_JPEG["face"] = payload
@@ -114,6 +203,91 @@ def _ingest_vct1(buf: bytes, src: str = "") -> None:
         else:
             LAST_JPEG["nav"] = payload
             _on_nav_frame(payload)
+
+
+BUTTON = {"last": None, "presses": 0, "last_at": 0.0, "last_action": ""}
+
+
+ACTION = {"seq": None, "sent": 0.0, "lang": "en", "last": None}
+# SENSOR action_result -> the reason Vector says out loud (vct1.Result*)
+WHY = {2: "why_cliff", 3: "why_rear_cliff", 4: "why_pickup", 5: "why_battery", 7: "why_obstacle",
+       8: "why_charger", 9: "drive_off", 10: "why_stalled", 11: "why_timeout"}
+WHY_WINDOW_S = 90.0  # only for actions the hub sent recently (a voice turn)
+
+
+def _action_events(sensor: dict) -> None:
+    """The robot finished a voice action/plan: if it refused or stopped it,
+    say why (he never just stays silent). OK / cancelled / hub gone: nothing."""
+    seq, res = sensor.get("action_seq"), sensor.get("action_result")
+    if seq is None:
+        return
+    with LOCK:
+        last = ACTION["seq"]
+        ACTION["seq"] = seq
+        recent = time.time() - ACTION["sent"] < WHY_WINDOW_S
+        lang = ACTION["lang"]
+    if last is None or seq == last:
+        return
+    ACTION["last"] = {"seq": seq, "result": res, "t": time.time()}
+    key = WHY.get(int(res or 0))
+    print(f"action result seq={seq} result={res} -> {key or '-'} recent={recent}", flush=True)
+    if key and DANCER.mode:
+        DANCER.stop("robot refused: " + key)  # cliff/pickup/...: no more bars
+    if key and recent:
+        text = intents_mod.say(key, lang)
+        threading.Thread(target=speak_turn, args=(text, "action " + key, b"anim|expr_worried"), daemon=True).start()
+
+
+def _note_action_sent(payload: bytes) -> None:
+    name = payload.decode(errors="replace")
+    if name.startswith("ssh_") or name in ("stop", "explore", "explore_stop"):
+        return
+    lang = getattr(VOICE, "last_lang", "") or "en"
+    with LOCK:
+        ACTION.update(sent=time.time(), lang=lang if lang in ("en", "de", "fa") else "en")
+
+
+def _button_events(sensor: dict) -> None:
+    """SENSOR carries the robot's running press count; each increase is one
+    button_press (a lost UDP packet only delays it). A drop = agent restart."""
+    n = sensor.get("button_presses")
+    if n is None:
+        return
+    with LOCK:
+        last = BUTTON["last"]
+        BUTTON["last"] = n
+    if last is None or n == last:
+        return
+    new = (n - last) & 0xFFFF
+    if n < last and new > 50:  # agent restarted (counter back near 0), not 65k presses
+        return
+    for _ in range(min(new, 3)):
+        button_press()
+
+
+def button_press() -> str:
+    """Backpack press: asleep -> wake (same cue as 'Hey Vector'). Awake: logged only."""
+    SCHED.cancel()  # the agent cancels a running plan on the press itself
+    DANCER.stop("button")
+    with LOCK:
+        BUTTON["presses"] += 1
+        BUTTON["last_at"] = time.time()
+    if SESSION.enabled and SESSION.state != "awake":
+        SESSION.wake("button")
+        cue_wake()
+        action = "wake"
+    elif SESSION.enabled:
+        SESSION.touch()
+        with LOCK:
+            busy = bool(STATE.get("thinking"))
+        if not busy:  # same look-up + chime: "I'm listening"
+            cue_wake()
+        action = "cue (awake)"
+    else:
+        action = "ignored (wake word off)"
+    BUTTON["last_action"] = action
+    print(f"button_press -> {action}", flush=True)
+    return action
 
 
 def _enqueue_utterance(utt: bytes) -> None:
@@ -130,15 +304,27 @@ def _enqueue_utterance(utt: bytes) -> None:
                 return
 
 
-def _on_audio(pcm: bytes) -> None:
+DEBUG_AUDIO = os.environ.get("HUB_DEBUG_AUDIO", "0").strip().lower() in ("1", "true", "on", "yes")
+AUDIO_META: dict = {}
+MIC_RING: "collections.deque[tuple[float, bytes]]" = collections.deque(maxlen=6000)  # >= 40 s of Vector-mic audio (chunks are small)
+
+
+def _on_audio(pcm: bytes, robot_noise: bool = False) -> None:
+    if DEBUG_AUDIO:
+        MIC_RING.append((time.time(), pcm, AUDIO_META.get("t_ns", 0), AUDIO_META.get("seq", 0), robot_noise))
+    DANCER.feed(pcm, robot_noise)  # beat tracker / hum capture (drops his own playback)
+    if DANCER.capturing():
+        return  # "hum this": the tune is not a voice turn
     with LOCK:
         busy = bool(STATE.get("voice_busy"))
     if busy:
         return
-    utt = VOICE.push(pcm)
+    VOICE.asleep = not SESSION.listening()
+    utt = VOICE.push(pcm, robot_noise)
     with LOCK:
         STATE["audio_rms"] = getattr(VOICE, "last_rms", 0)
         STATE["noise_rms"] = int(getattr(VOICE, "noise", 0))
+        STATE["vad"] = {"rejected": dict(VOICE.rejected), "robot_noise_frames": VOICE.robot_noise_frames}
     if not utt:
         return
     if len(utt) < MIN_UTTERANCE_BYTES:
@@ -147,12 +333,11 @@ def _on_audio(pcm: bytes) -> None:
     if not speech_like(utt):
         print(f"voice skip rumble {len(utt)} bytes rms={VOICE.last_rms} noise={int(VOICE.noise)}", flush=True)
         return
-    with LOCK:
-        if STATE.get("voice_busy"):
-            return
-        STATE["voice_busy"] = True
-        STATE["thinking"] = True
-    queue_cmd(CMD_FACEUI, b"thinking|")
+    if not SESSION.listening():
+        _enqueue_utterance(("asleep", utt))  # STT + wake check only; no thinking face
+        return
+    if not begin_think("vad"):
+        return
     print(f"voice utterance {len(utt)} bytes rms={VOICE.last_rms} noise={int(VOICE.noise)}", flush=True)
     try:
         os.makedirs("/app/data", exist_ok=True)
@@ -162,26 +347,839 @@ def _on_audio(pcm: bytes) -> None:
     _enqueue_utterance(utt)
 
 
+def chime() -> bytes:
+    """Soft two-note rising chime (16 kHz PCM), the wake cue."""
+    import math as _m
+    import struct as _s
+
+    out = bytearray()
+    for hz, ms in ((660.0, 90), (880.0, 120)):
+        n = 16000 * ms // 1000
+        for i in range(n):
+            env = min(1.0, i / 160, (n - i) / 400)
+            out += _s.pack("<h", int(3500 * env * _m.sin(2 * _m.pi * hz * i / 16000)))
+    return bytes(out)
+
+
+def cue_wake(lang: str | None = None) -> None:
+    """Look up + chime; with lang also a short spoken "Yes?" (one buffer, so
+    the ack can't cut the chime off)."""
+    queue_cmd(CMD_FACEUI, b"anim|lookatme")  # eyes widen / look up at you
+    audio = wake_audio(lang)
+    if audio:
+        queue_cmd(CMD_SPEAK, VOLUME.apply(audio))
+
+
+ACK = {"en": "Yes?", "de": "Ja?", "fa": "بله؟"}
+SORRY = {"en": "Sorry?", "de": "Wie bitte?", "fa": "ببخشید؟"}
+_ACK_CACHE: dict[str, bytes] = {}
+
+
+def ack_audio(lang: str, table: dict | None = None) -> bytes:
+    """TTS of a one-word reply, cached per language (one call per hub start)."""
+    table = table or ACK
+    lang = lang if lang in table else "en"
+    key = f"{id(table)}:{lang}"
+    if key not in _ACK_CACHE:
+        audio = VOICE.tts(table[lang])
+        if not audio:
+            return b""
+        _ACK_CACHE[key] = audio
+    return _ACK_CACHE[key]
+
+
+def wake_audio(lang: str | None) -> bytes:
+    """Chime, then (lang given) a short gap and "Yes?" / "Ja?" / "بله؟"."""
+    out = chime() if WAKE_CHIME else b""
+    if lang is not None:
+        ack = ack_audio(lang)
+        if ack:
+            out += b"\x00\x00" * (RATE // 8) + ack
+    return out
+
+
+SESSION_FACE = {"sent": "", "at": 0.0}
+
+
+def session_face(force: bool = False) -> None:
+    """Tell the robot which idle eyes to draw: 'awake' (open, bright: listening)
+    or 'asleep' (half-lidded, dimmer: waiting for Hey Vector). Re-sent every
+    10 s so a restarted agent catches up."""
+    state = "asleep" if SESSION.enabled and not SESSION.listening() else "awake"
+    now = time.time()
+    if force or state != SESSION_FACE["sent"] or now - SESSION_FACE["at"] > 10:
+        SESSION_FACE.update(sent=state, at=now)
+        queue_cmd(CMD_FACEUI, f"session|{state}".encode())
+
+
+def cue_sleep() -> None:
+    queue_cmd(CMD_FACEUI, b"anim|goodnight")
+
+
+def asleep_turn(pcm: bytes) -> dict:
+    """One utterance while asleep: STT, then only the wake check. A hit opens
+    the session (cue); words after the wake phrase run at once as turn one."""
+    if SESSION.listening():  # woke while this waited: a normal turn
+        run_turn(pcm)
+        return {"hit": False, "queued": True}
+    text = VOICE.transcribe(pcm, asleep=True)
+    if not text and getattr(VOICE, "last_raw", ""):
+        text = VOICE.last_raw  # language check dropped it ("Эй, Вектор!"): still check the wake phrase
+    r = dispatch.route(text, asleep=True)  # command priority (dispatch.py): sleep > wake > asleep gate
+    hit, rest = r.rule == "wake", r.text
+    if hit and SESSION.button_only:  # voice sleep/stop: only the back button wakes him (M.O 14 Oct)
+        print(f"asleep wake ignored (button only) text={text!r}", flush=True)
+        SESSION.wake("phrase")  # refused; counted as voice_wakes_blocked on /status
+        with LOCK:
+            ASLEEP["heard"] += 1
+            ASLEEP["ignored"] += 1
+            ASLEEP["last"] = text[:80]
+        return {"hit": False, "text": text, "rule": "wake_blocked"}
+    gate = (getattr(VOICE, "utt", {}) or {})
+    gate_s = f"gate={gate.get('gate', '?')} snr={gate.get('snr', '?')} voiced={gate.get('voiced', '?')} run={gate.get('voiced_run', '?')}"
+    with LOCK:
+        ASLEEP["heard"] += 1 if text else 0
+        ASLEEP["ignored"] += 0 if hit or not text else 1
+        ASLEEP["woke"] += 1 if hit else 0
+        ASLEEP["last"] = text[:80]
+    if r.rule == "sleep":  # 'Stop Vector' again while asleep: no-op, never a wake
+        print(f"asleep stop-again (no-op) text={text!r} {gate_s}", flush=True)
+        return {"hit": False, "text": text, "rule": "sleep"}
+    if not hit:
+        if text:
+            print(f"asleep ignore text={text!r} {gate_s}", flush=True)
+        else:
+            print(f"asleep empty {gate_s}", flush=True)
+        return {"hit": False, "text": text}
+    print(f"asleep WAKE text={text!r} rest={rest!r} {gate_s}", flush=True)
+    SESSION.wake("phrase")
+    session_face()
+    if len(rest) >= 2:
+        cue_wake()
+        run_turn(pcm, text=text)  # "Hey Vector, what time is it?" -> answered now
+    else:
+        cue_wake(getattr(VOICE, "last_lang", "") or "en")  # look up, chime, "Yes?"
+    return {"hit": True, "text": text, "rest": rest}
+
+
+THINK_REFRESH_S = float(os.environ.get("HUB_THINK_REFRESH", "4"))
+THINK_MAX_S = float(os.environ.get("HUB_THINK_MAX", "120"))
+THINK = {"t0": 0.0, "sent": 0.0, "why": ""}
+
+
+def _ms() -> str:
+    """UTC with ms; the agent logs the same format so the two line up."""
+    t = time.time()
+    return time.strftime("%H:%M:%S", time.gmtime(t)) + f".{int(t * 1000) % 1000:03d}Z"
+
+
+def begin_think(why: str) -> bool:
+    """Start one reply turn: busy (mic closed), thinking face on the robot.
+
+    False if a turn is already running. Every True must be paired with
+    end_think (voice_loop / speak_turn do it in finally)."""
+    now = time.time()
+    with LOCK:
+        if STATE.get("voice_busy"):
+            return False
+        STATE["voice_busy"] = True
+        STATE["thinking"] = True
+        THINK.update(t0=now, sent=now, why=why)
+        PENDING.append((CMD_FACEUI, b"thinking|"))
+    print(f"think on {_ms()} why={why}", flush=True)
+    return True
+
+
+def end_think(audio: bytes = b"", why: str = "done", show: bytes = b"") -> None:
+    """Finish the turn. The speech goes out before idle in the same batch, so
+    the robot drops the thinking face exactly when playback starts; with no
+    audio (error, empty transcript) idle clears it at once. No keepalive can
+    slip in after this: thinking is cleared under the same lock."""
+    with LOCK:
+        held = time.time() - THINK["t0"] if THINK["t0"] else 0.0
+        STATE["thinking"] = False
+        STATE["voice_busy"] = False
+        THINK.update(t0=0.0, sent=0.0, why="")
+        if show:  # e.g. name|Ann: replaces thinking, shown while it speaks
+            PENDING.append((CMD_FACEUI, show))
+        if audio:
+            PENDING.append((CMD_SPEAK, VOLUME.apply(audio)))
+        if not show:
+            PENDING.append((CMD_FACEUI, b"idle|"))
+    print(f"think off {_ms()} why={why} held={held:.1f}s speak={len(audio)}", flush=True)
+
+
+def think_keepalive(now: float | None = None) -> bool:
+    """Re-send thinking every THINK_REFRESH_S while a turn runs. The agent
+    drops a thinking face that is not refreshed (hub restart, lost idle), so
+    a slow TTS stays covered and nothing can stay stuck. After THINK_MAX_S the
+    turn is considered hung: stop refreshing and let the robot clear."""
+    now = time.time() if now is None else now
+    with LOCK:
+        if not STATE.get("thinking") or not THINK["t0"]:
+            return False
+        if now - THINK["t0"] > THINK_MAX_S:
+            return False
+        if now - THINK["sent"] < THINK_REFRESH_S:
+            return False
+        if any(k == CMD_FACEUI and p == b"thinking|" for k, p in PENDING):
+            return False  # robot offline; one queued refresh is enough
+        THINK["sent"] = now
+        PENDING.append((CMD_FACEUI, b"thinking|"))
+    return True
+
+
+def think_loop() -> None:
+    while True:
+        time.sleep(0.5)
+        think_keepalive()
+        if SESSION.check_idle():  # HUB_SESSION_IDLE_S (default 0 = never: sleep only on "Stop Vector")
+            cue_sleep()
+        session_face()
+
+
+def reply_turn(pcm: bytes, text: str | None = None) -> tuple[str, str, bytes]:
+    """STT -> stock command (no chat) or chat (web search) -> TTS, timed.
+    Thinking stays on throughout. A matched command leaves its face clip and
+    robot action in TURN_OUT for run_turn to send after the reply."""
+    t = time.time()
+    if text is None:
+        text = VOICE.transcribe(pcm)
+    TURN_PERSON["ctx"] = ""
+    TURN_OUT.update(show=b"", action="", intent="", plan="", speak="", est=0.0, end=b"")
+    VOICE.last_via = ""
+    t_r = time.time()
+    if text and SESSION.enabled:
+        r = dispatch.route(text, asleep=False)  # command priority, first match wins (dispatch.py)
+        print(f"dispatch rule={r.rule} text={text!r}", flush=True)
+        if r.rule == "sleep":
+            return session_stop(text)
+        bare = r.text
+        if not bare:  # just "Hey Vector" again inside the session: never silence
+            SESSION.touch()
+            lang = getattr(VOICE, "last_lang", "") or "en"
+            TURN_OUT.update(show=b"anim|lookatme", intent="wake_ack")
+            print(f"session wake ack {text!r} lang={lang}", flush=True)
+            return text, ACK.get(lang, ACK["en"]), wake_audio(lang)
+        text = bare
+    intent, how = (None, "off")
+    confirm = SSH_CONFIRM["until"] > time.time()
+    if text:
+        SSH_CONFIRM["until"] = 0.0  # one answer only (an empty/noise turn keeps the window)
+    if text and INTENTS_ON and confirm and intents_mod.is_yes(text):
+        # the spoken yes to "Did you want me to turn SSH off?"
+        intent, how = intents_mod.Intent(name="intent_system_ssh_disable", lang=SSH_CONFIRM["lang"], arg="confirmed",
+                                         text=intents_mod.normalise(text)), "confirm"
+        print(f"ssh off confirmed by {text!r}", flush=True)
+    elif text and INTENTS_ON and is_identity_question(text):
+        intent, how = router.fast(text), "identity"  # face path; no router call
+    elif text and INTENTS_ON and brain.ON and VOICE.key and not brain.ssh_text(text):
+        # one OpenAI call (reply + expression + plan) unless a short exact command matches
+        intent = router.fast(text)
+        how = "fast" if intent is not None else "brain"
+        if intent is not None:
+            print(f"router fast intent={intent.name} text={text!r}", flush=True)
+    elif text and INTENTS_ON:
+        intent, how = router.route(VOICE.api, text, getattr(VOICE, "last_lang", ""), bool(VOICE.key))
+    TURN_OUT["route"] = how
+    if intent and intent.name != "intent_names_username_extend" and is_identity_question(text):
+        intent = None  # identity questions keep the face-ID path
+    t_face = time.time()
+    if text and intent is None and is_identity_question(text):
+        # Local match first; NVIDIA (budgeted) only when the local match is uncertain.
+        res = identify_person()
+        TURN_PERSON["ctx"] = person_context(res, FACE_ID.min_conf)
+        if res.get("name") and float(res.get("confidence") or 0) >= FACE_ID.min_conf:
+            with LOCK:
+                STATE["face"] = {"name": res["name"], "score": round(float(res["confidence"]), 2)}
+    t_stt = time.time()
+    try:
+        if intent is not None:
+            reply = run_intent(intent)
+            VOICE.last_via = "intent"
+        else:
+            if text and wake_mod.unclear(text):
+                # "Mof Berlin.": a garbled short transcript gets "Sorry?", not a lecture
+                lang = getattr(VOICE, "last_lang", "") or "en"
+                print(f"unclear text={text!r} -> sorry", flush=True)
+                reply = SORRY.get(lang, SORRY["en"])
+                VOICE.last_via = "unclear"
+            else:
+                if text:
+                    print(f"intent none -> {how if how == 'brain' else 'chat'} text={text!r} norm={intents_mod.normalise(text)!r}", flush=True)
+                d = VOICE.think(text) if text and how == "brain" else None
+                if d is not None:
+                    reply = run_brain(d, text)
+                elif text and how == "brain":  # model call failed: the old router + chat path
+                    TURN_OUT["route"] = "brain-fallback"
+                    it, _ = router.route(VOICE.api, text, getattr(VOICE, "last_lang", ""), bool(VOICE.key))
+                    reply = run_intent(it) if it is not None else VOICE.chat(text)
+                else:
+                    reply = VOICE.chat(text) if text else ""
+    finally:
+        TURN_PERSON["ctx"] = ""
+    t_chat = time.time()
+    reply = voice_mod.own_name(reply)
+    SESSION.add(text, reply, getattr(VOICE, "last_lang", ""))
+    audio = VOICE.tts(reply) if reply else b""
+    t_tts = time.time()
+    print(
+        f"voice timing end={_ms()}  stt={int((t_r - t) * 1000)}ms route={int((t_face - t_r) * 1000)}ms/{TURN_OUT.get('route', '')} face={int((t_stt - t_face) * 1000)}ms chat={int((t_chat - t_stt) * 1000)}ms "
+        f"tts={int((t_tts - t_chat) * 1000)}ms via={getattr(VOICE, 'last_via', '')}",
+        flush=True,
+    )
+    return text, reply, audio
+
+
+def session_stop(text: str) -> tuple[str, str, bytes]:
+    """'Stop Vector': stop motion/wander, short ack, asleep cue, back to asleep."""
+    lang = wake_mod.stop_lang(text, getattr(VOICE, "last_lang", "") or "en")
+    reply = intents_mod.say("session_stop", lang)
+    SESSION.sleep("phrase")
+    SSH_CONFIRM["until"] = 0.0
+    SCHED.cancel()
+    DANCER.stop("stop vector")
+    PLAN_RUN["until"] = 0.0  # cancels a waiting plan; robot "stop" also ends explore
+    TURN_OUT.update(show=b"anim|goodnight", action="stop", intent="session_stop")
+    print(f"session stop by {text!r} lang={lang}", flush=True)
+    return text, reply, VOICE.tts(reply)
+
+
+# ------------------------------------------------------------ stock commands
+INTENTS_ON = os.environ.get("HUB_INTENTS", "1").strip().lower() not in ("0", "false", "no", "off")
+TURN_OUT = {"show": b"", "action": "", "intent": "", "plan": "", "speak": "", "est": 0.0, "end": b""}
+SCHED = brain.Scheduler()  # plan after speech / speech after plan; cancelled by stop
+PLAN_RUN = {"until": 0.0}  # a sent motion plan is expected to run until then (gestures wait)
+NO_SPEECH_INTENTS = {"intent_imperative_shutup", "intent_animal_sound", "intent_pet_whoismy"}
+
+
+PET_SAYS = r"(?:i'?m|i am|it'?s me,?|me,?) (?:your|ur|the) (?:\w+ )?(?:cat|kitty|kitten|dog|doggy|puppy)|ich bin (?:dein|deine) \w*\s?(?:hund|katze|mieze)|من (?:سگ|گربه)"
+PET_APOLOGY = r"sorry|not a (?:dog|cat)|don't have|information|i'm not|leider|keine information|bin kein|متاسف|نیستم|اطلاعات"
+
+
+def play_animal(name: str, proud: bool = False) -> None:
+    """Robot pet sound + face/gesture (animals.py); after the turn's own output."""
+    plan = animals.gesture(name, _on_charger(), proud=proud)
+    pcm = animals.pcm(name, seed=int(time.time()) & 0xFFFF)
+    if plan:
+        TURN_OUT.update(plan=plan, speak="during", est=1.5)
+    SCHED.later(0.25, lambda: queue_cmd(CMD_SPEAK, VOLUME.apply(pcm)))
+    print(f"animal sound {name} {len(pcm) / (2 * RATE):.2f}s", flush=True)
+
+
+def _music_say(key: str, lang: str) -> None:
+    text = intents_mod.say(key, lang)
+    threading.Thread(target=speak_turn, args=(text, "music " + key), daemon=True).start()
+
+
+DANCER = dancer_mod.Dancer(
+    send_plan=lambda p: queue_cmd(CMD_ACTION, p.encode()),
+    on_charger=lambda: _on_charger(),
+    awake=lambda: SESSION.listening(),
+    speaking=lambda: time.time() < SPEAK["until"] + 0.3,
+    say=_music_say,
+    play=lambda pcm: queue_cmd(CMD_SPEAK, VOLUME.apply(pcm)),
+    log=lambda m: print(m, flush=True),
+)
+PHOTO_DIR = os.environ.get("HUB_PHOTO_DIR") or "/app/data/photos"
+
+
+class Volume:
+    """Speech gain on the hub, levels 1..5 (default 5 = loudest, HUB_VOLUME_DEFAULT).
+
+    TTS arrives peak-normalised to -1 dBFS, so plain gain above 1.0 only hard-clips.
+    Level 5 adds ~+5 dB of loudness with a soft limiter instead: samples above the
+    knee are compressed smoothly towards full scale, nothing is clipped flat."""
+
+    GAINS = {1: 0.25, 2: 0.45, 3: 0.7, 4: 1.0, 5: 2.0}
+    KNEE = 0.55  # fraction of full scale where the limiter starts bending
+
+    def __init__(self, path: str | None = None):
+        self.path = path or os.environ.get("HUB_VOLUME_FILE") or "/app/data/volume.txt"
+        try:
+            self.level = max(1, min(5, int(os.environ.get("HUB_VOLUME_DEFAULT", "5"))))
+        except ValueError:
+            self.level = 5
+        try:
+            self.level = max(1, min(5, int(open(self.path).read().strip())))
+        except (OSError, ValueError):
+            pass
+
+    def set(self, level: int) -> int:
+        self.level = max(1, min(5, int(level)))
+        try:
+            os.makedirs(os.path.dirname(self.path), exist_ok=True)
+            with open(self.path, "w") as f:
+                f.write(str(self.level))
+        except OSError as exc:
+            print(f"volume save failed {exc!r}", flush=True)
+        return self.level
+
+    def _lut(self, g: float) -> list[int]:
+        """|sample| 0..32768 -> output magnitude for gain g (pure Python, no numpy in the voice thread)."""
+        import math
+        k = self.KNEE
+        out = []
+        for i in range(32769):
+            a = i / 32768.0 * g
+            if g > 1.0:
+                if a > k:
+                    a = k + (1 - k) * math.tanh((a - k) / (1 - k))
+                a *= 0.97
+            out.append(min(32767, int(round(a * 32768.0))))
+        return out
+
+    def apply(self, pcm: bytes) -> bytes:
+        g = self.GAINS.get(self.level, 1.0)
+        if g == 1.0 or not pcm:
+            return pcm
+        if not hasattr(self, "_luts"):
+            self._luts = {}
+        lut = self._luts.get(g)
+        if lut is None:
+            lut = self._luts[g] = self._lut(g)
+        from array import array
+        x = array("h")
+        x.frombytes(pcm[: len(pcm) // 2 * 2])
+        for i, v in enumerate(x):
+            x[i] = lut[v] if v >= 0 else -lut[-v]
+        return x.tobytes()
+
+
+VOLUME = Volume()
+
+
+class Timer:
+    """One kitchen timer. fire(lang) runs on a daemon thread when it ends."""
+
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.end = 0.0
+        self.lang = "en"
+        self.gen = 0
+
+    def start(self, seconds: int, lang: str, fire) -> None:
+        with self.lock:
+            self.gen += 1
+            gen, self.end, self.lang = self.gen, time.time() + seconds, lang
+
+        def run():
+            time.sleep(seconds)
+            with self.lock:
+                if gen != self.gen or not self.end:
+                    return
+                self.end = 0.0
+            fire(lang)
+
+        threading.Thread(target=run, daemon=True).start()
+
+    def left(self) -> int:
+        with self.lock:
+            return max(0, int(round(self.end - time.time()))) if self.end else 0
+
+    def cancel(self) -> bool:
+        with self.lock:
+            was = bool(self.end)
+            self.end, self.gen = 0.0, self.gen + 1
+            return was
+
+
+TIMER = Timer()
+
+
+def _timer_fire(lang: str) -> None:
+    print(f"intent timer done {_ms()}", flush=True)
+    speak_turn(intents_mod.say("timer_done", lang), "timer", b"anim|hello")
+
+
+def _on_charger() -> bool | None:
+    with LOCK:
+        s = STATE.get("last_sensor")
+    return None if not s else bool(s.get("on_charger"))
+
+
+def _lang(intent) -> str:
+    lang = getattr(VOICE, "last_lang", "") or intent.lang
+    return lang if lang in ("en", "de", "fa") else intent.lang
+
+
+# ------------------------------------------------------------ SSH by voice
+# Owner's request (10 Oct 2026): SSH on the robot is toggled by voice only, no face
+# check. Turning it OFF needs an exact phrase ("disable SSH", "SSH aus", ...) or the
+# router >= 0.85 with SSH + an off verb in the transcript; anything else makes Vector
+# ask "Did you want me to turn SSH off?" and only a yes within SSH_CONFIRM_S does it.
+SSH_CONFIRM_S = 14.0  # ~2 s of the question being spoken + ~10 s to answer
+SSH_CONFIRM = {"until": 0.0, "lang": "en"}
+SSH_DISABLE_MIN_CONF = 0.85
+SSH_WAIT_S = 4.0
+
+
+def ssh_disable_ok(norm_text: str, raw_text: str = "") -> bool:
+    text = raw_text or norm_text
+    exact = intents_mod.match(text)
+    if exact is not None and exact.name == "intent_system_ssh_disable":
+        return True
+    return (router.LAST.get("how") == "llm" and float(router.LAST.get("conf") or 0) >= SSH_DISABLE_MIN_CONF
+            and intents_mod.ssh_off_explicit(text))
+
+
+def _ssh_set(on: bool, lang: str) -> str:
+    """Ask the agent to switch SSH, wait for its sensor flag to agree, say the result."""
+    queue_cmd(CMD_ACTION, b"ssh_on" if on else b"ssh_off")
+    print(f"ssh voice -> {'on' if on else 'off'}", flush=True)
+    deadline = time.time() + SSH_WAIT_S
+    time.sleep(0.4)  # let the agent apply it before trusting a flag that already matches
+    while time.time() < deadline:
+        with LOCK:
+            sens = STATE.get("last_sensor") or {}
+        if sens and bool(sens.get("ssh_on")) == on:
+            return I_say("ssh_on" if on else "ssh_off", lang)
+        time.sleep(0.1)
+    print("ssh voice: robot did not confirm", flush=True)
+    return I_say("ssh_fail", lang)
+
+
+def I_say(key: str, lang: str) -> str:
+    return intents_mod.say(key, lang)
+
+
+def run_intent(intent) -> str:
+    """Execute one stock command. Returns the spoken reply ("" = stock had none);
+    face clip / action go to TURN_OUT. Robot motion is only ever a named action
+    the agent's runner executes under its veto."""
+    I = intents_mod
+    n, lang = intent.name, _lang(intent)
+    show, action, reply = "", "", ""
+    if n in I.SIMPLE:
+        show, action, key = I.SIMPLE[n]
+        reply = I.say(key, lang) if key else ""
+    elif n in I.DRIVE:
+        act, key = I.DRIVE[n]
+        if _on_charger() is not False:  # unknown counts as on the charger
+            reply = I.say("on_charger", lang)
+        else:
+            action, reply = act, (I.say(key, lang) if key else "")
+    elif n == "intent_system_leavecharger":
+        if _on_charger() is False:
+            reply = I.say("not_on_charger", lang)
+        else:
+            action, reply = "leave_charger", I.say("leave", lang)
+    elif n == "intent_explore_start":
+        with LOCK:
+            sens = STATE.get("last_sensor") or {}
+        if _on_charger() is not False:
+            reply = I.say("on_charger", lang)
+        elif not sens.get("explore_enabled"):
+            reply = I.say("explore_off", lang)
+        else:
+            action, reply = "explore", I.say("explore", lang)
+    elif n == "intent_system_ssh_enable":
+        reply = _ssh_set(True, lang)
+    elif n == "intent_system_ssh_disable":
+        if intent.arg == "confirmed" or ssh_disable_ok(intent.text or "", getattr(intent, "raw", "")):
+            reply = _ssh_set(False, lang)
+        else:
+            SSH_CONFIRM.update(until=time.time() + SSH_CONFIRM_S, lang=lang)
+            reply = I.say("ssh_confirm", lang)
+            print(f"ssh off needs a yes (router conf={router.LAST.get('conf')} how={router.LAST.get('how')})", flush=True)
+    elif n == "intent_system_ssh_status":
+        with LOCK:
+            sens = STATE.get("last_sensor")
+        queue_cmd(CMD_ACTION, b"ssh_status")  # robot shows SSH ON / SSH OFF for 1.5 s
+        reply = I.say("ssh_unknown", lang) if not sens else I.say("ssh_on" if sens.get("ssh_on") else "ssh_off", lang)
+    elif n == "intent_explore_stop":
+        SCHED.cancel()
+        DANCER.stop("explore stop")
+        action, reply = "explore_stop", I.say("explore_stop", lang)
+    elif n == "intent_imperative_shutup":
+        SCHED.cancel()
+        DANCER.stop("voice stop")
+        PLAN_RUN["until"] = 0.0  # a plan still waiting for the speech to end never starts
+        action, show = "stop", "shutup"
+    elif n == "intent_system_sleep":  # normally caught as rule 1 first; same effect if it gets here
+        SESSION.sleep("phrase")
+        SCHED.cancel()
+        DANCER.stop("go to sleep")
+        PLAN_RUN["until"] = 0.0
+        action, show = "stop", "sleep|"
+    elif n == "intent_clock_time":
+        tz, _ = voice_mod.hub_tz()
+        import datetime as _dt
+        now = _dt.datetime.now(tz)
+        t = now.strftime("%-I:%M %p") if lang == "en" else now.strftime("%H:%M")
+        reply = I.say("time", lang, t=t)
+    elif n == "intent_clock_settimer_extend":
+        sec = I.parse_duration(intent.arg)
+        if sec <= 0 or sec > 24 * 3600:
+            reply = I.say("timer_how_long", lang)
+        else:
+            TIMER.start(sec, lang, _timer_fire)
+            reply = I.say("timer_set", lang, d=I.fmt_duration(sec, lang))
+    elif n == "intent_clock_checktimer":
+        left = TIMER.left()
+        reply = I.say("timer_left", lang, d=I.fmt_duration(left, lang)) if left else I.say("no_timer", lang)
+    elif n == "intent_global_stop_extend":
+        reply = I.say("timer_cancel", lang) if TIMER.cancel() else I.say("no_timer", lang)
+    elif n == "intent_character_age":
+        bday = (os.environ.get("HUB_ROBOT_BIRTHDAY") or "").strip()
+        try:
+            import datetime as _dt
+            days = (_dt.date.today() - _dt.date.fromisoformat(bday)).days
+            reply = I.say("age", lang, d=I.fmt_age(days, lang)) if days >= 0 else I.say("age_unknown", lang)
+        except ValueError:
+            reply = I.say("age_unknown", lang)
+        show = "howold"
+    elif n in ("intent_imperative_volumeup", "intent_imperative_volumedown", "intent_imperative_volumelevel_extend"):
+        if n.endswith("volumeup"):
+            lvl = VOLUME.level + 1
+        elif n.endswith("volumedown"):
+            lvl = VOLUME.level - 1
+        else:
+            lvl = I.parse_level(intent.arg) or VOLUME.level
+        lvl = VOLUME.set(lvl)
+        reply = I.say("volume", lang, n=lvl)
+        show = "volume_max" if lvl == 5 else ("volume_min" if lvl == 1 else "volume")
+    elif n == "intent_photo_take_extend":
+        img = FACE_ID.latest()
+        if not img:
+            reply = I.say("no_photo", lang)
+        else:
+            os.makedirs(PHOTO_DIR, exist_ok=True)
+            path = os.path.join(PHOTO_DIR, time.strftime("photo-%Y%m%d-%H%M%S.jpg"))
+            with open(path, "wb") as f:
+                f.write(img)
+            print(f"intent photo saved {path} bytes={len(img)}", flush=True)
+            show, reply = "photo", I.say("photo", lang)
+    elif n == "intent_names_username_extend":
+        name = names_mod.valid_name(intent.arg, intent.text) or ""
+        if not name:
+            reply = I.say("cant", lang)
+        else:
+            reply, show = voice_enroll(name, lang)
+    elif n == "intent_music_dance":
+        key = DANCER.start_dance(lang, wheels=_on_charger() is False)
+        reply = I.say(key, lang) if key else ""
+    elif n == "intent_music_hum":
+        reply = I.say("hum_go", lang)
+        DANCER.start_hum(lang, 0.5)
+    elif n == "intent_pet_whoismy":
+        # "who is my dog?" -> "me!": proud face, head up, then the bark / meow
+        play_animal(animals.pet_of(intent.arg or intent.text or ""), proud=True)
+        show = ""
+    elif n == "intent_animal_sound":
+        name = animals.name_of(intent.arg or intent.text or "") or "dog"
+        play_animal(name)
+        show = ""
+    elif n in I.CUBE:
+        reply, show = I.say("cube", lang), "cant_help"
+    else:  # I.CANT and anything unhandled
+        reply = I.say("cant", lang)
+    if show:
+        TURN_OUT["show"] = show.encode() if show.endswith("|") else f"anim|{show}".encode()
+    TURN_OUT.update(action=action, intent=n)
+    with LOCK:
+        STATE["last_intent"] = {"intent": n, "lang": lang, "arg": intent.arg, "action": action,
+                                "face": show, "reply": reply, "t": time.time()}
+    print(f"intent {n} lang={lang} arg={intent.arg!r} action={action or '-'} face={show or '-'} reply={reply!r}", flush=True)
+    return reply
+
+
 def voice_loop() -> None:
     """One OpenAI turn at a time. Mic stays closed until the reply is queued."""
     while True:
-        pcm = UTTERANCES.get()
-        queue_cmd(CMD_FACEUI, b"thinking|")
-        text = VOICE.transcribe(pcm)
-        reply = VOICE.chat(text) if text else ""
-        audio = VOICE.tts(reply) if reply else b""
-        VOICE.last_text = text
-        VOICE.last_reply = reply
+        item = UTTERANCES.get()
+        try:
+            if isinstance(item, tuple):  # ("asleep", pcm)
+                asleep_turn(item[1])
+            else:
+                run_turn(item)
+        except Exception as exc:  # noqa: BLE001 - one bad turn must never kill the voice thread
+            print(f"voice loop turn crashed {exc!r}", flush=True)
+            try:
+                with LOCK:
+                    STATE["voice_busy"] = False
+                    STATE["thinking"] = False
+            except Exception:  # noqa: BLE001
+                pass
+
+
+def run_turn(pcm: bytes, text: str | None = None) -> None:
+    """One reply turn; thinking is always cleared, even if a call raises."""
+    with LOCK:
+        running = bool(STATE.get("thinking"))
+    if not running:  # turn was not opened by _on_audio (tests, /record)
+        begin_think("queue")
+    heard = text
+    text, reply, audio, why = "", "", b"", "done"
+    try:
+        text, reply, audio = reply_turn(pcm, heard)
+        if not audio:
+            why = "no-reply" if text else ("dropped" if getattr(VOICE, "last_drop", "") else "no-transcript")
+    except Exception as exc:  # noqa: BLE001 - never leave the face thinking
+        why = f"error {type(exc).__name__}"
+        print(f"voice turn failed {exc!r}", flush=True)
+    finally:
         VOICE.thinking = False
         with LOCK:
-            STATE["thinking"] = False
-            STATE["voice_busy"] = False
             STATE["last_transcript"] = text
             STATE["last_reply"] = reply
+            STATE["last_searched"] = bool(getattr(VOICE, "last_searched", False))
+            STATE["last_via"] = getattr(VOICE, "last_via", "")
+            STATE["last_chat_ms"] = getattr(VOICE, "last_chat_ms", 0)
+            STATE["last_lang"] = getattr(VOICE, "last_lang", "")
+            STATE["last_drop"] = getattr(VOICE, "last_drop", "")
+        show, action = TURN_OUT["show"], TURN_OUT["action"]
+        plan, mode, est, end = TURN_OUT.get("plan", ""), TURN_OUT.get("speak", ""), TURN_OUT.get("est", 0.0), TURN_OUT.get("end", b"")
+        if TURN_OUT["intent"]:
+            why = "intent " + TURN_OUT["intent"]
+        TURN_OUT.update(show=b"", action="", intent="", plan="", speak="", est=0.0, end=b"")
+        send_turn(audio, why, show, action, plan, mode, est, end)
+    print(f"voice transcript={text!r} lang={getattr(VOICE, 'last_lang', '')} reply={reply!r} speak={len(audio)}", flush=True)
+
+
+def send_turn(audio: bytes, why: str, show: bytes, action: str, plan: str = "", mode: str = "", est: float = 0.0,
+              end: bytes = b"") -> None:
+    """Finish a turn on the robot: speech + face, then the action/plan.
+    speak=before: the plan starts when the speech ends (the mic is open again,
+    so "stop" works); during: together; after: the plan first, speech after
+    its estimated length. Pending parts are dropped by SCHED.cancel()."""
+    speech_s = len(audio) / (2 * RATE)
+    if plan and est > 1.0:
+        PLAN_RUN["until"] = time.time() + est + (speech_s if mode == "before" else 0.0) + 1.0
+    if plan and mode == "after":
+        end_think(b"", why, show)
+        queue_cmd(CMD_ACTION, plan.encode())
         if audio:
-            queue_cmd(CMD_SPEAK, audio)
-        queue_cmd(CMD_FACEUI, b"idle|")
-        print(f"voice transcript={text!r} reply={reply!r} speak={len(audio)}", flush=True)
+            SCHED.later(est + 0.4, lambda: queue_cmd(CMD_SPEAK, VOLUME.apply(audio)))
+    else:
+        end_think(audio, why, show)
+        if action:  # after idle/clip so the runner's own clip is not overwritten
+            queue_cmd(CMD_ACTION, action.encode())
+        if plan and mode == "before" and speech_s > 0:
+            SCHED.later(speech_s + 0.3, lambda: queue_cmd(CMD_ACTION, plan.encode()))
+        elif plan:
+            queue_cmd(CMD_ACTION, plan.encode())
+    if end:  # closing expression as the reply ends (no plan to carry it)
+        SCHED.later(max(0.0, speech_s - 0.3), lambda: queue_cmd(CMD_FACEUI, end))
+    LAST_TURN["t"] = time.time()
+
+
+def run_brain(d: dict, text: str) -> str:
+    """Carry out one model decision (brain.py): stock intent, or reply +
+    expression + validated plan. Returns the reply to speak."""
+    I = intents_mod
+    lang = getattr(VOICE, "last_lang", "") or "en"
+    lang = lang if lang in ("en", "de", "fa") else "en"
+    reply = d.get("reply") or ""
+    expr, end = d.get("expression") or "", d.get("expression_end") or ""
+    acts = d.get("actions") or []
+    out = {"intent": d.get("intent"), "expression": expr or "neutral", "expression_end": end, "speak": d.get("speak"),
+           "actions": acts, "t": time.time()}
+    if d.get("intent") and not acts and not getattr(VOICE, "last_searched", False):  # a web search = a question
+        it = router.to_intent({"type": "command", "intent": d["intent"], "args": d.get("args") or {}, "confidence": 1.0},
+                              text, lang)
+        if it is not None:
+            stock = run_intent(it)
+            if not stock and it.name not in NO_SPEECH_INTENTS:
+                stock = reply
+            if not TURN_OUT.get("show") and brain.clip(expr) and it.name not in NO_SPEECH_INTENTS:
+                TURN_OUT["show"] = f"anim|{brain.clip(expr)}".encode()
+            out.update(reply=stock, via="intent")
+            with LOCK:
+                STATE["last_brain"] = out
+            print(f"brain intent {it.name} reply={stock!r}", flush=True)
+            return stock
+    on = _on_charger()
+    plan = brain.build_plan(acts, expr, end, on) if acts else None
+    if plan:
+        for kind, val in plan["hub"]:
+            if kind == "volume":
+                VOLUME.set(int(val))
+            elif kind == "stop":
+                SCHED.cancel()
+                DANCER.stop("brain stop")
+                PLAN_RUN["until"] = 0.0
+                queue_cmd(CMD_ACTION, b"stop")
+            elif kind == "explore_stop":
+                SCHED.cancel()
+                queue_cmd(CMD_ACTION, b"explore_stop")
+            elif kind == "animal_sound":
+                play_animal(str(val))
+            elif kind == "pet_answer":
+                # he IS the pet: no apology / "I'm not a dog" preface, at most a tiny "Me!"
+                if reply and (len(reply.split()) > 7 or re.search(PET_APOLOGY, reply, re.I)):
+                    print(f"pet_answer reply dropped {reply!r}", flush=True)
+                    reply = ""
+                play_animal(str(val), proud=True)
+            elif kind == "dance_music":
+                key = DANCER.start_dance(lang, wheels=on is False)
+                if key and not reply:
+                    reply = I.say(key, lang)
+            elif kind == "hum":
+                DANCER.start_hum(lang, 0.5)
+            elif kind == "explore":
+                with LOCK:
+                    sens = STATE.get("last_sensor") or {}
+                if on is not False:
+                    reply = I.say("on_charger", lang)
+                elif not sens.get("explore_enabled"):
+                    reply = I.say("explore_off", lang)
+                elif not plan["plan"]:
+                    TURN_OUT["action"] = "explore"
+        if plan["held"] and plan["wheels"] is False and any(n.endswith("held: on charger") for n in plan["notes"]):
+            reply = I.say("on_charger", lang)  # nothing of the move can happen on the charger
+        mode = d.get("speak") or "before"
+        if plan["wheels"] and plan["travel_mm"] > 300 and mode == "during":
+            mode = "before"  # long drives start after the speech, so the mic hears "stop"
+        if plan["plan"] or not TURN_OUT.get("plan"):  # an empty move plan must not wipe a pet sound's face/gesture
+            TURN_OUT.update(plan=plan["plan"], speak=mode, est=float(plan["est_s"]))
+    if not any(k in ("pet_answer", "animal_sound") for k, _ in ((plan or {}).get("hub") or [])):
+        # never silent: the model said "I'm your cat!" but forgot the command (12 Oct live)
+        m = re.search(PET_SAYS, reply or "", re.I)
+        pm = re.search(r"(?:my|mein|meine|me)\s+(?:\w+\s+)?(\w+)\W*$", text or "", re.I)
+        pet_in_text = animals.pet_word(pm.group(1)) if pm else ""
+        fa_pet = re.search(r"(سگ|گربه|کتی|پیشی)", text or "")
+        if m and (pet_in_text or fa_pet or any(animals.pet_word(w) for w in re.findall(r"\w+", text or ""))):
+            print(f"pet_answer added from reply {reply!r}", flush=True)
+            play_animal(animals.pet_of(m.group(0)), proud=True)
+        elif (pet_in_text or fa_pet) and re.search(PET_APOLOGY, reply or "", re.I):
+            # "I don't have information about your cat" -> he IS the cat (12 Oct live, 'Who is my caddy?')
+            print(f"pet_answer replaces apology {reply!r}", flush=True)
+            reply = ""
+            play_animal(pet_in_text or animals.pet_of(fa_pet.group(1)), proud=True)
+    if brain.clip(expr):
+        TURN_OUT["show"] = f"anim|{brain.clip(expr)}".encode()
+    if not (plan and plan["plan"]):
+        g = brain.gesture_plan(expr, on) if time.time() > PLAN_RUN["until"] else ""
+        if g and not TURN_OUT.get("plan"):  # an animal sound's own gesture wins
+            TURN_OUT.update(plan=g, speak="during", est=brain.gesture_seconds(g))
+        if brain.clip(end) and end != expr:
+            TURN_OUT["end"] = f"anim|{brain.clip(end)}".encode()
+    TURN_OUT["intent"] = TURN_OUT.get("intent") or ""
+    out.update(reply=reply, plan=(plan or {}).get("plan") or TURN_OUT.get("plan"), notes=(plan or {}).get("notes"),
+               est_s=(plan or {}).get("est_s"), travel_mm=(plan or {}).get("travel_mm"), via="brain")
+    with LOCK:
+        STATE["last_brain"] = out
+    print(f"brain {brain.summary(d, plan)}", flush=True)
+    return reply
+
+
+def speak_turn(text: str, why: str, show: bytes = b"") -> int:
+    """TTS outside a voice turn (/say, face greeting) under the same thinking
+    face. If a voice turn is running it owns the face; just queue the audio."""
+    own = begin_think(why)
+    pcm = b""
+    try:
+        pcm = VOICE.tts(text) if text else tone()
+    except Exception as exc:  # noqa: BLE001
+        print(f"speak {why} failed {exc!r}", flush=True)
+        pcm = b""
+    finally:
+        if own:
+            end_think(pcm, why, show)
+        elif pcm:
+            queue_cmd(CMD_SPEAK, VOLUME.apply(pcm))
+    return len(pcm)
 
 
 def _on_nav_frame(jpeg: bytes) -> None:
@@ -196,20 +1194,237 @@ def _on_nav_frame(jpeg: bytes) -> None:
 
 
 def _on_face_frame(jpeg: bytes) -> None:
-    name, score = FACE_DB.match(jpeg)
-    if not name:
+    """Keep the newest face frame on the hub (local only). face_loop scans it
+    locally; it goes to NVIDIA only when a local match is uncertain (budgeted)."""
+    FACE_ID.on_frame(jpeg)
+
+
+# ------------------------------------------------------------ faces (local first)
+FACE_SYNC = {"t": 0.0, "n": -1}
+GREET_TEXT = {"en": "Hi {n}!", "de": "Hallo {n}!", "fa": "سلام {n}!"}
+
+
+def face_sync(force: bool = False) -> None:
+    """Embed new/removed reference photos (web page or voice enroll) for the local matcher."""
+    if not FACE_LOCAL.available:
         return
-    with LOCK:
-        STATE["face"] = {"name": name, "score": round(score, 3)}
     now = time.time()
-    if LAST_FACE_SPOKEN["name"] == name and now - LAST_FACE_SPOKEN["t"] < 30:
+    if not force and now - FACE_SYNC["t"] < 10:
         return
-    LAST_FACE_SPOKEN["name"] = name
-    LAST_FACE_SPOKEN["t"] = now
-    queue_cmd(CMD_FACEUI, f"name|{name}".encode())
-    spoken = VOICE.tts(name) if VOICE.key else tone(660, 250)
-    if spoken:
-        queue_cmd(CMD_SPEAK, spoken)
+    n = len(FACE_DB.list())
+    FACE_SYNC["t"] = now
+    if force or n != FACE_SYNC["n"]:
+        added = FACE_LOCAL.sync(FACE_DB)
+        FACE_LOCAL.load_extra(FACE_DB.embeddings())
+        FACE_SYNC["n"] = n
+        if added:
+            FACE_WATCH.clear_cache()
+            print(f"face local gallery +{added} refs={len(FACE_LOCAL.refs())}", flush=True)
+
+
+def face_ctx() -> dict:
+    now = time.time()
+    with LOCK:
+        busy, thinking = bool(STATE.get("voice_busy")), bool(STATE.get("thinking"))
+    return {"awake": SESSION.listening(), "busy": busy or not UTTERANCES.empty(), "thinking": thinking,
+            "speaking": SPEAK["until"] > now, "since_turn_s": now - LAST_TURN["t"] if LAST_TURN["t"] else 1e9}
+
+
+def _greet_lang() -> str:
+    lang = SESSION.lang or getattr(VOICE, "last_lang", "") or "en"
+    return lang if lang in GREET_TEXT else "en"
+
+
+def greet(name: str) -> None:
+    """Spontaneous hello for a known face (cooldown, quiet and still-there checked again after a short pause)."""
+    time.sleep(FACE_WATCH.delay())
+    ctx = face_ctx()
+    frame = FACE_ID.latest()
+    ev = FACE_WATCH.scan(frame, ctx) if frame else {}
+    if ev.get("greet") != name:
+        print(f"face greet {name!r} dropped (gone or busy)", flush=True)
+        return
+    mode = FACE_WATCH.greet_mode(ctx)
+    FACE_WATCH.mark_greeted(name)
+    if mode == "speak":
+        print(f"face greet {name!r} speak awake={ctx['awake']}", flush=True)
+        speak_turn(GREET_TEXT[_greet_lang()].format(n=name), "greet", b"anim|hello")
+        LAST_TURN["t"] = time.time()
+    else:  # asleep: look up + happy eyes, no speech
+        print(f"face greet {name!r} look (asleep, no speech)", flush=True)
+        queue_cmd(CMD_ACTION, b"look_up")
+        queue_cmd(CMD_FACEUI, b"anim|hello")
+
+
+def ask_unknown() -> None:
+    time.sleep(FACE_WATCH.delay())
+    ctx = face_ctx()
+    if not ctx["awake"] or not FACE_WATCH.quiet(ctx):
+        return
+    FACE_WATCH.mark_asked()
+    print("face unknown: asking for a name", flush=True)
+    speak_turn(intents_mod.say("ask_name", _greet_lang()), "ask name", b"anim|lookatme")
+    LAST_TURN["t"] = time.time()
+
+
+def face_loop() -> None:
+    """Local scan of the newest face frame (~1 fps with a face around, ~0.5 fps
+    otherwise). Nothing leaves the hub unless face_watch asks NVIDIA."""
+    last = b""
+    while True:
+        time.sleep(0.25)
+        if not FACE_LOCAL.available or not FACE_ID.enabled:
+            continue
+        frame = FACE_ID.latest()
+        if not frame or frame is last or not FACE_WATCH.due():
+            continue
+        last = frame
+        try:
+            face_sync()
+            if not FACE_LOCAL.refs() and not FACE_WATCH.unknown_on:
+                FACE_WATCH.last_scan_t = time.time()
+                continue  # nobody enrolled: nothing to greet
+            ev = FACE_WATCH.scan(frame, face_ctx())
+            if ev.get("greet"):
+                greet(ev["greet"])
+            elif ev.get("ask"):
+                ask_unknown()
+        except Exception as exc:  # noqa: BLE001 - the scan must never die
+            print(f"face loop error {exc!r}", flush=True)
+            time.sleep(2)
+
+
+def identify_person() -> dict:
+    """Identity question ("who am I?"): local match first, NVIDIA only when
+    uncertain (budgeted; budget gone = local-only, nothing said about it)."""
+    if not (FACE_LOCAL.available and FACE_ID.enabled):
+        return FACE_ID.identify()
+    res = {"person": False, "face_visible": False, "name": None, "confidence": 0.0, "error": "", "raw": "",
+           "ms": 0, "skip": "", "t": time.time(), "via": "local"}
+    t0 = time.time()
+    face_sync(force=True)
+    frame = FACE_ID.latest()
+    if not FACE_DB.names():
+        res["skip"] = "nobody enrolled"
+    elif not frame:
+        res["skip"] = "no fresh camera frame"
+    else:
+        faces, clear, img = FACE_LOCAL.detect(frame)
+        recent = dict(FACE_WATCH.last or {})
+        if not clear and recent.get("name") and recent.get("level") == "sure" \
+                and time.time() - float(recent.get("t") or 0) < 5.0:
+            # the face turned away while asking: the background scan saw it clearly a moment ago
+            res.update(person=True, face_visible=True, name=recent["name"], via="local-recent",
+                       confidence=round(min(0.99, 0.7 + float(recent.get("score") or 0) / 2), 2),
+                       score=recent.get("score"), level="sure")
+        elif not clear:
+            res["person"] = bool(faces)  # someone there, face not clear -> "don't recognise / face not visible"
+            if not faces:
+                res["skip"] = "no face in view"
+        else:
+            emb = FACE_LOCAL.embed(img, clear[0])
+            r = FACE_WATCH.resolve(emb, frame, "identity", face_ctx())
+            res.update(person=True, face_visible=True, name=r.get("name"), confidence=float(r.get("confidence") or 0),
+                       via=r.get("via", ""), error=r.get("error", ""), score=r.get("score"), level=r.get("level"))
+    res["ms"] = int((time.time() - t0) * 1000)
+    with FACE_ID.lock:
+        FACE_ID.result = dict(res)
+    print(f"face id (identity question) local-first name={res['name']!r} conf={res['confidence']:.2f} "
+          f"via={res.get('via')} score={res.get('score')} level={res.get('level')} skip={res['skip']!r} "
+          f"err={res['error'][:80]!r} ms={res['ms']}", flush=True)
+    return res
+
+
+ENROLL_WANT = 3
+
+
+CAPTURE_EMBS: dict = {}  # id(frame) -> embedding from the last capture_faces()
+
+
+def capture_faces(want: int, secs: float) -> list[bytes]:
+    """New camera frames with exactly one clear face, until `want` or `secs`."""
+    out: list[bytes] = []
+    last = b""
+    deadline = time.time() + secs
+    while len(out) < want and time.time() < deadline:
+        img = LAST_JPEG["face"]
+        if img and img is not last:
+            last = img
+            emb, why = FACE_LOCAL.one_clear_face(img)
+            if emb is not None:
+                out.append(img)
+                CAPTURE_EMBS[id(img)] = emb
+            else:
+                print(f"face enroll frame skipped: {why}", flush=True)
+        time.sleep(0.1)
+    return out
+
+
+def enroll_filter(frames: list[bytes], name: str) -> tuple[list[bytes], str]:
+    """Drop frames whose face already matches a DIFFERENT enrolled person
+    (someone else in front of the camera while a name is said; 2026-10-11 the
+    woman in view was stored as 'Mohammad'). -> (kept frames, other name)."""
+    kept, other = [], ""
+    for img in frames:
+        emb = CAPTURE_EMBS.get(id(img))
+        if emb is None:
+            kept.append(img)
+            continue
+        m = FACE_LOCAL.match(emb)
+        if m.get("name") and m["name"].lower() != name.lower() and m.get("level") in ("sure", "unsure") \
+                and float(m.get("score") or 0) >= FACE_LOCAL.sure:
+            other = m["name"]
+            print(f"face enroll frame skipped: looks like {m['name']!r} score={m['score']}", flush=True)
+            continue
+        kept.append(img)
+    return kept, other
+
+
+def voice_enroll(name: str, lang: str) -> tuple[str, str]:
+    """'My name is X' / 'I'm X' (router-checked): learn X's face from the camera.
+    -> (reply, face clip). No NVIDIA call: the local detector checks each frame."""
+    import intents as I
+    name = names_mod.canonical(name, FACE_DB.names())
+    known = any(n.lower() == name.lower() for n in FACE_DB.names())
+    if not (FACE_LOCAL.available and FACE_ID.enabled):
+        out, _code = enroll({"name": name, "count": 2, "gap": 1.0})  # no local model: old NVIDIA-checked enroll
+        return I.say("enrolled" if out.get("ok") else "enroll_fail", lang, n=out.get("name") or name), ""
+    queue_cmd(CMD_ACTION, b"look_at_me")  # head up toward the speaker
+    frames = capture_faces(ENROLL_WANT, float(os.environ.get("HUB_ENROLL_S", "5")))
+    if not frames:
+        try:
+            pcm = VOICE.tts(I.say("enroll_look", lang))
+            if pcm:
+                queue_cmd(CMD_SPEAK, VOLUME.apply(pcm))
+                time.sleep(len(pcm) / (2 * RATE))
+        except Exception as exc:  # noqa: BLE001
+            print(f"enroll prompt failed {exc!r}", flush=True)
+        frames = capture_faces(ENROLL_WANT, float(os.environ.get("HUB_ENROLL_RETRY_S", "6")))
+    frames, other = enroll_filter(frames, name)
+    CAPTURE_EMBS.clear()
+    if other and not frames:
+        print(f"face voice enroll name={name!r} refused: the face in view is {other!r}", flush=True)
+        return I.say("enroll_fail", lang, n=name), ""
+    for img in frames:
+        FACE_DB.enroll(name, img)
+    print(f"face voice enroll name={name!r} stored={len(frames)} known_before={known}", flush=True)
+    if not frames:
+        return I.say("enroll_fail", lang, n=name), ""
+    face_sync(force=True)
+    FACE_WATCH.clear_cache()
+    FACE_WATCH.mark_greeted(name)  # just met: no "Hi X!" right after
+    return I.say("enrolled_more" if known else "enrolled", lang, n=name), "hello"
+
+
+TURN_PERSON = {"ctx": ""}  # set by reply_turn for an identity question, cleared after the chat call
+
+
+def _person_context() -> str:
+    return TURN_PERSON["ctx"] or NO_CONTEXT
+
+
+voice_mod.PERSON_CONTEXT = _person_context
+voice_mod.HISTORY = lambda: SESSION.messages()  # global: tests swap SESSION
 
 
 def handle_robot(conn: socket.socket) -> None:
@@ -308,10 +1523,106 @@ class Status(BaseHTTPRequestHandler):
             with LOCK:
                 body = dict(STATE)
                 body.pop("_edge_int", None)
+            body["voice"] = {
+                "tts_voice": VOICE.voice,
+                "tts_model": VOICE.tts_model,
+                "vector_fx": os.environ.get("HUB_VOICE_VECTOR", "1").strip().lower() not in ("0", "false", "no", "off", ""),
+                "langs": VOICE.langs,
+                "stt_language": VOICE.stt_language or "auto",
+            }
+            body["person"] = FACE_ID.present()
+            body["person"]["local"] = FACE_LOCAL.status()
+            body["person"]["watch"] = FACE_WATCH.status()
+            body["nvidia_budget"] = NV_BUDGET.status()
+            body["intents"] = {"enabled": INTENTS_ON, "volume": VOLUME.level, "timer_left_s": TIMER.left()}
+            body["music"] = DANCER.status()
+            body["session"] = dict(SESSION.status(), asleep=dict(ASLEEP), chime=WAKE_CHIME, button=dict(BUTTON))
+            body["openai_calls"] = dict(Api.CALLS)
+            body["speak_left_s"] = round(max(0.0, SPEAK["until"] - time.time()), 2)
             self._json(body)
+            return
+        if path.startswith("/debug/") and DEBUG_AUDIO:
+            q = parse_qs(urlparse(self.path).query)
+            arg = (q.get("name") or q.get("secs") or [""])[0]
+            if path == "/debug/mic.json":
+                q["meta"], path = ["1"], "/debug/mic.wav"
+            if path == "/debug/mic.wav":  # Vector-mic audio of the last N s (+ wall clock of the first sample)
+                secs = min(40.0, float(arg or 10))
+                now = time.time()
+                ring = [m for m in list(MIC_RING) if m[0] >= now - secs]
+                if q.get("meta"):
+                    self._json({"chunks": [[m[0], m[2], m[3], len(m[1]), m[4]] for m in ring]})
+                    return
+                chunks = [(m[0], m[1]) for m in ring]
+                pcm = b"".join(c for _, c in chunks)
+                body = _wav_wrap(pcm)
+                self.send_response(200)
+                self.send_header("Content-Type", "audio/wav")
+                self.send_header("X-First-Chunk-Time", f"{chunks[0][0] - len(chunks[0][1]) / (2 * RATE):.3f}" if chunks else "0")
+                self.send_header("X-End-Time", f"{chunks[-1][0]:.3f}" if chunks else "0")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+                return
+            if path == "/debug/animal":
+                name = "cat" if arg.lower() in animals.MEOWS else (animals.name_of(arg) or arg)
+                plan = animals.gesture(name, _on_charger())
+                if plan:
+                    queue_cmd(CMD_ACTION, plan.encode())
+                variant = arg.lower() if arg.lower() in animals.MEOWS else ""  # /debug/animal?name=mrrp
+                queue_cmd(CMD_SPEAK, VOLUME.apply(animals.pcm(name, seed=int(time.time()) & 0xFFFF, variant=variant)))
+                self._json({"played": name, "t": time.time()})
+                return
+            if path == "/debug/hum":
+                DANCER.start_hum("en", 0.0)
+                self._json({"hum": True, "t": time.time()})
+                return
+            if path == "/debug/dance":
+                self._json({"reply": DANCER.start_dance("en", wheels=False), "t": time.time()})
+                return
+            if path == "/debug/stop":
+                self._json({"stopped": DANCER.stop("debug"), "t": time.time()})
+                return
+        if path == "/intents":
+            self._json({"enabled": INTENTS_ON, "intents": intents_mod.status_table()})
+            return
+        if path == "/expressions":
+            self._json({"brain": brain.ON, "expressions": {k: {"clip": v[0], "gesture": v[1], "use": v[2]}
+                                                            for k, v in brain.EXPRESSIONS.items()},
+                        "commands": brain.DO, "tricks": list(brain.TRICKS),
+                        "limits": {"steps": brain.MAX_STEPS, "drive_mm": brain.MAX_DRIVE_MM, "turn_deg": brain.MAX_TURN_DEG,
+                                   "wait_ms": brain.MAX_WAIT_MS, "travel_mm": brain.MAX_TRAVEL_MM, "plan_s": brain.MAX_PLAN_S}})
             return
         if path == "/faces":
             self._json({"faces": FACE_DB.list()})
+            return
+        if path == "/faces/img":
+            try:
+                fid = int((parse_qs(urlparse(self.path).query).get("id") or ["0"])[0])
+            except ValueError:
+                fid = 0
+            img = FACE_DB.image(fid)
+            if not img:
+                self.send_error(404)
+                return
+            self.send_response(200)
+            self.send_header("Content-Type", "image/jpeg")
+            self.send_header("Content-Length", str(len(img)))
+            self.end_headers()
+            self.wfile.write(img)
+            return
+        if path == "/frame":
+            kind = (parse_qs(urlparse(self.path).query).get("kind") or ["face"])[0]
+            img = LAST_JPEG.get("face" if kind != "nav" else "nav") or b""
+            if not img:
+                self.send_error(404, "no frame yet")
+                return
+            self.send_response(200)
+            self.send_header("Content-Type", "image/jpeg")
+            self.send_header("Content-Length", str(len(img)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(img)
             return
         if path == "/ui":
             html = UI_HTML.encode()
@@ -329,6 +1640,9 @@ class Status(BaseHTTPRequestHandler):
             self.send_error(404)
             return
         qs = parse_qs(u.query)
+        if qs.get("name"):
+            self._json({"ok": True, "deleted": FACE_DB.delete_name(qs["name"][0])})
+            return
         try:
             fid = int((qs.get("id") or ["0"])[0])
         except ValueError:
@@ -344,56 +1658,265 @@ class Status(BaseHTTPRequestHandler):
         except json.JSONDecodeError:
             data = {}
         if path == "/faces":
-            name = str(data.get("name") or "")
-            img = b""
-            if data.get("image_b64"):
-                img = base64.b64decode(data["image_b64"])
-            elif LAST_JPEG["face"] or LAST_JPEG["nav"]:
-                img = LAST_JPEG["face"] or LAST_JPEG["nav"]
-            try:
-                self._json(FACE_DB.enroll(name, img))
-            except ValueError as e:
-                self._json({"ok": False, "error": str(e)}, 400)
+            self._json(*enroll(data))
+            return
+        if path == "/record":
+            self._json(*record(data))
             return
         if path == "/think":
             on = bool(data.get("on", True))
-            with LOCK:
-                STATE["thinking"] = on
-            queue_cmd(CMD_FACEUI, b"thinking|" if on else b"idle|")
-            self._json({"thinking": on})
+            if on:
+                ok = begin_think("http")
+            else:
+                end_think(why="http")
+                ok = True
+            self._json({"thinking": on, "ok": ok})
+            return
+        if path == "/action":
+            # supervised tests only; the agent runs it under its veto (cliff/pickup/charger)
+            name = str(data.get("name") or "")
+            if name not in ("forward_test", "stop"):
+                self._json({"ok": False, "error": "allowed: forward_test, stop"}, 400)
+                return
+            queue_cmd(CMD_ACTION, name.encode())
+            print(f"http action {name}", flush=True)
+            self._json({"ok": True, "action": name})
+            return
+        if path == "/expression":
+            # preview one face expression (eyes only unless gesture=true: DDL lift/head motion, lift not on the charger, never wheels)
+            name = brain.expression(data.get("name"))
+            if not name and str(data.get("name") or "").lower() != "neutral":
+                self._json({"ok": False, "error": "names: " + ", ".join(brain.NAMES)}, 400)
+                return
+            c = brain.clip(name)
+            queue_cmd(CMD_FACEUI, f"anim|{c}".encode() if c else b"idle|")
+            g = brain.gesture_plan(name, _on_charger()) if data.get("gesture") else ""
+            if g:
+                queue_cmd(CMD_ACTION, g.encode())
+            print(f"http expression {name or 'neutral'} clip={c or '-'} gesture={g or '-'}", flush=True)
+            self._json({"ok": True, "expression": name or "neutral", "clip": c, "gesture": g})
+            return
+        if path == "/brain":
+            # dry run: what the model would say/show/do for a sentence (nothing is sent to the robot)
+            text = str(data.get("text") or "").strip()
+            if not text:
+                self._json({"ok": False, "error": "text"}, 400)
+                return
+            d = VOICE.think(text)
+            if d is None:
+                self._json({"ok": False, "error": "model call failed", "ms": VOICE.last_chat_ms}, 502)
+                return
+            plan = brain.build_plan(d["actions"], d["expression"], d["expression_end"], _on_charger()) if d["actions"] else None
+            self._json({"ok": True, "ms": VOICE.last_chat_ms, "searched": VOICE.last_searched, "decision": d, "plan": plan})
             return
         if path == "/say":
             text = str(data.get("text") or "")
+            n = speak_turn(text, "say")
             with LOCK:
-                STATE["thinking"] = True
-            queue_cmd(CMD_FACEUI, b"thinking|")
-            pcm = VOICE.tts(text) if text else tone()
-            queue_cmd(CMD_SPEAK, pcm)
-            queue_cmd(CMD_FACEUI, b"idle|")
-            with LOCK:
-                STATE["thinking"] = False
                 STATE["last_reply"] = text
-            self._json({"ok": True, "bytes": len(pcm)})
+            self._json({"ok": n > 0, "bytes": n})
             return
         self.send_error(404)
 
 
-UI_HTML = """<!doctype html><html><head><meta charset="utf-8"><title>victor hub</title>
-<style>body{font-family:sans-serif;max-width:40rem;margin:2rem auto}</style></head>
-<body><h1>victor hub</h1><p>Face names (local SQLite, not OpenAI).</p>
-<form onsubmit="enroll(event)"><input name="name" placeholder="name" required>
-<button>enroll last frame</button></form>
-<pre id="out"></pre>
+def enroll(data: dict) -> tuple[dict, int]:
+    """POST /faces {"name": "Ann", "count": 3, "gap": 1.5} enrolls `count` live
+    face frames taken `gap` s apart (or one "image_b64"). With the NVIDIA key set,
+    each frame is first checked for a visible person; frames without one are
+    skipped, so standing out of view enrolls nothing."""
+    from face_id import clean_name
+
+    name = clean_name(str(data.get("name") or ""))
+    if not name:
+        return {"ok": False, "error": "name required"}, 400
+    if data.get("image_b64"):
+        try:
+            frames = [base64.b64decode(data["image_b64"])]
+        except (ValueError, TypeError):
+            return {"ok": False, "error": "image_b64"}, 400
+    else:
+        try:
+            count = max(1, min(int(data.get("count") or 3), 6))
+            gap = max(0.5, min(float(data.get("gap") or 1.5), 5.0))
+        except (TypeError, ValueError):
+            return {"ok": False, "error": "count/gap"}, 400
+        frames = []
+        last = b""
+        deadline = time.time() + count * gap + 5
+        while len(frames) < count and time.time() < deadline:
+            img = LAST_JPEG["face"]
+            if img and img is not last and (not frames or time.time() - frames[-1][1] >= gap):
+                frames.append((img, time.time()))
+                last = img
+            time.sleep(0.1)
+        frames = [f for f, _ in frames]
+    if not frames:
+        return {"ok": False, "error": "no camera frame (is the robot streaming video?)"}, 409
+    stored, skipped, checks = [], 0, []
+    for img in frames:
+        if FACE_LOCAL.available:  # local check, no NVIDIA call
+            emb, why = FACE_LOCAL.one_clear_face(img)
+            checks.append({"local": True, "face": emb is not None, "why": "" if emb is not None else why})
+            if emb is None:
+                skipped += 1
+                continue
+        elif FACE_ID.ready():
+            res = FACE_ID.recognize(img, [], reason="enroll check")  # explicit enroll only: "is a face visible?"
+            if res.get("skip") == "budget":  # no budget left: store unchecked rather than fail
+                stored.append(FACE_DB.enroll(name, img)["id"])
+                continue
+            FACE_ID.enroll_calls += 1
+            checks.append({"person": res["person"], "face": res.get("face_visible", res["person"]),
+                           "ms": res["ms"], "error": res["error"][:80]})
+            if res["error"] or not res["person"] or not res.get("face_visible", res["person"]):
+                skipped += 1
+                continue
+        stored.append(FACE_DB.enroll(name, img)["id"])
+    ok = bool(stored)
+    out = {"ok": ok, "name": name, "stored": len(stored), "ids": stored, "skipped": skipped, "checks": checks}
+    if not ok:
+        out["error"] = "no person visible in the frames; stand 0.5-1 m in front of the robot, face it, and retry"
+    print(f"face enroll name={name!r} stored={len(stored)} skipped={skipped}", flush=True)
+    if stored:
+        face_sync(force=True)
+        FACE_WATCH.clear_cache()
+    return out, 200 if ok else 422
+
+
+def _safe_name(name: str) -> str:
+    keep = "".join(c for c in name if c.isalnum() or c in "-_.")
+    return keep.strip(".")[:64] or time.strftime("rec-%Y%m%d-%H%M%S")
+
+
+def record(data: dict) -> tuple[dict, int]:
+    """Record the raw robot mic stream for N seconds to /app/data/rec/<name>.wav.
+
+    {"secs": 20, "name": "baseline", "transcribe": true}. Transcription uses the
+    same hub STT as a voice turn (OpenAI, key on the hub only).
+    """
+    try:
+        secs = float(data.get("secs") or 10)
+    except (TypeError, ValueError):
+        return {"ok": False, "error": "secs"}, 400
+    secs = max(1.0, min(secs, 120.0))
+    name = _safe_name(str(data.get("name") or ""))
+    with LOCK:
+        if REC["active"]:
+            return {"ok": False, "error": "busy"}, 409
+        REC["active"] = True
+        REC["buf"] = bytearray()
+    try:
+        time.sleep(secs)
+    finally:
+        with LOCK:
+            REC["active"] = False
+            pcm = bytes(REC["buf"])
+            REC["buf"] = bytearray()
+    os.makedirs(REC_DIR, exist_ok=True)
+    path = os.path.join(REC_DIR, name + ".wav")
+    with open(path, "wb") as f:
+        f.write(_wav_wrap(pcm))
+    out = {"ok": True, "path": path, "seconds": round(len(pcm) / 2 / 16000, 2), "bytes": len(pcm)}
+    if data.get("transcribe") and pcm:
+        out["transcript"] = VOICE.transcribe(pcm)
+    return out, 200
+
+
+UI_HTML = """<!doctype html><html><head><meta charset="utf-8"><title>victor hub - faces</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>body{font-family:sans-serif;max-width:44rem;margin:1.5rem auto;padding:0 1rem}
+img.live{width:100%;max-width:640px;border:1px solid #888}.refs img{height:96px;margin:2px}
+.row{margin:.4rem 0}button{padding:.4rem .8rem}</style></head>
+<body><h1>victor hub - faces</h1>
+<p>Live robot camera (1 fps, local preview only). Stand 0.5-1 m in front of Vector, face it, good light.
+Faces are found and matched locally on the hub. A photo goes to the NVIDIA face AI only when the local match is
+unsure (hard budget below). You can also just tell Vector "my name is ..." / "ich heiße ..." / "اسم من ... است".</p>
+<img class="live" id="live" alt="no camera frame yet">
+<form onsubmit="enroll(event)" class="row"><input name="name" placeholder="your name" required>
+<button>enroll (3 photos, ~5 s)</button></form>
+<div class="row" id="sess" style="font-weight:bold"></div>
+<div class="row" id="who"></div>
+<div class="row" id="seen"></div>
+<div class="row" id="budget"></div>
+<pre id="out"></pre><div id="list"></div>
+<h2>expressions</h2><p>Preview Vector's face expressions (eyes only; tick the box for the DDL head/lift motion: lift only off the charger, never wheels).</p>
+<label><input type="checkbox" id="gest"> with head/lift motion</label><div class="row" id="expr"></div>
 <script>
-async function enroll(e){e.preventDefault();
- const name=e.target.name.value;
+fetch('/expressions').then(r=>r.json()).then(j=>{const d=document.getElementById('expr');
+ for(const [n,e] of Object.entries(j.expressions)){const b=document.createElement('button');b.textContent=n;b.title=e.use;
+  b.style.margin='2px';b.onclick=()=>fetch('/expression',{method:'POST',headers:{'Content-Type':'application/json'},
+  body:JSON.stringify({name:n,gesture:document.getElementById('gest').checked})});d.appendChild(b);}});
+function tick(){document.getElementById('live').src='/frame?kind=face&t='+Date.now();
+ fetch('/status').then(r=>r.json()).then(j=>{const p=j.person||{};const s=j.session||{};
+  document.getElementById('sess').textContent='voice session: '+(s.state||'?').toUpperCase()+' for '+s.for_s+'s'+
+   ' (wakes '+s.wakes+', turns '+s.turns+', history '+s.history_turns+(s.idle_timeout_s?', idle timeout '+s.idle_timeout_s+'s':'')+
+   ') | asleep: heard '+(s.asleep||{}).heard+', ignored '+(s.asleep||{}).ignored+', last '+JSON.stringify((s.asleep||{}).last||'');
+  document.getElementById('who').textContent='last identity check: '+(p.present_name||'nobody')+
+   ' conf '+p.confidence+' age '+p.age_s+'s person='+p.present_person+' checks '+p.calls+
+   (p.skip?' ('+p.skip+')':'')+(p.error?' error: '+p.error:'')+(p.via?' via '+p.via:'');
+  const w=p.watch||{},l=w.last||{},L=p.local||{};
+  document.getElementById('seen').textContent='local scan: '+(L.available?'on':'OFF '+(L.error||''))+', refs '+L.refs+
+   ' | last: '+(l.clear?(l.name||'unknown face')+' ('+l.via+', '+l.score+')':(l.faces?'face not clear':'no face'))+
+   ' | greeted (2 h): '+JSON.stringify((w.greet||{}).recent||{});
+  const b=j.nvidia_budget||{};
+  document.getElementById('budget').textContent='NVIDIA budget: '+b.used+'/'+b.max+' used ('+b.window+
+   (b.window==='day'?' '+b.period:'')+'), '+b.last60s+'/'+b.rpm+' in the last minute, denied '+JSON.stringify(b.denied||{})+
+   ', by reason '+JSON.stringify(b.by_reason||{});});}
+setInterval(tick,1000);tick();
+async function enroll(e){e.preventDefault();const name=e.target.name.value;
+ document.getElementById('out').textContent='taking photos...';
  const r=await fetch('/faces',{method:'POST',headers:{'Content-Type':'application/json'},
-  body:JSON.stringify({name})});
- document.getElementById('out').textContent=await r.text();
-}
-fetch('/faces').then(r=>r.json()).then(j=>document.getElementById('out').textContent=JSON.stringify(j,null,2));
+  body:JSON.stringify({name,count:3,gap:1.5})});
+ document.getElementById('out').textContent=await r.text();list();}
+async function del(id){await fetch('/faces?id='+id,{method:'DELETE'});list();}
+function list(){fetch('/faces').then(r=>r.json()).then(j=>{const d=document.getElementById('list');d.innerHTML='';
+ for(const f of j.faces){const s=document.createElement('div');s.className='refs';
+  s.innerHTML=(f.photo?'<img src="/faces/img?id='+f.id+'">':'(no photo)')+' '+f.name+' #'+f.id+
+   ' <button onclick="del('+f.id+')">delete</button>';d.appendChild(s);}});}
+list();
 </script></body></html>
 """
+
+
+SESSION_FILE = os.environ.get("HUB_SESSION_FILE") or "/app/data/session.json"
+SESSION_RESTORE_S = float(os.environ.get("HUB_SESSION_RESTORE_S", "900") or 0)
+
+
+def session_restore() -> bool:
+    """A hub restart (deploy) within HUB_SESSION_RESTORE_S of an awake session
+    comes back awake, so a rebuild never puts Vector to sleep mid-use."""
+    if not SESSION.enabled:
+        return False
+    try:
+        d = json.load(open(SESSION_FILE))
+    except (OSError, ValueError):
+        return False
+    if d.get("explicit_sleep") or d.get("button_only"):
+        SESSION.button_only = True  # survives the restart: still only the button wakes him
+        return False
+    if SESSION_RESTORE_S <= 0:
+        return False  # put to sleep by voice/user: a restart never wakes him
+    if d.get("state") == "awake" and 0 <= time.time() - float(d.get("t") or 0) < SESSION_RESTORE_S:
+        return SESSION.wake("restored after hub restart")
+    return False
+
+
+def session_save_loop() -> None:
+    last = None
+    while True:
+        st = SESSION.state
+        key = (st, SESSION.button_only)
+        if key != last or st == "awake":
+            try:
+                os.makedirs(os.path.dirname(SESSION_FILE), exist_ok=True)
+                with open(SESSION_FILE, "w") as f:
+                    json.dump({"state": st, "t": time.time(),
+                               "explicit_sleep": st != "awake" and SESSION.button_only,
+                               "button_only": SESSION.button_only}, f)
+                last = key
+            except OSError:
+                pass
+        time.sleep(5)
 
 
 def main() -> None:
@@ -410,6 +1933,34 @@ def main() -> None:
     tcp_port = int(os.environ.get("HUB_SKILL_PORT", "7443"))
     http_port = int(os.environ.get("HUB_HTTP_PORT", "8080"))
     threading.Thread(target=voice_loop, daemon=True).start()
+    session_restore()
+    threading.Thread(target=session_save_loop, daemon=True).start()
+    if SESSION.enabled:
+        print(f"wake word on: asleep until 'Hey Vector', awake until 'Stop Vector'; "
+              f"idle timeout {SESSION.idle_s or 'off'}", flush=True)
+    else:
+        print("wake word off (HUB_WAKE=0): always listening", flush=True)
+    if FACE_ID.ready():
+        print(f"face id on: model={FACE_ID.model} key=${FACE_ID.key_var} (value not logged)", flush=True)
+    else:
+        print(f"face id off: set ${FACE_ID.key_var} (and HUB_FACE_ID=1) for face-to-name", flush=True)
+    if not FACE_LOCAL.available and "missing" in FACE_LOCAL.error:
+        globals()["FACE_LOCAL"] = LocalFaces(download=True)  # first start without baked models
+        FACE_WATCH.local = FACE_LOCAL
+    if FACE_LOCAL.available:
+        face_sync(force=True)
+        print(f"face local on: YuNet+SFace refs={len(FACE_LOCAL.refs())} sure>={FACE_LOCAL.sure} "
+              f"unsure>={FACE_LOCAL.unsure}; greet={FACE_WATCH.greet_on} asleep={FACE_WATCH.asleep_mode} "
+              f"cooldown={FACE_WATCH.cooldown:.0f}s unknown={FACE_WATCH.unknown_on}", flush=True)
+    else:
+        print(f"face local off ({FACE_LOCAL.error}); identity questions use NVIDIA only", flush=True)
+    b = NV_BUDGET.status()
+    print(f"nvidia budget {b['used']}/{b['max']} window={b['window']} rpm={b['rpm']}", flush=True)
+    threading.Thread(target=face_loop, daemon=True).start()
+    threading.Thread(target=think_loop, daemon=True).start()
+    threading.Thread(target=DANCER.run, daemon=True).start()
+    print(f"music: auto={DANCER.auto} (HUB_MUSIC_AUTO) asleep_bob={dancer_mod._on('HUB_MUSIC_ASLEEP_BOB')} "
+          f"cooldown={dancer_mod._envf('HUB_MUSIC_COOLDOWN_S', 300):.0f}s", flush=True)
     threading.Thread(target=udp_loop, args=(host, udp_sensor), daemon=True).start()
     threading.Thread(target=udp_loop, args=(host, udp_audio), daemon=True).start()
     threading.Thread(target=udp_loop, args=(host, udp_video), daemon=True).start()

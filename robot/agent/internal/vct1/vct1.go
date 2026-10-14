@@ -94,10 +94,39 @@ type Sensor struct {
 	ChargerMV   uint16
 	Touch       uint16
 	Flags       uint16 // bit0 button, bit1 picked_up, bit2 on_charger, bit3 falling
+	// ButtonPresses: debounced backpack presses since the agent started
+	// (wraps). The hub turns an increase into a button_press event. 49-byte
+	// payload; a 47-byte one (older agent) has none.
+	ButtonPresses uint16
+	// ActionSeq counts finished voice actions/plans (wraps); ActionResult is
+	// the last one's outcome (Result* below). 52-byte payload; older agents
+	// send 47/49 bytes and the hub then never hears an outcome.
+	ActionSeq    uint16
+	ActionResult uint8
 }
 
+// Voice action outcomes (SENSOR ActionResult).
+const (
+	ResultNone      uint8 = 0
+	ResultOK        uint8 = 1
+	ResultCliff     uint8 = 2 // front edge (forward move)
+	ResultRearCliff uint8 = 3 // edge behind (reverse move)
+	ResultPickup    uint8 = 4 // picked up / falling
+	ResultBattery   uint8 = 5
+	ResultHubGone   uint8 = 6
+	ResultObstacle  uint8 = 7 // ToF obstacle ahead
+	ResultCharger   uint8 = 8 // wheels/lift held on the charger
+	ResultDisabled  uint8 = 9 // voice-drive.disabled
+	ResultStalled   uint8 = 10
+	ResultTimeout   uint8 = 11
+	ResultCancelled uint8 = 12 // voice stop / button
+)
+
+// SensorSize is the SENSOR payload length (47 before ButtonPresses, 49 before ActionSeq).
+const SensorSize = 52
+
 func (s Sensor) Marshal() []byte {
-	b := make([]byte, 47)
+	b := make([]byte, SensorSize)
 	off := 0
 	for i := 0; i < 4; i++ {
 		binary.LittleEndian.PutUint16(b[off:], s.Cliffs[i])
@@ -130,6 +159,12 @@ func (s Sensor) Marshal() []byte {
 	binary.LittleEndian.PutUint16(b[off:], s.Touch)
 	off += 2
 	binary.LittleEndian.PutUint16(b[off:], s.Flags)
+	off += 2
+	binary.LittleEndian.PutUint16(b[off:], s.ButtonPresses)
+	off += 2
+	binary.LittleEndian.PutUint16(b[off:], s.ActionSeq)
+	off += 2
+	b[off] = s.ActionResult
 	return b
 }
 
@@ -170,6 +205,15 @@ func UnmarshalSensor(b []byte) (Sensor, error) {
 	s.Touch = binary.LittleEndian.Uint16(b[off:])
 	off += 2
 	s.Flags = binary.LittleEndian.Uint16(b[off:])
+	off += 2
+	if len(b) >= off+2 {
+		s.ButtonPresses = binary.LittleEndian.Uint16(b[off:])
+	}
+	off += 2
+	if len(b) >= off+3 {
+		s.ActionSeq = binary.LittleEndian.Uint16(b[off:])
+		s.ActionResult = b[off+2]
+	}
 	return s, nil
 }
 
@@ -178,11 +222,29 @@ const (
 	FlagPickedUp  uint16 = 1 << 1
 	FlagOnCharger uint16 = 1 << 2
 	FlagFalling   uint16 = 1 << 3
+	// FlagExploreEnabled: /data/victor/explore.enabled exists on the robot.
+	FlagExploreEnabled uint16 = 1 << 4
+	// FlagWandering: an autonomous wander session is running.
+	FlagWandering uint16 = 1 << 5
+	// FlagSSHOn: ssh.enabled is on (voice "is SSH on?" and the voice toggle's confirmation).
+	FlagSSHOn uint16 = 1 << 6
 )
 
 // AudioPacket is 16 kHz s16le mono. 20 ms = 320 samples = 640 bytes.
 func EncodeAudio(seq uint32, pcm []byte) []byte {
-	return Encode(Header{Type: TypeAudio, Flags: AudioRate16k, Seq: seq, Tns: NowTns()}, pcm)
+	return EncodeAudioFlags(seq, pcm, false)
+}
+
+// FlagRobotNoise marks an audio packet recorded while the robot's own motors
+// ran (hub VAD: no floor update, louder threshold).
+const FlagRobotNoise uint8 = 1 << 2
+
+func EncodeAudioFlags(seq uint32, pcm []byte, robotNoise bool) []byte {
+	f := AudioRate16k
+	if robotNoise {
+		f |= FlagRobotNoise
+	}
+	return Encode(Header{Type: TypeAudio, Flags: f, Seq: seq, Tns: NowTns()}, pcm)
 }
 
 func EncodeVideo(seq uint32, jpeg []byte, flags uint8) []byte {

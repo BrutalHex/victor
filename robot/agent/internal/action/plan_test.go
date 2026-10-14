@@ -1,0 +1,336 @@
+package action
+
+import (
+	"math"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/BrutalHex/victor/robot/agent/internal/vct1"
+)
+
+func kinds(p Plan) []stepKind {
+	var k []stepKind
+	for _, s := range p.Steps {
+		k = append(k, s.kind)
+	}
+	return k
+}
+
+func TestParsePlanClamps(t *testing.T) {
+	p, notes := ParsePlan("plan:drive 9000;turn -5000;wait 99999;head up;lift down;face expr_happy")
+	if len(notes) != 0 {
+		t.Fatalf("notes %v", notes)
+	}
+	if p.Steps[0].mm != MaxDriveMM || p.Steps[1].deg != -MaxTurnDeg || p.Steps[2].dur != MaxWait {
+		t.Fatalf("not clamped: %+v", p.Steps[:3])
+	}
+	if p.Timeout != MaxPlanTime {
+		t.Fatalf("timeout %v", p.Timeout)
+	}
+	if p.Steps[5].clip != "expr_happy" || p.Steps[5].kind != stWait || p.Steps[5].dur != 0 {
+		t.Fatalf("face step %+v", p.Steps[5])
+	}
+}
+
+func TestParsePlanDropsBadSteps(t *testing.T) {
+	ValidClip = func(c string) bool { return c == "expr_sad" }
+	defer func() { ValidClip = func(string) bool { return true } }()
+	p, notes := ParsePlan("plan:drive x;drive nan;turn inf;fly 3;head sideways;lift 2;wait -1;face nope;face expr_sad;trick leave_charger;trick forward_test;trick stop;rm -rf")
+	if len(p.Steps) != 1 || p.Steps[0].clip != "expr_sad" {
+		t.Fatalf("steps %+v", p.Steps)
+	}
+	if len(notes) < 10 {
+		t.Fatalf("notes %v", notes)
+	}
+}
+
+func TestParsePlanStepCap(t *testing.T) {
+	p, notes := ParsePlan("plan:" + strings.Repeat("head up;", 20))
+	if len(p.Steps) != MaxSteps {
+		t.Fatalf("%d steps", len(p.Steps))
+	}
+	if len(notes) != 1 || !strings.Contains(notes[0], "12 steps") {
+		t.Fatalf("notes %v", notes)
+	}
+}
+
+func TestParsePlanTravelCap(t *testing.T) {
+	p, notes := ParsePlan("plan:drive 500;drive -500;drive 500;drive 500;drive 500;turn 90")
+	mm := 0.0
+	for _, s := range p.Steps {
+		mm += math.Abs(s.mm)
+	}
+	if mm > MaxTravelMM || len(p.Steps) != 4 {
+		t.Fatalf("travel %.0f steps %d", mm, len(p.Steps))
+	}
+	if len(notes) == 0 || !strings.Contains(notes[0], "travel") {
+		t.Fatalf("notes %v", notes)
+	}
+}
+
+func TestParsePlanTimeCap(t *testing.T) {
+	p, notes := ParsePlan("plan:wait 5000;wait 5000;wait 5000;wait 5000;wait 5000;wait 5000;wait 5000")
+	if len(p.Steps) != 6 || len(notes) != 1 || !strings.Contains(notes[0], "longer") {
+		t.Fatalf("steps %d notes %v", len(p.Steps), notes)
+	}
+}
+
+func TestSquareFitsCaps(t *testing.T) {
+	p, notes := ParsePlan("plan:drive 300;turn 90;drive 300;turn 90;drive 300;turn 90;drive 300;turn 90")
+	if len(notes) != 0 || len(p.Steps) != 8 {
+		t.Fatalf("square cut: %v", notes)
+	}
+	spin, notes := ParsePlan("plan:turn 720")
+	if len(notes) != 0 || spin.Steps[0].deg != 720 {
+		t.Fatalf("spin %v", notes)
+	}
+}
+
+func TestTrickExpandsNamedPlan(t *testing.T) {
+	p, _ := ParsePlan("plan:trick dance;head nod")
+	if len(p.Steps) != len(Plans["dance"].Steps)+3 {
+		t.Fatalf("%v", kinds(p))
+	}
+}
+
+func TestPlanRunsSquareOffCharger(t *testing.T) {
+	s := newSim(t)
+	s.run("plan:drive 100;turn 90;drive 100;turn 90", false, 1500, -1, -1)
+	if !strings.HasPrefix(s.done, "ok") || s.r.Active() {
+		t.Fatalf("done %q", s.done)
+	}
+	if s.maxW == 0 {
+		t.Fatal("never drove")
+	}
+}
+
+func TestPlanHeldOnCharger(t *testing.T) {
+	s := newSim(t)
+	s.run("plan:drive 300;turn 180;head up;lift up", true, 800, -1, -1)
+	if s.maxW != 0 {
+		t.Fatalf("drove on charger %d", s.maxW)
+	}
+	if !strings.Contains(s.done, "wheels held") || !strings.Contains(s.done, "lift skipped") {
+		t.Fatalf("done %q", s.done)
+	}
+}
+
+func TestPlanVetoAborts(t *testing.T) {
+	s := newSim(t)
+	s.run("plan:drive 400;turn 90", false, 600, 30, -1)
+	if !strings.HasPrefix(s.done, "aborted") {
+		t.Fatalf("done %q", s.done)
+	}
+	if last := s.outs[len(s.outs)-1]; last.PWM != [4]int16{} {
+		t.Fatalf("motors on %v", last.PWM)
+	}
+}
+
+func TestPlanCancelStopsAtOnce(t *testing.T) {
+	s := newSim(t)
+	s.r.StartText("plan:drive 400;turn 720", s.now)
+	for i := 0; i < 20; i++ {
+		s.r.Tick(In{Now: s.now.Add(time.Duration(i) * 20 * time.Millisecond), EncL: int32(i * 5), EncR: int32(-i * 5)})
+	}
+	if !s.r.Cancel("voice stop") || s.r.Active() {
+		t.Fatal("not cancelled")
+	}
+	if o := s.r.Tick(In{Now: s.now.Add(time.Second)}); o.PWM != [4]int16{} || o.Active {
+		t.Fatalf("still driving %+v", o)
+	}
+	if s.r.Cancel("again") {
+		t.Fatal("double cancel")
+	}
+}
+
+func TestPlanTimeout30s(t *testing.T) {
+	var r Runner
+	t0 := time.Unix(0, 0)
+	r.StartText("plan:drive 500", t0) // wheels never move (stalled sim)
+	o := r.Tick(In{Now: t0.Add(31 * time.Second)})
+	if !strings.Contains(o.Done, "timeout") {
+		t.Fatalf("%+v", o)
+	}
+}
+
+func TestEmptyPlanRefused(t *testing.T) {
+	var r Runner
+	if r.StartText("plan:", time.Now()) || r.StartText("plan:fly away", time.Now()) || r.Active() {
+		t.Fatal("empty plan started")
+	}
+}
+
+func TestFaceStepsDoNotCount(t *testing.T) {
+	p, notes := ParsePlan("plan:face expr_happy;" + strings.Repeat("drive 100;turn 60;", 6) + "face expr_proud")
+	if len(notes) != 0 || len(p.Steps) != 14 {
+		t.Fatalf("steps %d notes %v", len(p.Steps), notes)
+	}
+}
+
+func TestBackupDrives10to15cm(t *testing.T) {
+	s := newSim(t)
+	s.run("backup", false, 400, -1, -1)
+	mm := -float64(s.l) * mmPerTick
+	if mm < 100 || mm > 160 || !strings.HasPrefix(s.done, "ok") {
+		t.Fatalf("backed %.0f mm done %q", mm, s.done)
+	}
+}
+
+func TestReversing(t *testing.T) {
+	var r Runner
+	r.StartText("plan:drive -120;drive 50", time.Unix(0, 0))
+	if !r.Reversing() {
+		t.Fatal("first step reverses")
+	}
+	r.StartText("plan:drive 120", time.Unix(0, 0))
+	if r.Reversing() {
+		t.Fatal("forward")
+	}
+	r.Cancel("x")
+	if r.Reversing() {
+		t.Fatal("idle")
+	}
+}
+
+func TestResultCodes(t *testing.T) {
+	for _, c := range []struct {
+		done, why string
+		want      uint8
+	}{
+		{"ok", "", vct1.ResultOK},
+		{"aborted: veto (rear cliff [10 10 10 10])", "rear cliff [10 10 10 10]", vct1.ResultRearCliff},
+		{"aborted: veto (cliff)", "cliff", vct1.ResultCliff},
+		{"aborted: veto (obstacle 50 mm)", "obstacle 50 mm", vct1.ResultObstacle},
+		{"aborted: veto (pickup)", "pickup", vct1.ResultPickup},
+		{"ok (wheels held: on charger)", "", vct1.ResultCharger},
+		{"ok (wheels disabled by flag)", "", vct1.ResultDisabled},
+		{"ok (move stalled (no wheel motion at full breakaway power))", "", vct1.ResultStalled},
+		{"aborted: timeout", "", vct1.ResultTimeout},
+		{"", "", vct1.ResultNone},
+	} {
+		if got := Result(c.done, c.why); got != c.want {
+			t.Fatalf("%q/%q -> %d want %d", c.done, c.why, got, c.want)
+		}
+	}
+}
+
+// Expression gestures: closed-loop lift/head moves relative to the start,
+// lift skipped on the charger, always returning to where it started.
+func TestGestureLiftReturnsToStart(t *testing.T) {
+	p, notes := ParsePlan("plan:liftmm 5 120;liftmm 0 120;liftmm 5 120;liftmm 0 120")
+	if len(notes) != 0 || len(p.Steps) != 4 {
+		t.Fatalf("steps %d notes %v", len(p.Steps), notes)
+	}
+	want := int32(math.Round(5 / LiftMMPerCount))
+	if p.Steps[0].rel != want || p.Steps[1].rel != 0 || want < 12 || want > 18 {
+		t.Fatalf("rel %d/%d want %d (5 mm ~ 15 counts)", p.Steps[0].rel, p.Steps[1].rel, want)
+	}
+	var r Runner
+	r.StartText("plan:liftmm 5 300;liftmm 0 300", time.Unix(0, 0))
+	now := time.Unix(0, 0)
+	lift := int32(1000) // simulated lift encoder; moves with the PWM sign
+	maxUp := int32(0)
+	var lag []int32
+	for i := 0; i < 400 && r.Active(); i++ {
+		now = now.Add(20 * time.Millisecond)
+		lag = append(lag, lift)
+		seen := lag[0] // frame lag ~2 ticks
+		if len(lag) > 2 {
+			lag = lag[1:]
+		}
+		out := r.Tick(In{Now: now, EncLift: seen})
+		if out.PWM[0] != 0 || out.PWM[1] != 0 {
+			t.Fatal("gesture moved the wheels")
+		}
+		lift += int32(out.PWM[2]) / 3000
+		if lift-1000 > maxUp {
+			maxUp = lift - 1000
+		}
+	}
+	if r.Active() {
+		t.Fatal("gesture did not finish")
+	}
+	if maxUp < want-4 || maxUp > want+6 {
+		t.Fatalf("lift only rose %d counts, want ~%d", maxUp, want)
+	}
+	if d := lift - 1000; d > gestureTolCounts || d < -gestureTolCounts {
+		t.Fatalf("lift ended %d counts from start", d)
+	}
+}
+
+func TestGestureLiftSkippedOnChargerHeadStillMoves(t *testing.T) {
+	var r Runner
+	r.StartText("plan:liftmm 5 200;liftmm 0 200;headdeg -5 200;headdeg 0 200", time.Unix(0, 0))
+	now := time.Unix(0, 0)
+	head := int32(0)
+	sawHead := false
+	minHead := int32(0)
+	var lag []int32
+	for i := 0; i < 300 && r.Active(); i++ {
+		now = now.Add(20 * time.Millisecond) // 50 Hz loop
+		lag = append(lag, head)
+		seen := lag[0] // the spine frame lags the motor by ~2 ticks
+		if len(lag) > 2 {
+			lag = lag[1:]
+		}
+		out := r.Tick(In{Now: now, OnCharger: true, EncHead: seen})
+		if out.PWM[2] != 0 {
+			t.Fatal("lift moved on the charger")
+		}
+		if out.PWM[3] != 0 {
+			sawHead = true
+		}
+		// fitted to the robot 2026-10-12 (agent gesture log): ~4300 counts/s
+		// per unit power above friction; up needs > 0.25, down > 0.2
+		pw := float64(out.PWM[3]) / full
+		if pw > 0 {
+			pw = math.Max(0, pw-0.25)
+		} else if pw < 0 {
+			pw = math.Min(0, pw+0.2)
+		}
+		head += int32(pw * 4300 * 0.02)
+		if head < minHead {
+			minHead = head
+		}
+	}
+	want := int32(math.Round(-5 / HeadDegPerCount))
+	if !sawHead || head > 2*headTolCounts || head < -2*headTolCounts { // within ~2 deg with the frame lag
+		t.Fatalf("head moved=%v ended %d", sawHead, head)
+	}
+	if minHead > want+headTolCounts || minHead < want-25 {
+		t.Fatalf("head reached %d counts, want ~%d without a big overshoot", minHead, want)
+	}
+}
+
+func TestGestureCaps(t *testing.T) {
+	p, _ := ParsePlan("plan:liftmm 80 100;liftmm -10 100;headdeg 60 100")
+	if p.Steps[0].rel != int32(math.Round(MaxGestureLiftMM/LiftMMPerCount)) || p.Steps[1].rel != 0 ||
+		p.Steps[2].rel != int32(math.Round(MaxGestureHeadDeg/HeadDegPerCount)) {
+		t.Fatalf("caps not applied: %+v", p.Steps)
+	}
+}
+
+func TestKeepBaseAcrossBackToBackPlans(t *testing.T) {
+	r := &Runner{}
+	now := time.Unix(100, 0)
+	if !r.StartText("plan:headdeg 10 200;headdeg 0.3 200", now) {
+		t.Fatal("start")
+	}
+	r.Tick(In{Now: now, EncHead: 50})
+	if !r.baseSet || r.headBase != 50 {
+		t.Fatalf("base %v %d", r.baseSet, r.headBase)
+	}
+	// next bar arrives while the head is mid-move at 120 counts
+	r.StartText("plan:keepbase;headdeg 10 200", now.Add(time.Second))
+	r.Tick(In{Now: now.Add(time.Second), EncHead: 120})
+	if r.headBase != 50 {
+		t.Fatalf("base crept to %d", r.headBase)
+	}
+	// without keepbase, or too late, the base is re-taken
+	r.StartText("plan:keepbase;headdeg 10 200", now.Add(5*time.Second))
+	r.Tick(In{Now: now.Add(5 * time.Second), EncHead: 120})
+	if r.headBase != 120 {
+		t.Fatalf("stale base kept: %d", r.headBase)
+	}
+}

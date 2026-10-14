@@ -9,27 +9,36 @@ import (
 	"net"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
+	"github.com/BrutalHex/victor/robot/agent/internal/action"
 	"github.com/BrutalHex/victor/robot/agent/internal/anki"
 	"github.com/BrutalHex/victor/robot/agent/internal/audio"
 	"github.com/BrutalHex/victor/robot/agent/internal/blemask"
+	"github.com/BrutalHex/victor/robot/agent/internal/button"
 	"github.com/BrutalHex/victor/robot/agent/internal/camera"
 	"github.com/BrutalHex/victor/robot/agent/internal/cliffcal"
+	"github.com/BrutalHex/victor/robot/agent/internal/drivectl"
 	"github.com/BrutalHex/victor/robot/agent/internal/face"
 	"github.com/BrutalHex/victor/robot/agent/internal/hosts"
+	"github.com/BrutalHex/victor/robot/agent/internal/idle"
 	"github.com/BrutalHex/victor/robot/agent/internal/latch"
 	"github.com/BrutalHex/victor/robot/agent/internal/link"
+	"github.com/BrutalHex/victor/robot/agent/internal/rotlog"
 	"github.com/BrutalHex/victor/robot/agent/internal/simulate"
 	"github.com/BrutalHex/victor/robot/agent/internal/skill"
 	"github.com/BrutalHex/victor/robot/agent/internal/spine"
 	"github.com/BrutalHex/victor/robot/agent/internal/sshctl"
+	"github.com/BrutalHex/victor/robot/agent/internal/statusfile"
 	"github.com/BrutalHex/victor/robot/agent/internal/telem"
 	"github.com/BrutalHex/victor/robot/agent/internal/vct1"
 	"github.com/BrutalHex/victor/robot/agent/internal/veto"
+	"github.com/BrutalHex/victor/robot/agent/internal/wander"
 )
 
 func main() {
@@ -66,6 +75,11 @@ func main() {
 				os.Exit(1)
 			}
 			fmt.Println("anki-robot.target started")
+			return
+		case "face-info":
+			// Read-only: what this binary would drive (no panel access).
+			nIn, nLoop := face.SearchingFrames()
+			fmt.Printf("spi=%s think=ddl-searching:%d+%d asset=%s telem_max=%d\n", face.Device(), nIn, nLoop, face.AssetTag, rotlog.DefaultMax)
 			return
 		case "calibrate":
 			_ = os.Remove(cliffcal.Path)
@@ -160,12 +174,16 @@ func runDaemon() int {
 	_ = os.MkdirAll("/data/victor", 0755)
 	_ = os.MkdirAll("/run/victor", 0755)
 	loadHubEnv()
+	drivectl.Cfg = drivectl.FromEnv(os.Getenv)
+	fmt.Printf("drive speeds explore=%.0f drive=%.0f mm/s turn=%.0f deg/s accel=%.0f mm/s2 (cap %.0f)\n",
+		drivectl.Cfg.Explore, drivectl.Cfg.Drive, drivectl.Cfg.TurnDPS, drivectl.Cfg.Accel, drivectl.MaxMMps)
 	_ = hosts.Apply("/etc/hosts", os.Getenv("HUB_IP"), env("HUB_HOST", *hubHost))
 
 	ssh := sshctl.New()
 	if err := ssh.Apply(); err != nil {
 		fmt.Fprintf(os.Stderr, "ssh apply: %v\n", err)
 	}
+	sshOn.Store(ssh.Enabled())
 	if blemask.Disabled() {
 		_ = blemask.Apply()
 	}
@@ -211,10 +229,28 @@ func runDaemon() int {
 	go injectLoop(*inject, m, ssh, body, ov, ui)
 	go watchdog(ssh, hub, body, ui)
 	go cameraLoop(hub, lnk)
-	go cmdLoop(lnk, ui, proc)
+	actCh := make(chan string, 4)
+	go cmdLoop(lnk, ui, proc, actCh)
+	runner := &action.Runner{Log: func(l string) { fmt.Println(l) }}
+	action.ValidClip = func(c string) bool { return face.ClipLen(c) > 0 }
+	pet := &petting{ui: ui}
+	life := idle.New(time.Now().UnixNano())
+	var snd idle.SoundDetector
+	soundHit, motorNoise := false, false
+	wand := wander.New(time.Now().UnixNano() + 1)
+	var flagCheckAt time.Time
+	var lastPWM [4]int16
+	var lastProxSamples uint16
+	var proxFreshAt time.Time
+	var lastMotorAt time.Time // audio up to motorNoiseTail after a real motor command is flagged robot-noise
 	face.Boot()
 	var lastFaceAt time.Time
+	// Status files: rewritten on change at most 2/s (was ~300 writes/s).
+	status := statusfile.New()
 	tick := time.NewTicker(*rate)
+	var btn button.Debouncer // backpack presses -> SENSOR ButtonPresses -> hub button_press
+	var actSeq uint16        // finished voice actions -> SENSOR ActionSeq/ActionResult -> hub says why
+	var actResult uint8
 	defer tick.Stop()
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
@@ -247,13 +283,35 @@ func runDaemon() int {
 						fmt.Printf("cliffs calibrated floor=%v thresh=%v\n", cal.Floor, cal.Thresh)
 					}
 				}
+				if btn.Feed(fr.Button, time.Now()) {
+					fmt.Printf("button press n=%d\n", btn.Presses)
+					status.Put("/data/victor/button.txt", fmt.Sprintf("presses=%d at=%s\n", btn.Presses, time.Now().Format(time.RFC3339)))
+					// the back button cancels a running voice plan / explore at once
+					if runner.Cancel("button") {
+						actSeq, actResult = actSeq+1, vct1.ResultCancelled
+						fmt.Printf("action %s cancelled: button\n", runner.Name())
+						status.Put("/data/victor/action.txt", runner.Name()+" cancelled: button\n")
+					}
+					if wand.Active() {
+						wand.Stop("button")
+						status.Put("/data/victor/wander.txt", "stopped: button\n")
+					}
+				}
 				lo, hi := body.LiftRange()
-				if m.Feed(latch.Sample{T: time.Since(start), Button: fr.Button, OnCharger: fr.OnCharger(), Driving: fr.Driving(), LiftNorm: fr.LiftNorm(lo, hi)}) == latch.ToggleSSH {
+				// CHARGE-LATCH button gesture: off unless charge-latch.enabled
+				// exists (SSH is voice-only since 10 Oct 2026). The button is now
+				// read correctly (touchLevel[1]); with the gesture off a press
+				// only wakes the hub voice session, it never reaches the latch.
+				if buttonLatch(m, latch.Sample{T: time.Since(start), Button: fr.Button, OnCharger: fr.OnCharger(), Driving: fr.Driving(), LiftNorm: fr.LiftNorm(lo, hi)}, sshctl.LatchEnabled()) {
 					on, err := ssh.Toggle()
+					sshOn.Store(on)
 					fmt.Printf("CHARGE-LATCH ssh.enabled=%v err=%v\n", on, err)
 					showFaceUI(on, false, ui)
 					body.SetSSHLED(on)
 				}
+				// Back touch: its own detector on the capacitive level; it
+				// never feeds the latch (the latch reads fr.Button only).
+				pet.feed(time.Now(), fr, status)
 			}
 			cliffs := s.Cliffs
 			if c := ov.cliffs(); c != nil {
@@ -286,7 +344,9 @@ func runDaemon() int {
 				vin.CommandAge = time.Since(lastCmd)
 			}
 			reason := veto.Check(vin)
-			allow := skill.AllowWheels(skill.ExploreEnabled(), reason == veto.Clear, vin.OnCharger)
+			// Legacy hub creep (skill wheels) is retired: internal/wander owns
+			// autonomous driving now, under the same explore.enabled flag.
+			allow := false
 			pwm := skill.PWM(kind, allow)
 			if reason == veto.Battery || reason == veto.Fall || reason == veto.Pickup || reason == veto.Cliff {
 				pwm = [4]int16{}
@@ -298,17 +358,181 @@ func runDaemon() int {
 					pwm[3] = skill.LookDown.Head()
 				}
 			}
+			// Voice-command actions (hub names them; power decided here under the veto).
+			hubGone := !vin.HasHeartbeat || vin.HeartbeatAge > time.Second
+			if have && fr.ProxSamples != lastProxSamples {
+				lastProxSamples, proxFreshAt = fr.ProxSamples, time.Now()
+			}
+			win := wander.In{Now: time.Now(), OnCharger: vin.OnCharger, CliffCal: cal.Ready(), Cliffs: cliffs, Thresh: cal.Thresh,
+				Pickup: reason == veto.Pickup, Fall: reason == veto.Fall, LowBattery: reason == veto.Battery, HubGone: hubGone,
+				ProxValid: have && fr.ProxValid && time.Since(proxFreshAt) < 500*time.Millisecond, ProxMM: fr.ProxMM,
+				// faint status-11 return (12 Oct: sat at 80-160 mm with valid=false, never turned)
+				ProxWeak: have && !fr.ProxValid && fr.ProxStatus == spine.ProxStatusValid && fr.ProxSignal >= 0.7 && time.Since(proxFreshAt) < 500*time.Millisecond,
+				// not ui.thinking(): wheel noise triggers the hub's VAD every ~3 s and
+				// held explore still for good (12 Oct 14:35); "stop" still arrives as a command.
+				Busy: runner.Active() || ui.muted() || pet.touching()}
+			if have {
+				win.EncL, win.EncR = fr.Motors[0].Pos, fr.Motors[1].Pos
+			}
+			select {
+			case name := <-actCh:
+				switch name {
+				case "explore":
+					if why := wand.Start(win, wander.FlagOn()); why != "" {
+						fmt.Printf("wander refused: %s\n", why)
+						status.Put("/data/victor/wander.txt", "refused: "+why+"\n")
+						ui.set("anim", "cant_help", face.ClipLen("cant_help"))
+					} else {
+						fmt.Printf("wander start cliffs=%v thresh=%v prox=%d valid=%v\n", cliffs, cal.Thresh, fr.ProxMM, win.ProxValid)
+						status.Put("/data/victor/wander.txt", "start\n")
+					}
+					break
+				case "ssh_on", "ssh_off", "ssh_status":
+					go voiceSSH(name, ssh, body, ui, status)
+				case "explore_stop", "stop":
+					if wand.Active() {
+						wand.Stop("voice " + name)
+						fmt.Printf("wander stop: voice %s\n", name)
+						status.Put("/data/victor/wander.txt", "stopped: voice\n")
+					}
+				}
+				if name == "explore" || name == "explore_stop" || strings.HasPrefix(name, "ssh_") {
+					break
+				}
+				if name == "stop" && runner.Cancel("voice stop") {
+					actSeq, actResult = actSeq+1, vct1.ResultCancelled
+					fmt.Printf("action %s cancelled: voice stop\n", runner.Name())
+					status.Put("/data/victor/action.txt", runner.Name()+" cancelled: voice stop\n")
+					break
+				}
+				if runner.StartText(name, time.Now()) {
+					fmt.Printf("action %s start charger=%v veto=%s\n", name, vin.OnCharger, reason)
+					status.Put("/data/victor/action.txt", name+" start\n")
+				} else if name != "stop" {
+					fmt.Printf("action %q unknown\n", name)
+				}
+			default:
+			}
+			if runner.Active() {
+				// Hard vetoes stop an action at once. A heartbeat gap only counts
+				// once the hub is really gone (>1 s): WiFi jitter past the 250 ms
+				// skill threshold aborted look_at_me on the first live test.
+				abortWhy := ""
+				switch {
+				case reason == veto.Battery || reason == veto.Fall || reason == veto.Pickup:
+					abortWhy = reason.String()
+				case reason == veto.Cliff && !runner.Reversing():
+					abortWhy = reason.String() // backing away from a front edge may pass (as the interlock allows)
+				case reason == veto.HeartbeatMiss && (!vin.HasHeartbeat || vin.HeartbeatAge > time.Second):
+					abortWhy = "heartbeat"
+				}
+				if abortWhy == "" && runner.Reversing() && !vin.OnCharger && veto.RearCliff(cliffs, cal.Thresh, cal.Ready()) {
+					abortWhy = fmt.Sprintf("rear cliff %v", cliffs) // nothing else guards the back
+				}
+				if abortWhy == "" && win.ProxValid && fr.ProxMM < wander.ObstacleMM && lastPWM[0] > 0 && lastPWM[1] < 0 {
+					abortWhy = fmt.Sprintf("obstacle %d mm", fr.ProxMM) // voice "forward"/"come here" toward a wall
+				}
+				ain := action.In{Now: time.Now(), OnCharger: vin.OnCharger, Abort: abortWhy != "", ProxValid: win.ProxValid, ProxMM: fr.ProxMM}
+				if have {
+					ain.EncL, ain.EncR, ain.EncLift, ain.EncHead = fr.Motors[0].Pos, fr.Motors[1].Pos, fr.Motors[2].Pos, fr.Motors[3].Pos
+				}
+				out := runner.Tick(ain)
+				pwm = out.PWM
+				if out.Clip != "" {
+					ui.set("anim", out.Clip, face.ClipLen(out.Clip))
+				}
+				if out.Done != "" {
+					if strings.HasPrefix(out.Done, "aborted") {
+						if abortWhy != "" {
+							out.Done += " (" + abortWhy + ")"
+						}
+						ui.set("anim", "cant_help", face.ClipLen("cant_help")) // visible "I couldn't"
+					}
+					actSeq++
+					actResult = action.Result(out.Done, abortWhy)
+					fmt.Printf("action %s done: %s result=%d\n", runner.Name(), out.Done, actResult)
+					status.Put("/data/victor/action.txt", runner.Name()+" "+out.Done+"\n")
+				}
+			}
+			// Autonomous wander (explore.enabled + "explore"). Voice actions win.
+			if wand.Active() && time.Since(flagCheckAt) > time.Second {
+				flagCheckAt = time.Now()
+				if !wander.FlagOn() {
+					wand.Stop("explore.enabled removed") // rm the flag = instant stop
+				}
+			}
+			if wand.Active() {
+				o := wand.Tick(win)
+				if !runner.Active() {
+					pwm = o.PWM
+				}
+				if o.Event != "" {
+					fmt.Printf("wander %s state=%s prox=%d valid=%v weak=%v st=%d sig=%.2f cliffs=%v\n", o.Event, o.State, fr.ProxMM, win.ProxValid, win.ProxWeak, fr.ProxStatus, fr.ProxSignal, cliffs)
+					if o.Event == "stop: boxed in" {
+						ui.set("anim", "cant_help", face.ClipLen("cant_help")) // visible "I can't get out"
+					}
+					status.Put("/data/victor/wander.txt", string(o.State)+" "+o.Event+"\n")
+				}
+				if !wand.Active() {
+					status.Put("/data/victor/wander.txt", "stopped: "+wand.Why+"\n")
+				}
+			}
+			// Final interlock, after every source of motion: no wheel power at
+			// all on pickup/fall/low battery, and at a front cliff only a pure
+			// reverse (both wheels backward) may pass. Lift never auto-moves.
+			switch reason {
+			case veto.Battery, veto.Fall, veto.Pickup:
+				pwm[0], pwm[1] = 0, 0
+			case veto.Cliff:
+				if pwm[0] > 0 || pwm[1] < 0 || (pwm[0] == 0) != (pwm[1] == 0) {
+					pwm[0], pwm[1] = 0, 0
+				}
+			}
+			// edge behind: no pure reverse (wander's cliff back-off, voice "back up")
+			if pwm[0] < 0 && pwm[1] > 0 && !vin.OnCharger && veto.RearCliff(cliffs, cal.Thresh, cal.Ready()) {
+				pwm[0], pwm[1] = 0, 0
+			}
+			lastPWM = pwm
+			// Idle life: glances, head fidgets, look toward a sound. Head only;
+			// never wheels or lift. Only when nothing else owns the face/motors.
+			if have && !runner.Active() && !wand.Active() && !idle.Disabled() && ui.currentMode() == "idle" && !pet.touching() &&
+				reason != veto.Battery && reason != veto.Fall && reason != veto.Pickup && reason != veto.Cliff {
+				o := life.Tick(idle.In{Now: time.Now(), Head: fr.Motors[3].Pos, HaveHead: true, Sound: soundHit, SoundDir: proc.Direction()})
+				if o.Head != 0 {
+					pwm[3] = o.Head // gear noise is flagged to the hub (FlagRobotNoise), not muted
+				}
+				ui.setGaze(o.LookX, o.LookY)
+				if o.Event != "" {
+					fmt.Printf("idle %s head=%d dir=%d gaze=%.2f,%.2f\n", o.Event, fr.Motors[3].Pos, proc.Direction(), o.LookX, o.LookY)
+				}
+			} else {
+				life.Pause(time.Now())
+				ui.setGaze(0, 0)
+			}
+			soundHit = false
+			motorNoise = pwm[3] > 2000 || pwm[3] < -2000 || pwm[2] > 2000 || pwm[2] < -2000 || pwm[0] != 0 || pwm[1] != 0
+			if motorNoise {
+				lastMotorAt = time.Now()
+			}
 			if body != nil {
 				body.SetDrive(pwm)
 				if mic := body.DrainMic(); len(mic) > 0 {
+					if en := audio.Energies(mic); snd.Feed(max(en[0], en[1], en[2], en[3]), ui.muted() || motorNoise) {
+						soundHit = true
+					}
 					if time.Since(lastMicLog) >= time.Second {
 						e := audio.Energies(mic)
-						_ = os.WriteFile("/data/victor/mics.txt", []byte(fmt.Sprintf("%d,%d,%d,%d dir=%d mode=%s ch=%d\n", e[0], e[1], e[2], e[3], proc.Direction(), proc.Mode(), proc.Channel())), 0644)
+						_ = os.WriteFile("/data/victor/mics.txt", []byte(fmt.Sprintf("%d,%d,%d,%d dir=%d mode=%s ch=%d gain=%.1f\n", e[0], e[1], e[2], e[3], proc.Direction(), proc.Mode(), proc.Channel(), proc.Gain())), 0644)
 						lastMicLog = time.Now()
 					}
-					if !ui.thinking() {
-						for _, pkt := range pk.Push(proc.Process(mic)) {
-							lnk.QueueMedia(hub.SendAudio(pkt))
+					// Process always (keeps filters/levels continuous); send only
+					// while not thinking and not playing our own reply, or the
+					// speaker comes back as the next utterance.
+					clean := proc.Process(mic)
+					if !ui.thinking() && !ui.muted() {
+						noisy := time.Since(lastMotorAt) < motorNoiseTail
+						for _, pkt := range pk.Push(clean) {
+							lnk.QueueMedia(hub.SendAudioFlags(pkt, noisy))
 						}
 					}
 				}
@@ -325,15 +549,15 @@ func runDaemon() int {
 				renderFace(ui, reason)
 				lastFaceAt = time.Now()
 			}
-			_ = os.WriteFile("/data/victor/veto.txt", []byte(reason.String()+"\n"), 0644)
+			status.Put("/data/victor/veto.txt", reason.String()+"\n")
 			ageMs := int64(0)
 			if vin.HasHeartbeat {
 				ageMs = vin.HeartbeatAge.Milliseconds()
 			}
-			_ = os.WriteFile("/data/victor/hb_age_ms.txt", []byte(fmt.Sprintf("%d\n", ageMs)), 0644)
-			_ = os.WriteFile("/data/victor/skill.txt", []byte(kind.String()+"\n"), 0644)
-			_ = os.WriteFile("/data/victor/motors.txt", []byte(fmt.Sprintf("%d,%d,%d,%d\n", pwm[0], pwm[1], pwm[2], pwm[3])), 0644)
-			_ = os.WriteFile("/data/victor/drive.txt", []byte(fmt.Sprintf("allow=%v explore=%v veto=%s charger=%v skill=%s pwm=%d,%d,%d,%d batt_raw=%d chg_raw=%d\n", allow, skill.ExploreEnabled(), reason, vin.OnCharger, kind, pwm[0], pwm[1], pwm[2], pwm[3], fr.BattVoltage, fr.ChargerVoltage)), 0644)
+			status.Put("/data/victor/hb_age_ms.txt", fmt.Sprintf("%d\n", ageMs))
+			status.Put("/data/victor/skill.txt", kind.String()+"\n")
+			status.Put("/data/victor/motors.txt", fmt.Sprintf("%d,%d,%d,%d\n", pwm[0], pwm[1], pwm[2], pwm[3]))
+			status.Put("/data/victor/drive.txt", fmt.Sprintf("allow=%v explore=%v veto=%s charger=%v skill=%s pwm=%d,%d,%d,%d batt_raw=%d chg_raw=%d\n", allow, skill.ExploreEnabled(), reason, vin.OnCharger, kind, pwm[0], pwm[1], pwm[2], pwm[3], fr.BattVoltage, fr.ChargerVoltage))
 			if _, err := os.Stat("/data/victor/hub.down"); err == nil {
 				lnk.Close()
 			} else {
@@ -342,9 +566,26 @@ func runDaemon() int {
 				}
 				lnk.Tick(uint8(reason))
 			}
+			if wander.FlagOn() {
+				s.Flags |= vct1.FlagExploreEnabled
+			}
+			if wand.Active() {
+				s.Flags |= vct1.FlagWandering
+			}
+			if sshOn.Load() {
+				s.Flags |= vct1.FlagSSHOn
+			}
+			s.ButtonPresses = btn.Presses
+			s.ActionSeq, s.ActionResult = actSeq, actResult
+			if have {
+				s.Flags &^= vct1.FlagButton // debounced level, not the raw sample
+				if btn.Pressed() {
+					s.Flags |= vct1.FlagButton
+				}
+			}
 			lnk.QueueMedia(hub.SendSensor(s))
 			if gotSpine {
-				_ = os.WriteFile("/data/victor/spine.ok", []byte("1\n"), 0644)
+				status.Put("/data/victor/spine.ok", "1\n")
 			}
 		}
 	}
@@ -472,8 +713,19 @@ func watchdog(ssh *sshctl.Controller, hub *telem.Hub, body *spine.Body, ui *uiSt
 		if offSince.IsZero() {
 			offSince = time.Now()
 		}
-		if time.Since(offSince) >= 24*time.Hour && hub.HeartbeatMissing(10*time.Minute) {
+		// Off time survives reboot via the flag mtime.
+		offFor := sshctl.OffFor(time.Now(), offSince, ssh.OffSince())
+		// Without the spine we cannot see the charger; enabling SSH never
+		// moves motors, so treat "unknown" as on-charger rather than lock out.
+		onCharger := true
+		if body != nil {
+			if fr, ok := body.Last(); ok {
+				onCharger = fr.OnCharger()
+			}
+		}
+		if sshctl.WatchdogDue(offFor, hub.HeartbeatMissing(10*time.Minute), onCharger) {
 			_ = ssh.Set(true)
+			sshOn.Store(true)
 			showFaceUI(true, true, ui)
 			if body != nil {
 				body.SetSSHLED(true)
@@ -482,60 +734,37 @@ func watchdog(ssh *sshctl.Controller, hub *telem.Hub, body *spine.Body, ui *uiSt
 	}
 }
 
-type uiState struct {
-	mu         sync.Mutex
-	mode       string
-	caption    string
-	until      time.Time
-	thinkStart time.Time
-	lastDrawn  string
-}
-
-func (u *uiState) thinking() bool {
-	if u == nil {
-		return false
-	}
-	u.mu.Lock()
-	defer u.mu.Unlock()
-	return u.mode == "thinking"
-}
-
-func (u *uiState) set(mode, caption string, d time.Duration) {
-	if u == nil {
-		return
-	}
-	u.mu.Lock()
-	defer u.mu.Unlock()
-	u.mode, u.caption = mode, caption
-	if d > 0 {
-		u.until = time.Now().Add(d)
-	} else {
-		u.until = time.Time{}
-	}
-	if mode == "thinking" {
-		u.thinkStart = time.Now()
-	}
-	u.lastDrawn = ""
-}
-
 func renderFace(u *uiState, reason veto.Reason) {
 	if u == nil {
 		return
 	}
 	u.mu.Lock()
+	u.expireLocked(time.Now())
 	mode, cap, until, t0 := u.mode, u.caption, u.until, u.thinkStart
+	gx, gy := u.gx, u.gy
 	if !until.IsZero() && time.Now().After(until) && mode != "thinking" {
 		u.mode, u.caption, mode, cap = "idle", "", "idle", ""
 	}
 	key := mode + "|" + cap + "|" + reason.String()
 	if mode == "thinking" {
 		u.mu.Unlock()
-		phase := time.Since(t0).Seconds()
-		phase = phase - float64(int(phase))
-		if phase < 0 {
-			phase = 0
+		// DDL searching animation replaces the eyes for the whole turn.
+		face.Thinking(time.Since(t0))
+		return
+	}
+	if mode == "anim" || mode == "sleep" || mode == "pet" {
+		at := u.animStart
+		u.mu.Unlock()
+		clip, loop := cap, false
+		switch mode {
+		case "sleep":
+			clip, loop = "sleeping", true
+		case "pet":
+			loop = true
 		}
-		face.Thinking(phase)
+		if buf, ok := face.Clip(clip, time.Since(at), loop); ok {
+			face.Blit(buf)
+		}
 		return
 	}
 	blink := 0.0
@@ -559,45 +788,142 @@ func renderFace(u *uiState, reason veto.Reason) {
 		face.Blit(face.EyesCaption(strings.ToUpper(reason.String()), face.Red))
 		return
 	}
-	lx := 0.15 * math.Sin(float64(time.Now().UnixMilli())/900.0)
-	face.Blit(face.EyesFrame(lx, 0, blink))
+	lx := gx + 0.15*math.Sin(float64(time.Now().UnixMilli())/900.0)
+	if sessionAsleep.Load() {
+		face.Blit(face.EyesDrowsy(lx, gy, blink))
+		return
+	}
+	face.Blit(face.EyesFrame(lx, gy, blink))
 }
 
+// Camera rates. The robot's CPU runs at 400-730 MHz: Go JPEG encoding costs
+// ~65 ms for a 320x240 nav frame and ~265 ms for 640x480, so the old 10 + 5 fps
+// plan would eat two cores. camera.conf can change nav_fps / face_fps.
+var camNavFPS, camFaceFPS = 2.0, 1.0
+
+// motorNoiseTail: gears ring on briefly after the PWM stops.
+const motorNoiseTail = 300 * time.Millisecond
+
 func cameraLoop(hub *telem.Hub, lnk *link.Client) {
+	loadCameraConf()
+	camera.Start()
 	t := time.NewTicker(100 * time.Millisecond)
 	defer t.Stop()
-	n := 0
-	for range t.C {
-		jpeg, err := camera.Grab()
-		if err != nil || len(jpeg) == 0 {
+	n, faces := 0, 0
+	var lastNav, lastFace time.Time
+	var busy time.Duration
+	lastLog := time.Now()
+	for now := range t.C {
+		if time.Since(lastLog) > time.Minute {
+			st, frames, cerr := camera.Daemon.Status()
+			fmt.Printf("camera %s frames=%d nav=%d face=%d cpu=%.0f%% err=%q\n", st, frames, n, faces,
+				100*busy.Seconds()/time.Since(lastLog).Seconds(), cerr)
+			lastLog, busy = time.Now(), 0
+		}
+		wantNav := camNavFPS > 0 && now.Sub(lastNav) >= time.Duration(float64(time.Second)/camNavFPS)
+		wantFace := camFaceFPS > 0 && now.Sub(lastFace) >= time.Duration(float64(time.Second)/camFaceFPS)
+		if !wantNav && !wantFace {
 			continue
 		}
-		nav, err := camera.ScaleJPEG(jpeg, camera.NavW, camera.NavH)
-		if err != nil {
-			nav = jpeg
+		t0 := time.Now()
+		full, nav, err := camera.Snapshot(wantFace)
+		if err != nil || nav == nil {
+			continue
 		}
-		lnk.QueueMedia(hub.SendVideo(nav, vct1.FlagNavJPEG))
-		n++
-		if n%2 == 0 {
-			big, err := camera.ScaleJPEG(jpeg, camera.FaceW, camera.FaceH)
-			if err != nil {
-				big = jpeg
+		if wantNav {
+			if b, err := camera.EncodeJPEG(nav, 70); err == nil {
+				lnk.QueueMedia(hub.SendVideo(b, vct1.FlagNavJPEG))
+				n++
 			}
-			lnk.QueueMedia(hub.SendVideo(big, vct1.FlagFaceJPEG))
+			lastNav = now
 		}
+		if full != nil {
+			if b, err := camera.EncodeJPEG(full, 75); err == nil {
+				lnk.QueueMedia(hub.SendVideo(b, vct1.FlagFaceJPEG))
+				camera.Remember(b)
+				faces++
+			}
+			lastFace = now
+		}
+		busy += time.Since(t0)
 	}
 }
 
-func cmdLoop(lnk *link.Client, ui *uiState, proc *audio.Processor) {
+// loadCameraConf reads /data/victor/camera.conf (key=value: swap_rb, flip, gamma).
+func loadCameraConf() {
+	// ae: drive sensor exposure ourselves (0 = leave it to the daemon's 3A);
+	// level: digital gain target for the mean linear level.
+	swap, flip, gamma, black, ae, level := false, false, 0.8, 16, 0.0, 0.22
+	if b, err := os.ReadFile("/data/victor/camera.conf"); err == nil {
+		for _, line := range strings.Split(string(b), "\n") {
+			k, v, ok := strings.Cut(strings.TrimSpace(line), "=")
+			if !ok {
+				continue
+			}
+			v = strings.TrimSpace(v)
+			switch strings.TrimSpace(k) {
+			case "swap_rb":
+				swap = v == "1" || v == "true"
+			case "flip":
+				flip = v == "1" || v == "true"
+			case "ae":
+				if a, err := strconv.ParseFloat(v, 64); err == nil {
+					ae = a
+				}
+			case "nav_fps":
+				if x, err := strconv.ParseFloat(v, 64); err == nil {
+					camNavFPS = x
+				}
+			case "face_fps":
+				if x, err := strconv.ParseFloat(v, 64); err == nil {
+					camFaceFPS = x
+				}
+			case "level":
+				if l, err := strconv.ParseFloat(v, 64); err == nil {
+					level = l
+				}
+			case "black":
+				if b, err := strconv.Atoi(v); err == nil {
+					black = b
+				}
+			case "gamma":
+				if g, err := strconv.ParseFloat(v, 64); err == nil {
+					gamma = g
+				}
+			}
+		}
+	}
+	camera.SetTone(swap, flip, gamma, black)
+	camera.SetAE(ae)
+	camera.SetDigitalTarget(level)
+	fmt.Printf("camera conf swap_rb=%v flip=%v gamma=%.2f black=%d ae=%.2f level=%.2f nav_fps=%.1f face_fps=%.1f\n",
+		swap, flip, gamma, black, ae, level, camNavFPS, camFaceFPS)
+}
+
+func cmdLoop(lnk *link.Client, ui *uiState, proc *audio.Processor, actCh chan<- string) {
 	for cmd := range lnk.Commands() {
 		switch cmd.Kind {
 		case link.CmdSpeak:
 			proc.NotePlayback(cmd.Payload)
+			playFor := time.Duration(len(cmd.Payload)/2) * time.Second / audio.Rate
+			ui.muteFor(playFor + 500*time.Millisecond)
+			// The reply is ready: thinking ends the moment the speaker starts.
+			ui.speakStart()
+			fmt.Printf("play start %s %dms\n", stamp(time.Now()), playFor.Milliseconds())
 			_ = audio.Play(cmd.Payload)
+			fmt.Printf("play end %s\n", stamp(time.Now()))
+			ui.muteFor(400 * time.Millisecond)
 		case link.CmdDisplay:
 			if len(cmd.Payload) == face.Bytes {
 				_ = os.WriteFile("/data/victor/face.rgb565", cmd.Payload, 0644)
 				ui.set("display", "", 2*time.Second)
+			}
+		case link.CmdAction:
+			name := strings.ToLower(strings.TrimSpace(string(cmd.Payload)))
+			select {
+			case actCh <- name:
+			default:
+				fmt.Printf("action %q dropped (busy)\n", name)
 			}
 		case link.CmdFaceUI:
 			mode, cap, _ := strings.Cut(string(cmd.Payload), "|")
@@ -605,6 +931,19 @@ func cmdLoop(lnk *link.Client, ui *uiState, proc *audio.Processor) {
 			switch mode {
 			case "thinking":
 				ui.set("thinking", cap, 0)
+			case "anim":
+				clip := strings.TrimSpace(cap)
+				if d := face.ClipLen(clip); d > 0 {
+					ui.set("anim", clip, d)
+				}
+			case "sleep":
+				ui.set("sleep", "", 0)
+			case "session":
+				// hub voice session: "asleep" (until Hey Vector) or "awake" (listening)
+				asleep := strings.TrimSpace(cap) == "asleep"
+				if sessionAsleep.Swap(asleep) != asleep {
+					fmt.Printf("voice session %s\n", strings.TrimSpace(cap))
+				}
 			case "name":
 				ui.set("name", cap, 3*time.Second)
 			case "idle", "e-ok", "":
@@ -617,6 +956,45 @@ func cmdLoop(lnk *link.Client, ui *uiState, proc *audio.Processor) {
 }
 
 func showFace(sshOn, auto bool) { showFaceUI(sshOn, auto, nil) }
+
+// sessionAsleep: the hub's wake-word session is closed -> drowsy idle eyes.
+var sessionAsleep atomic.Bool
+
+// sshOn mirrors ssh.enabled for the sensor flag (no file read per tick).
+var sshOn atomic.Bool
+
+// buttonLatch feeds the CHARGE-LATCH FSM only when the gesture is re-armed.
+// Disabled (default), the button never reaches the FSM and never toggles SSH.
+func buttonLatch(m *latch.Machine, s latch.Sample, enabled bool) bool {
+	if !enabled {
+		return false
+	}
+	return m.Feed(s) == latch.ToggleSSH
+}
+
+// voiceSSH runs a hub voice action: ssh_on / ssh_off set ssh.enabled and
+// start/stop the listener via sshctl (the same Set the latch used: never
+// touches victor-agent or the hub sockets; persists across reboot);
+// ssh_status only reports. Result -> sensor FlagSSHOn, face, LED, status file.
+func voiceSSH(name string, ssh *sshctl.Controller, body *spine.Body, ui *uiState, status *statusfile.Writer) {
+	on, statusOnly, ok := sshctl.VoiceAction(name)
+	if !ok {
+		return
+	}
+	var err error
+	if !statusOnly {
+		err = ssh.Set(on)
+	}
+	en := ssh.Enabled()
+	sshOn.Store(en)
+	act := ssh.Active()
+	fmt.Printf("voice %s ssh.enabled=%v listener=%v err=%v\n", name, en, act, err)
+	status.Put("/data/victor/ssh-voice.txt", fmt.Sprintf("%s enabled=%v listener=%v err=%v\n", name, en, act, err))
+	showFaceUI(en, false, ui)
+	if body != nil {
+		body.SetSSHLED(en)
+	}
+}
 
 func showFaceUI(sshOn, auto bool, ui *uiState) {
 	text := "SSH OFF"
@@ -633,8 +1011,16 @@ func showFaceUI(sshOn, auto bool, ui *uiState) {
 	fmt.Printf("face %s\n", text)
 }
 
+// loadHubEnv reads /data/victor/hub.env and then /data/victor/drive.env
+// (VECTOR_*_MMPS speed settings pushed by deploy/sync-agent.sh from .env).
 func loadHubEnv() {
-	b, err := os.ReadFile("/data/victor/hub.env")
+	for _, f := range []string{"/data/victor/hub.env", "/data/victor/drive.env"} {
+		loadEnvFile(f)
+	}
+}
+
+func loadEnvFile(path string) {
+	b, err := os.ReadFile(path)
 	if err != nil {
 		return
 	}

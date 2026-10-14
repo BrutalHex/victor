@@ -32,6 +32,13 @@ Yocto first boot: sshd on, BLE units masked.
 
 ## CHARGE-LATCH (SSH without BLE)
 
+> **Superseded on 10 Oct 2026 at the owner's request:** SSH is toggled by voice only
+> ("Vector, enable/disable SSH", "Is SSH on?", in EN/DE/FA; no face check). The button
+> gesture below is kept in code but off (`/data/victor/charge-latch.enabled` re-arms it).
+> Effect, defaults and the watchdog below still apply. See README "First flash and SSH".
+> Since 10 Oct 2026 the button is read correctly (touchLevel[1]); a single press only wakes the hub
+> voice session (README "Wake word") and never reaches the latch while the gesture is off.
+
 SSH is the only admin door after first flash. Toggle it with the body so BLE can stay dead.
 
 Valid only when spine `on_charger` is true. Ignore the phrase while driving.

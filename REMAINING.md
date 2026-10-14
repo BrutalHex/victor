@@ -20,7 +20,7 @@ Do not ship WireOS as the product. Community trees are hardware reference only. 
 ```bash
 make test
 make prove3          # robot + reverse tunnel (this VM is NAT’d)
-make prove4          # recipes + dummy .ota, no flash
+make prove4          # recipes + dummy .ota end-to-end (make ota-test), no flash
 docker compose -f hub/docker-compose.yml up -d --build
 ```
 
@@ -31,7 +31,7 @@ docker compose -f hub/docker-compose.yml up -d --build
 - Hub hostname `robot.mohammadabbasi.com` on a same-LAN laptop (`./deploy/push-hub-ip.sh`)
 - Drop a real NVIDIA TAO ONNX (≤15 MB) in `hub/models/` to replace `tiny_edge.onnx`
 - Named-face speak + ChatGPT voice on a live camera with `OPENAI_API_KEY` on the hub only
-- Bitbake `victor-image` with the vendor APQ8009 kernel and flash via recovery `ota-start`
+- Bitbake `victor-image` with the vendor APQ8009 kernel and flash via recovery `ota-start` (packer ready: `make ota`, see `deploy/OTA.md`)
 
 ## Definition of done
 

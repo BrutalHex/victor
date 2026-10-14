@@ -216,7 +216,39 @@ func TestRumbleIsNotBoostedToRail(t *testing.T) {
 		acc += float64(s) * float64(s)
 	}
 	rms := math.Sqrt(acc / float64(len(out)))
-	if peak > 8000 || rms > 4000 {
+	// Stationary rumble must not pump the gain above the start gain, and the
+	// limiter keeps it off the rail.
+	inRMS := 1800 / math.Sqrt2
+	if peak > 24500 || rms > inRMS*startGain*1.05 {
 		t.Fatalf("rumble boosted peak=%d rms=%.0f", peak, rms)
+	}
+}
+
+func TestQuietVoiceIsLiftedAboveHubVAD(t *testing.T) {
+	p := NewProcessor(ModeFast)
+	var out []int16
+	for blk := 0; blk < 200; blk++ {
+		raw := make([]int16, 80*Channels)
+		for i := 0; i < 80; i++ {
+			n := blk*80 + i
+			// 1.5 rms floor, then a 40 rms "voice" like the real robot.
+			v := 2 * math.Sin(float64(n)*1.3)
+			if blk >= 100 {
+				v += 56 * math.Sin(2*math.Pi*450*float64(n)/RawRate)
+			}
+			for c := 0; c < Channels; c++ {
+				raw[i*Channels+c] = int16(v)
+			}
+		}
+		out = append(out, p.Process(raw)...)
+	}
+	tail := out[len(out)-1600:]
+	var acc float64
+	for _, s := range tail {
+		acc += float64(s) * float64(s)
+	}
+	rms := math.Sqrt(acc / float64(len(tail)))
+	if rms < 900 || rms > 4000 {
+		t.Fatalf("voice rms %.0f, want ~%v", rms, targetRMS)
 	}
 }

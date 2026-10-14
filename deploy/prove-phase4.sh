@@ -26,23 +26,11 @@ pass "BLE split"
 echo "== first boot SSH ON =="
 grep -q ssh.enabled "${ROOT}/yocto/meta-victor/recipes-core/victor-firstboot/files/victor-firstboot.sh" || fail "ssh.enabled"
 grep -q 'rw,exec' "${ROOT}/yocto/meta-victor/recipes-core/base-files/base-files_%.bbappend" || fail "/data exec"
+grep -q 'victor-firstboot.service' "${ROOT}/yocto/meta-victor/recipes-core/victor-agent/files/victor-agent.service" || fail "agent after firstboot"
 pass "first boot flags"
 
-echo "== dummy OTA =="
-BOOT=$(mktemp)
-SYS=$(mktemp)
-dd if=/dev/zero of="$BOOT" bs=1024 count=8 status=none
-dd if=/dev/zero of="$SYS" bs=1024 count=16 status=none
-make -C "$ROOT" agent-arm >/dev/null
-OUT=$(mktemp --suffix=.ota)
-"${ROOT}/deploy/make-ota.sh" --boot "$BOOT" --sysfs "$SYS" --out "$OUT" --version 0.0.0-test
-tar -tf "$OUT" | grep -q manifest.ini || fail "manifest"
-tar -tf "$OUT" | grep -q apq8009-robot-boot.img.gz || fail "boot image"
-tar -tf "$OUT" | grep -q apq8009-robot-sysfs.img.gz || fail "sysfs image"
-tar -tf "$OUT" | grep -q victor-overlay.tar.gz || fail "overlay"
-tar -xOf "$OUT" manifest.ini | grep -q keep_recoveryfs=1 || fail "recovery kept"
-tar -xOf "$OUT" manifest.ini | grep -q target_slot=inactive || fail "A/B inactive"
-rm -f "$BOOT" "$SYS" "$OUT"
+echo "== OTA packer end-to-end (dummy images, no flash) =="
+"${ROOT}/deploy/test-ota.sh"
 pass "make-ota.sh HTTP payload"
 
 echo "== first-flash still HTTP-only =="

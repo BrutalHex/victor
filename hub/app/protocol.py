@@ -14,6 +14,7 @@ TYPE_UIACK = 4
 
 FLAG_NAV = 1 << 0
 FLAG_FACE = 1 << 1
+FLAG_ROBOT_NOISE = 1 << 2  # audio: recorded while the robot's own motors ran
 HEADER = struct.Struct("<4sBBIQI")  # magic, type, flags, seq, t_ns, len
 
 
@@ -68,4 +69,12 @@ def unpack_sensor(payload: bytes) -> dict:
         "flags": flags,
         "on_charger": bool(flags & 4),
         "button": bool(flags & 1),
+        "explore_enabled": bool(flags & 16),  # /data/victor/explore.enabled on the robot
+        "wandering": bool(flags & 32),
+        "ssh_on": bool(flags & 64),  # /data/victor/ssh.enabled on the robot (voice SSH toggle)
+        # debounced backpack presses since the agent started (None: older 47-byte agent)
+        "button_presses": struct.unpack_from("<H", payload, 47)[0] if len(payload) >= 49 else None,
+        # finished voice actions (wraps) + the last one's outcome code (None: agent before 10 Oct 15:40)
+        "action_seq": struct.unpack_from("<H", payload, 49)[0] if len(payload) >= 52 else None,
+        "action_result": payload[51] if len(payload) >= 52 else None,
     }

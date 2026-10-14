@@ -36,7 +36,7 @@ func TestDrainReadsKeepsGoingUntilEmpty(t *testing.T) {
 func TestAppendRXMicBlock(t *testing.T) {
 	payload := make([]byte, 768)
 	for i := 0; i < 320; i++ {
-		binary.LittleEndian.PutUint16(payload[125+i*2:], uint16(1000+i))
+		binary.LittleEndian.PutUint16(payload[128+i*2:], uint16(1000+i))
 	}
 	raw := Encode(TypeData, payload)
 	binary.LittleEndian.PutUint32(raw[0:4], HeaderRX)

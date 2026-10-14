@@ -46,7 +46,7 @@ func TestParsePackedFields(t *testing.T) {
 	binary.LittleEndian.PutUint16(b[56:], 111)
 	binary.LittleEndian.PutUint16(b[64:], 2000) // batt
 	binary.LittleEndian.PutUint16(b[66:], 3000) // charger
-	binary.LittleEndian.PutUint16(b[91:], 1)    // button
+	binary.LittleEndian.PutUint16(b[94:], 1)    // button (touchLevel[1])
 	f, err := ParsePacked(b)
 	if err != nil {
 		t.Fatal(err)
@@ -66,7 +66,7 @@ func TestParsePackedFields(t *testing.T) {
 func TestParseMic(t *testing.T) {
 	b := make([]byte, 768)
 	for i := 0; i < 320; i++ {
-		binary.LittleEndian.PutUint16(b[125+i*2:], uint16(i+1))
+		binary.LittleEndian.PutUint16(b[128+i*2:], uint16(i+1))
 	}
 	f, err := ParsePacked(b)
 	if err != nil {
