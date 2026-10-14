@@ -34,6 +34,9 @@ class Session:
         self.lang = ""
         self.wakes = self.ends = self.turns = self.timeouts = 0
         self.last_end = ""
+        # M.O 14 Oct 2026: after a voice sleep/stop only the back button wakes him.
+        self.button_only = False
+        self.voice_wakes_blocked = 0
 
     def listening(self) -> bool:
         """True: utterances go to the full (OpenAI) pipeline."""
@@ -44,11 +47,16 @@ class Session:
 
     def wake(self, why: str = "wake") -> bool:
         with self.lock:
+            if self.state != AWAKE and self.button_only and why != "button":
+                self.voice_wakes_blocked += 1
+                print(f"session wake refused why={why} (button only after voice sleep)", flush=True)
+                return False
             if self.state == AWAKE:
                 self.last = self.clock()
                 return False
             self.state, self.since, self.last = AWAKE, self.clock(), self.clock()
             self.history = []
+            self.button_only = False
             self.wakes += 1
         print(f"session awake why={why}", flush=True)
         return True
@@ -61,6 +69,8 @@ class Session:
             self.history = []
             self.ends += 1
             self.last_end = why
+            if why == "phrase":
+                self.button_only = True
         print(f"session asleep why={why}", flush=True)
         return True
 
@@ -104,4 +114,5 @@ class Session:
         return {"enabled": self.enabled, "state": self.state if self.enabled else "always",
                 "for_s": round(now - self.since, 1), "idle_s": round(now - self.last, 1),
                 "idle_timeout_s": self.idle_s, "history_turns": len(self.history), "wakes": self.wakes,
-                "ends": self.ends, "timeouts": self.timeouts, "turns": self.turns, "last_end": self.last_end}
+                "ends": self.ends, "timeouts": self.timeouts, "turns": self.turns, "last_end": self.last_end,
+                "button_only": self.button_only, "voice_wakes_blocked": self.voice_wakes_blocked}

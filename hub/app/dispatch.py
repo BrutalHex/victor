@@ -7,7 +7,8 @@ Every voice turn goes through `route(text, asleep)`:
   1  sleep        yes      'Stop Vector' / 'Vector stop' / 'Hey Vector, stop' / 'stop listening' / 'go to sleep'
                            (EN/DE/FA). Cancels plan, explore, dance, sound; asleep eyes. Asleep already: no-op.
   2  halt         no       plain 'stop' / 'halt' / 'stopp' / 'ایست' / 'shut up': cancel motion/dance/explore, stay awake
-  3  wake         yes      'Hey Vector' (asleep: wake + 'Yes?'; awake: chime + 'Yes?'). 'Hey Vector, <cmd>':
+  3  wake         yes      'Hey Vector' (asleep: wake + 'Yes?'; awake: chime + 'Yes?'). After a VOICE sleep
+                           (rule 1) voice wake is off: only the back button wakes him (M.O 14 Oct). 'Hey Vector, <cmd>':
                            wake, then <cmd> goes through the table again (stop -> rule 1)
   4  asleep_gate  -        asleep: nothing below runs (button, asleep music head bob and the silent
                            face look-up live outside the voice path and never open the session)

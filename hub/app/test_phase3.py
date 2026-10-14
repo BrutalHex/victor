@@ -1676,7 +1676,8 @@ class WakeSession(unittest.TestCase):
                                             {"role": "assistant", "content": "chat reply"}])
         self.hear("Stop Vector")
         self.assertEqual(m.SESSION.history, [])
-        self.hear("Hey Vector, tell me a joke")
+        m.button_press()  # after a voice sleep only the back button wakes him (M.O 14 Oct)
+        self.hear("tell me a joke")
         self.assertEqual(self.chats[-1], ("tell me a joke", []))
 
     def test_plain_stop_stops_motion_but_keeps_session(self):
@@ -1695,7 +1696,7 @@ class WakeSession(unittest.TestCase):
                            ("Okay, stop Victor, thanks.", "en"), ("Vektor stopp!", "de"),
                            ("Hör auf zuzuhören.", "de"), ("وکتور بسه", "fa"), ("وکتور استاپ", "fa"),
                            ("وکتور، دیگه بسه.", "fa")):
-            self.hear("Hey Vector")
+            m.button_press() if m.SESSION.button_only else self.hear("Hey Vector")
             self.hear("Tell me a joke")
             replies, cmds = self.hear(text)
             self.assertEqual(replies, [intents.say("session_stop", lang)], text)
@@ -1803,6 +1804,30 @@ class WakeSession(unittest.TestCase):
         self.assertEqual(m.SESSION.status()["wakes"], 1)
         replies, _ = self.hear("What time is it?")  # the session is a real one
         self.assertTrue(replies[0].startswith("It's"), replies)
+
+    def test_voice_sleep_then_only_button_wakes(self):
+        """M.O 14 Oct 2026: 'after hey vector sleep or hey vector stop, only a
+        click on its back button should wake him up'."""
+        m = self.m
+        for stop in ("Hey Vector, stop", "Hey Vector, go to sleep", "Stop Vector", "Vektor stopp!", "وکتور بسه"):
+            m.button_press() if m.SESSION.button_only else self.hear("Hey Vector")
+            self.assertEqual(m.SESSION.state, "awake")
+            self.hear(stop)
+            self.assertEqual(m.SESSION.state, "asleep", stop)
+            for w in ("Hey Vector", "Hi, Vector.", "Hallo Vektor", "سلام وکتور", "Hey Vector, what time is it?"):
+                replies, cmds = self.hear(w)
+                self.assertEqual(m.SESSION.state, "asleep", (stop, w))
+                self.assertEqual(replies, [])
+                self.assertNotIn(b"anim|lookatme", self._faces(cmds))
+            m.pop_cmds()
+            self.assertEqual(m.button_press(), "wake")
+            cmds = m.pop_cmds()
+            self.assertEqual(m.SESSION.state, "awake")
+            self.assertIn(b"anim|lookatme", self._faces(cmds))
+            self.assertTrue(any(k == m.CMD_SPEAK for k, _ in cmds))  # chime + 'Yes?'
+            self.hear("Stop Vector")
+            m.button_press()
+        self.assertGreater(m.SESSION.status()["voice_wakes_blocked"], 0)
 
     def test_button_counter_restart_and_old_agent(self):
         import struct as st

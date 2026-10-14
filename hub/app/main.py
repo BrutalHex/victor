@@ -427,6 +427,14 @@ def asleep_turn(pcm: bytes) -> dict:
         text = VOICE.last_raw  # language check dropped it ("Эй, Вектор!"): still check the wake phrase
     r = dispatch.route(text, asleep=True)  # command priority (dispatch.py): sleep > wake > asleep gate
     hit, rest = r.rule == "wake", r.text
+    if hit and SESSION.button_only:  # voice sleep/stop: only the back button wakes him (M.O 14 Oct)
+        print(f"asleep wake ignored (button only) text={text!r}", flush=True)
+        SESSION.wake("phrase")  # refused; counted as voice_wakes_blocked on /status
+        with LOCK:
+            ASLEEP["heard"] += 1
+            ASLEEP["ignored"] += 1
+            ASLEEP["last"] = text[:80]
+        return {"hit": False, "text": text, "rule": "wake_blocked"}
     gate = (getattr(VOICE, "utt", {}) or {})
     gate_s = f"gate={gate.get('gate', '?')} snr={gate.get('snr', '?')} voiced={gate.get('voiced', '?')} run={gate.get('voiced_run', '?')}"
     with LOCK:
@@ -1877,13 +1885,16 @@ SESSION_RESTORE_S = float(os.environ.get("HUB_SESSION_RESTORE_S", "900") or 0)
 def session_restore() -> bool:
     """A hub restart (deploy) within HUB_SESSION_RESTORE_S of an awake session
     comes back awake, so a rebuild never puts Vector to sleep mid-use."""
-    if not SESSION.enabled or SESSION_RESTORE_S <= 0:
+    if not SESSION.enabled:
         return False
     try:
         d = json.load(open(SESSION_FILE))
     except (OSError, ValueError):
         return False
-    if d.get("explicit_sleep"):
+    if d.get("explicit_sleep") or d.get("button_only"):
+        SESSION.button_only = True  # survives the restart: still only the button wakes him
+        return False
+    if SESSION_RESTORE_S <= 0:
         return False  # put to sleep by voice/user: a restart never wakes him
     if d.get("state") == "awake" and 0 <= time.time() - float(d.get("t") or 0) < SESSION_RESTORE_S:
         return SESSION.wake("restored after hub restart")
@@ -1894,13 +1905,15 @@ def session_save_loop() -> None:
     last = None
     while True:
         st = SESSION.state
-        if st != last or st == "awake":
+        key = (st, SESSION.button_only)
+        if key != last or st == "awake":
             try:
                 os.makedirs(os.path.dirname(SESSION_FILE), exist_ok=True)
                 with open(SESSION_FILE, "w") as f:
                     json.dump({"state": st, "t": time.time(),
-                               "explicit_sleep": st != "awake" and SESSION.last_end == "phrase"}, f)
-                last = st
+                               "explicit_sleep": st != "awake" and SESSION.button_only,
+                               "button_only": SESSION.button_only}, f)
+                last = key
             except OSError:
                 pass
         time.sleep(5)
