@@ -38,6 +38,10 @@ _STALE = (
 
 class Api:
     CALLS: dict[str, int] = {}  # per endpoint, all instances (asleep must stay 0 for audio)
+    # M.O 14 Oct 2026: "when robot is stopped and in sleep mode, why does it still send requests to OpenAI?"
+    # main sets PHASE to a callable returning "awake" / "asleep" / "locked"; calls are counted per phase.
+    PHASE = None
+    BY_PHASE: dict[str, dict[str, int]] = {}
 
     def __init__(self, key: str, host: str = HOST) -> None:
         self.key = key
@@ -84,6 +88,14 @@ class Api:
 
     def post(self, path: str, body: bytes, content_type: str, timeout: float) -> bytes:
         Api.CALLS[path] = Api.CALLS.get(path, 0) + 1
+        try:
+            phase = Api.PHASE() if Api.PHASE else "awake"
+        except Exception:  # noqa: BLE001 - counting must never break a call
+            phase = "?"
+        by = Api.BY_PHASE.setdefault(phase, {})
+        by[path] = by.get(path, 0) + 1
+        if phase != "awake":
+            print(f"openai call while {phase}: {path}", flush=True)
         headers = {
             "Authorization": f"Bearer {self.key}",
             "Content-Type": content_type,

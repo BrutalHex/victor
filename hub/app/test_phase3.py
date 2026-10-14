@@ -1509,6 +1509,8 @@ class WakeSession(unittest.TestCase):
         self.m = main
         self.now = [1000.0]
         main.pop_cmds()
+        main.ASLEEP_STT_T.clear()
+        main.ASLEEP_STT_PER_MIN = 0  # the per-minute cap has its own test
         with main.LOCK:
             main.STATE.update(thinking=False, voice_busy=False)
             main.STATE["last_sensor"] = {"on_charger": True}
@@ -1827,7 +1829,42 @@ class WakeSession(unittest.TestCase):
             self.assertTrue(any(k == m.CMD_SPEAK for k, _ in cmds))  # chime + 'Yes?'
             self.hear("Stop Vector")
             m.button_press()
-        self.assertGreater(m.SESSION.status()["voice_wakes_blocked"], 0)
+        self.assertGreater(m.ASLEEP["dropped_locked"], 0)  # locked: not even transcribed
+
+    def test_asleep_no_openai_when_locked_and_capped_otherwise(self):
+        """M.O 14 Oct 2026: 'when robot is stopped and in sleep mode, why does it
+        still send requests to OpenAI?' Locked: zero STT. Asleep: STT only, capped."""
+        from api import Api
+        m = self.m
+        m.ASLEEP_STT_T.clear()
+        n0 = len(self.stt)
+        for t in ("What time is it?", "Who is my cat?", "Tell me a joke"):
+            self.hear(t)
+        self.assertLessEqual(len(self.stt) - n0, 3)  # asleep, unlocked: STT is the only call
+        self.assertEqual(self.chats, [])  # never brain/classifier while asleep
+        m.button_press()
+        self.hear("Stop Vector")
+        self.assertTrue(m.SESSION.button_only)
+        n1, c1 = len(self.stt), len(self.chats)
+        for t in ("Hey Vector", "Hi, Vector.", "Hallo Vektor", "سلام وکتور", "Who is my cat?", "What time is it?"):
+            self.hear(t)
+        self.assertEqual(len(self.stt), n1)  # locked: nothing transcribed at all
+        self.assertEqual(len(self.chats), c1)
+        self.assertGreaterEqual(m.ASLEEP["dropped_locked"], 6)
+        self.assertEqual(m.session_phase(), "awake" if m.SESSION.clock() - m.SESSION.since < 5 else "locked")
+        m.ASLEEP_STT_T.clear()
+
+    def test_asleep_rate_cap_and_long_clip(self):
+        m = self.m
+        m.ASLEEP_STT_T.clear()
+        m.ASLEEP_STT_PER_MIN = 6
+        self.assertFalse(m.SESSION.button_only)
+        long = b"\x00" * int(32000 * (m.ASLEEP_MAX_S + 1))
+        self.assertEqual(m.asleep_stt_allowed(long), "long")
+        allowed = [m.asleep_stt_allowed(b"\x00" * 32000) for _ in range(m.ASLEEP_STT_PER_MIN + 3)]
+        self.assertEqual(allowed.count(""), m.ASLEEP_STT_PER_MIN)
+        self.assertEqual(allowed[-1], "rate")
+        m.ASLEEP_STT_T.clear()
 
     def test_button_counter_restart_and_old_agent(self):
         import struct as st
